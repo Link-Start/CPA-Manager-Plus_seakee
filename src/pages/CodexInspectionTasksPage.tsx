@@ -22,6 +22,7 @@ import {
   IconFilter,
   IconHand,
   IconInfo,
+  IconLightbulb,
   IconMoreVertical,
   IconPlayCircle,
   IconPlus,
@@ -148,7 +149,7 @@ const WIZARD_STEPS = [
   {
     label: '执行计划',
     title: '执行计划',
-    description: '配置任务的执行时间、频率与并发控制参数。',
+    description: '配置任务的执行计划，设置调度方式、时区与并发控制参数。',
   },
   {
     label: '自动处理策略',
@@ -174,7 +175,7 @@ const DEFAULT_DRAFT: TaskDraft = {
   authIndices: DEFAULT_SELECTED_AUTH_INDICES.join('\n'),
   query: '',
   noteIncludes: '',
-  scheduleType: 'manual',
+  scheduleType: 'daily_times',
   intervalEvery: '6',
   intervalUnit: 'hour',
   dailyTimes: '09:00,13:00,23:30',
@@ -942,7 +943,6 @@ export function CodexInspectionTasksPage() {
         onDraftChange={updateDraft}
         onToggleChannel={toggleNotificationChannel}
         onStepChange={setWizardStep}
-        onClose={() => setTaskModalOpen(false)}
         onSave={saveTask}
       />
     );
@@ -1686,7 +1686,6 @@ function TaskWizard({
   onDraftChange,
   onToggleChannel,
   onStepChange,
-  onClose,
   onSave,
 }: {
   mode: ModalMode;
@@ -1696,17 +1695,26 @@ function TaskWizard({
   onDraftChange: <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => void;
   onToggleChannel: (channel: CodexInspectionNotificationChannel) => void;
   onStepChange: (step: number) => void;
-  onClose: () => void;
   onSave: () => void;
 }) {
   const isLastStep = wizardStep >= WIZARD_STEPS.length - 1;
   const safeStep = Math.min(Math.max(wizardStep, 0), WIZARD_STEPS.length - 1);
+  const initializedCreateExecutionStepRef = useRef(false);
+
+  useEffect(() => {
+    if (mode !== 'create' || safeStep !== 2 || initializedCreateExecutionStepRef.current) return;
+    initializedCreateExecutionStepRef.current = true;
+    if (draft.scheduleType === 'manual') {
+      onDraftChange('scheduleType', 'daily_times');
+    }
+  }, [draft.scheduleType, mode, onDraftChange, safeStep]);
+
   return (
     <div className={styles.wizardPage}>
       <header className={styles.wizardHeader}>
         <div>
           <h1>{mode === 'edit' ? '编辑任务' : '新建任务'}</h1>
-          <p>创建一个新的 Codex 巡检任务，用于定期检测与评估您的云环境安全与配置合规性。</p>
+          <p>{WIZARD_STEPS[safeStep].description}</p>
         </div>
       </header>
 
@@ -1735,11 +1743,6 @@ function TaskWizard({
           ) : null}
         </div>
         <div className={styles.wizardFooterActions}>
-          {!isLastStep ? (
-            <Button variant="secondary" onClick={onClose} disabled={saving}>
-              取消
-            </Button>
-          ) : null}
           {isLastStep ? (
             <Button onClick={onSave} loading={saving}>
               {mode === 'edit' ? '保存任务' : '创建任务'}
@@ -1815,8 +1818,10 @@ function WizardPanel({
   children: ReactNode;
   side?: ReactNode;
 }) {
+  const hasSide = Boolean(side);
+
   return (
-    <div className={styles.wizardPanelGrid}>
+    <div className={`${styles.wizardPanelGrid} ${hasSide ? '' : styles.wizardPanelGridFull}`.trim()}>
       <section className={styles.wizardMainPanel}>
         <div className={styles.wizardPanelTitle}>
           {eyebrow}
@@ -1825,7 +1830,7 @@ function WizardPanel({
         </div>
         {children}
       </section>
-      {side ? <aside className={styles.wizardSidePanel}>{side}</aside> : null}
+      {hasSide ? <aside className={styles.wizardSidePanel}>{side}</aside> : null}
     </div>
   );
 }
@@ -2214,154 +2219,174 @@ function ScopeStep({ draft, onDraftChange }: { draft: TaskDraft; onDraftChange: 
 function ExecutionStep({ draft, onDraftChange }: { draft: TaskDraft; onDraftChange: DraftChangeHandler }) {
   const dailyTimes = splitList(draft.dailyTimes);
   const timezoneOptions = Array.from(new Set(['Asia/Shanghai', 'UTC', 'America/Los_Angeles', 'Europe/London', draft.timezone || 'Asia/Shanghai']));
+  const removeDailyTime = (targetIndex: number) => {
+    onDraftChange('dailyTimes', dailyTimes.filter((_, index) => index !== targetIndex).join(','));
+  };
 
   return (
-    <WizardPanel
-      title="执行计划"
-      subtitle="配置任务的执行时间、频率与并发控制参数。"
-      eyebrow={<span className={styles.stepNumberPill}>3</span>}
-      side={null}
-    >
-      <div className={styles.executionGrid}>
-        <section className={styles.executionLeft}>
-          <span className={styles.sectionCaption}>调度方式</span>
-          <div className={styles.scheduleChoiceRow}>
-            <RadioChoice
-              checked={draft.scheduleType === 'manual'}
-              label="手动执行"
-              onClick={() => onDraftChange('scheduleType', 'manual')}
-            />
-            <RadioChoice
-              checked={draft.scheduleType === 'interval'}
-              label="固定时间间隔"
-              onClick={() => onDraftChange('scheduleType', 'interval')}
-            />
-            <RadioChoice
-              checked={draft.scheduleType === 'daily_times'}
-              label="多个每日执行时间点"
-              onClick={() => onDraftChange('scheduleType', 'daily_times')}
-            />
-            <RadioChoice checked={false} label="Cron 表达式" disabled onClick={() => undefined} />
-          </div>
-          {draft.scheduleType === 'daily_times' ? (
-            <div className={styles.timePointGroup}>
-              <span className={styles.sectionCaption}>每日执行时间点</span>
-              <div className={styles.timeChips}>
-                {dailyTimes.map((time) => (
-                  <span key={time}>
-                    {time}
-                    <IconX size={13} />
-                  </span>
-                ))}
-                <button type="button" onClick={() => onDraftChange('dailyTimes', `${draft.dailyTimes},09:00`)}>
-                  <IconPlus size={16} />
-                  添加时间点
-                </button>
-              </div>
-              <Input
-                value={draft.dailyTimes}
-                onChange={(event) => onDraftChange('dailyTimes', event.target.value)}
-                hint="系统将在所选时区，按设置的时间点分别触发任务执行。"
+    <>
+      <WizardPanel
+        title="执行计划"
+        subtitle="配置任务的执行时间、频率与并发控制参数。"
+        eyebrow={<span className={styles.stepNumberPill}>3</span>}
+        side={null}
+      >
+        <div className={styles.executionGrid}>
+          <section className={styles.executionLeft}>
+            <span className={styles.sectionCaption}>调度方式</span>
+            <div className={styles.scheduleChoiceRow}>
+              <RadioChoice
+                checked={draft.scheduleType === 'manual'}
+                label="手动执行"
+                onClick={() => onDraftChange('scheduleType', 'manual')}
               />
+              <RadioChoice
+                checked={draft.scheduleType === 'interval'}
+                label="固定时间间隔"
+                onClick={() => onDraftChange('scheduleType', 'interval')}
+              />
+              <RadioChoice
+                checked={draft.scheduleType === 'daily_times'}
+                label="多个每日执行时间点"
+                onClick={() => onDraftChange('scheduleType', 'daily_times')}
+              />
+              <RadioChoice checked={false} label="Cron 表达式" disabled onClick={() => undefined} />
             </div>
-          ) : null}
-          {draft.scheduleType === 'interval' ? (
-            <div className={styles.intervalGrid}>
-              <Input
-                label="间隔数值"
-                type="number"
-                min={1}
-                value={draft.intervalEvery}
-                onChange={(event) => onDraftChange('intervalEvery', event.target.value)}
-              />
+            {draft.scheduleType === 'daily_times' ? (
+              <div className={styles.timePointGroup}>
+                <span className={styles.sectionCaption}>每日执行时间点</span>
+                <div className={styles.timeChips}>
+                  {dailyTimes.map((time, index) => (
+                    <span key={`${time}-${index}`} className={styles.timeChip}>
+                      {time}
+                      <button
+                        type="button"
+                        className={styles.timeChipRemove}
+                        onClick={() => removeDailyTime(index)}
+                        aria-label={`删除时间点 ${time}`}
+                      >
+                        <IconX size={13} />
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    className={styles.timeChipAdd}
+                    onClick={() => onDraftChange('dailyTimes', `${draft.dailyTimes},09:00`)}
+                  >
+                    <IconPlus size={16} />
+                    添加时间点
+                  </button>
+                </div>
+                <p className={styles.fieldHint}>系统会在所选时区，按设置的时间点分别触发任务执行。</p>
+              </div>
+            ) : null}
+            {draft.scheduleType === 'interval' ? (
+              <div className={styles.intervalGrid}>
+                <Input
+                  label="间隔数值"
+                  type="number"
+                  min={1}
+                  value={draft.intervalEvery}
+                  onChange={(event) => onDraftChange('intervalEvery', event.target.value)}
+                />
+                <label className={styles.wizardField}>
+                  <span>间隔单位</span>
+                  <Select
+                    value={draft.intervalUnit}
+                    onChange={(value) => onDraftChange('intervalUnit', value as TaskDraft['intervalUnit'])}
+                    options={[
+                      { value: 'minute', label: '分钟' },
+                      { value: 'hour', label: '小时' },
+                      { value: 'day', label: '天' },
+                    ]}
+                    ariaLabel="间隔单位"
+                  />
+                </label>
+              </div>
+            ) : null}
+            {draft.scheduleType === 'manual' ? (
+              <p className={styles.fieldHint}>手动执行不会参与自动调度，仅当您手动触发时执行一次。</p>
+            ) : null}
+          </section>
+
+          <section className={styles.executionRight}>
+            <span className={styles.sectionCaption}>执行设置</span>
+            <div className={styles.executionSettingsGrid}>
               <label className={styles.wizardField}>
-                <span>间隔单位</span>
+                <span>时区</span>
                 <Select
-                  value={draft.intervalUnit}
-                  onChange={(value) => onDraftChange('intervalUnit', value as TaskDraft['intervalUnit'])}
-                  options={[
-                    { value: 'minute', label: '分钟' },
-                    { value: 'hour', label: '小时' },
-                    { value: 'day', label: '天' },
-                  ]}
-                  ariaLabel="间隔单位"
+                  value={draft.timezone || 'Asia/Shanghai'}
+                  onChange={(value) => onDraftChange('timezone', value)}
+                  options={timezoneOptions.map((timezone) => ({ value: timezone, label: `(UTC+08:00) ${timezone}` }))}
+                  ariaLabel="时区"
                 />
               </label>
-            </div>
-          ) : null}
-          {draft.scheduleType === 'manual' ? (
-            <p className={styles.fieldHint}>手动执行不会参与自动调度，仅当您手动触发时执行一次。</p>
-          ) : null}
-        </section>
-
-        <section className={styles.executionRight}>
-          <span className={styles.sectionCaption}>执行设置</span>
-          <div className={styles.executionSettingsGrid}>
-            <label className={styles.wizardField}>
-              <span>时区</span>
-              <Select
-                value={draft.timezone || 'Asia/Shanghai'}
-                onChange={(value) => onDraftChange('timezone', value)}
-                options={timezoneOptions.map((timezone) => ({ value: timezone, label: `(UTC+08:00) ${timezone}` }))}
-                ariaLabel="时区"
+              <Input
+                label="并发数（同时运行实例数）"
+                type="number"
+                min={1}
+                max={20}
+                value={draft.concurrency}
+                onChange={(event) => onDraftChange('concurrency', event.target.value)}
+                hint="建议 1-5"
               />
-            </label>
-            <Input
-              label="并发数（同时运行实例数）"
-              type="number"
-              min={1}
-              max={20}
-              value={draft.concurrency}
-              onChange={(event) => onDraftChange('concurrency', event.target.value)}
-              hint="建议 1-5"
-            />
-            <Input
-              label="任务超时时间（秒）"
-              type="number"
-              min={1}
-              value={draft.timeoutMs}
-              onChange={(event) => onDraftChange('timeoutMs', event.target.value)}
-              hint="任务超过该时间将被强制终止"
-            />
-            <Input
-              label="重试次数"
-              type="number"
-              min={0}
-              value={draft.retries}
-              onChange={(event) => onDraftChange('retries', event.target.value)}
-              hint="任务失败后的重试次数"
-            />
-          </div>
-          <label className={styles.checkboxLine}>
-            <input
-              type="checkbox"
-              checked={draft.avoidDuplicateRuns}
-              onChange={(event) => onDraftChange('avoidDuplicateRuns', event.target.checked)}
-            />
-            <span>避免重复并发执行</span>
-          </label>
-          <p className={styles.fieldHint}>若上次任务未完成，则跳过本次计划执行，避免重复与冲突。</p>
-        </section>
-      </div>
-      <div className={styles.executionTips}>
-        {[
-          { icon: <IconHand size={25} />, title: '手动执行不会参与自动调度', body: '仅当手动触发时执行一次，不会影响自动计划任务。' },
-          { icon: <IconTimer size={25} />, title: '多个时间点模式适合固定巡检时段', body: '可配置多个每日时间点，适合早/中/晚等固定时段巡检。' },
-          { icon: <IconUsers size={25} />, title: '并发数量建议 1-5', body: '根据任务耗时与系统负载合理设置，过高可能造成资源竞争。' },
-          { icon: <IconShield size={25} />, title: '开启避免重复并发可防止任务重叠', body: '当前任务未完成时将跳过下一次执行，保障任务稳定性。' },
-        ].map((item) => (
-          <div key={item.title} className={styles.executionTipCard}>
-            <span>
-              {item.icon}
-            </span>
-            <div>
-              <strong>{item.title}</strong>
-              <p>{item.body}</p>
+              <Input
+                label="任务超时时间（秒）"
+                type="number"
+                min={1}
+                value={draft.timeoutMs}
+                onChange={(event) => onDraftChange('timeoutMs', event.target.value)}
+                hint="任务超过该时间将被强制终止"
+              />
+              <Input
+                label="重试次数"
+                type="number"
+                min={0}
+                value={draft.retries}
+                onChange={(event) => onDraftChange('retries', event.target.value)}
+                hint="任务失败后的重试次数"
+              />
             </div>
-          </div>
-        ))}
-      </div>
-    </WizardPanel>
+            <label className={styles.checkboxLine}>
+              <input
+                type="checkbox"
+                checked={draft.avoidDuplicateRuns}
+                onChange={(event) => onDraftChange('avoidDuplicateRuns', event.target.checked)}
+              />
+              <span>避免重复并发执行</span>
+            </label>
+            <p className={styles.fieldHint}>若上次任务未完成，则跳过本次计划执行，避免重复与冲突。</p>
+          </section>
+        </div>
+      </WizardPanel>
+      <section className={styles.executionTipsSection}>
+        <div className={styles.executionTipsHeader}>
+          <span>
+            <IconLightbulb size={20} />
+          </span>
+          <strong>执行提示</strong>
+        </div>
+        <div className={styles.executionTips}>
+          {[
+            { icon: <IconHand size={25} />, title: '手动执行不会参与自动调度', body: '仅当手动触发时执行一次，不会影响自动计划任务。' },
+            { icon: <IconTimer size={25} />, title: '多个时间点模式适合固定巡检时段', body: '可配置多个每日时间点，适合早/中/晚等固定时段巡检。' },
+            { icon: <IconUsers size={25} />, title: '并发建议 1-5', body: '根据任务耗时与系统负载合理设置，过高可能造成资源竞争。' },
+            { icon: <IconShield size={25} />, title: '开启避免重复并发可防止任务重叠', body: '当前任务未完成时将跳过下一次执行，保障任务稳定性。' },
+          ].map((item) => (
+            <div key={item.title} className={styles.executionTipCard}>
+              <span>
+                {item.icon}
+              </span>
+              <div>
+                <strong>{item.title}</strong>
+                <p>{item.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
   );
 }
 

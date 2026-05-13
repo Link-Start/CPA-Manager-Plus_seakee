@@ -1128,7 +1128,7 @@
   flex-direction: column;
   gap: 18px;
   min-height: calc(100vh - var(--shell-gutter, 24px) * 2 - 70px);
-  padding-bottom: 74px;
+  padding-bottom: 0;
   color: var(--task-text);
 }
 
@@ -1189,6 +1189,16 @@
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+
+  &:focus {
+    outline: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--task-accent) 50%, transparent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
 
   span {
     display: inline-grid;
@@ -1258,6 +1268,10 @@
   grid-template-columns: minmax(0, 1fr) minmax(310px, 0.34fr);
   gap: 28px;
   align-items: start;
+}
+
+.wizardPanelGridFull {
+  grid-template-columns: 1fr;
 }
 
 .wizardMainPanel,
@@ -1793,41 +1807,52 @@
 
 .executionGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) 1px minmax(360px, 0.95fr);
-  gap: 32px;
+  grid-template-columns: minmax(0, 1.05fr) 1px minmax(420px, 0.95fr);
+  gap: 28px;
   align-items: stretch;
 
   &::before {
     content: '';
     grid-column: 2;
-    background: var(--task-line);
+    width: 1px;
+    min-height: 100%;
+    background: color-mix(in srgb, var(--task-line-strong) 68%, var(--task-line));
   }
 }
 
 .executionLeft {
   grid-column: 1;
+  align-self: start;
 }
 
 .executionRight {
   grid-column: 3;
+  align-self: start;
 }
 
 .scheduleChoiceRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-start;
-  gap: 18px 28px;
+  gap: 0;
   margin-bottom: 34px;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .radioChoice {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
   flex: 0 0 auto;
   min-height: 38px;
-  padding: 0 4px;
+  padding: 0 24px;
   border: 0;
   background: transparent;
   color: var(--task-text);
@@ -1835,6 +1860,21 @@
   font-size: 14px;
   white-space: nowrap;
   cursor: pointer;
+
+  &:first-child {
+    padding-left: 0;
+  }
+
+  &:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 1px;
+    height: 18px;
+    background: var(--task-line);
+    transform: translateY(-50%);
+  }
 
   > span {
     display: inline-grid;
@@ -1855,8 +1895,8 @@
   }
 
   &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    opacity: 1;
+    cursor: default;
   }
 }
 
@@ -1880,8 +1920,8 @@
   flex-wrap: wrap;
   gap: 12px;
 
-  span,
-  button {
+  .timeChip,
+  .timeChipAdd {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1897,16 +1937,34 @@
     font-size: 14px;
   }
 
-  span {
+  .timeChip {
     background: var(--task-muted-surface);
   }
 
-  button {
+  .timeChipAdd {
     border-style: dashed;
     border-color: color-mix(in srgb, var(--task-accent) 50%, var(--task-line));
     color: var(--task-accent);
     background: color-mix(in srgb, var(--task-accent) 4%, var(--task-surface));
     cursor: pointer;
+  }
+}
+
+.timeChipRemove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--task-muted);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--task-accent);
+    background: color-mix(in srgb, var(--task-accent) 10%, transparent);
   }
 }
 
@@ -1917,7 +1975,7 @@
 
 .executionSettingsGrid {
   display: grid;
-  gap: 28px 38px;
+  gap: 26px 34px;
 }
 
 .checkboxLine {
@@ -1945,30 +2003,58 @@
   }
 }
 
+.executionTipsSection {
+  display: grid;
+  gap: 18px;
+  padding: 20px 24px;
+  border: 1px solid var(--task-line);
+  border-radius: 14px;
+  background: var(--task-surface);
+  box-shadow: 0 18px 50px color-mix(in srgb, #000 5%, transparent);
+}
+
+.executionTipsHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--task-text);
+  font-size: 16px;
+  font-weight: 720;
+
+  span {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--task-accent) 12%, var(--task-surface));
+    color: var(--task-accent);
+  }
+}
+
 .executionTips {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid var(--task-line);
-  border-radius: 12px;
-  background: var(--task-surface);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
 }
 
 .executionTipCard {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px 16px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 88px;
+  padding: 18px;
   border: 1px solid var(--task-line);
   border-radius: 10px;
   background: var(--task-surface);
+  min-width: 0;
 
   > span {
     display: inline-grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     background: color-mix(in srgb, var(--task-accent) 12%, var(--task-surface));
     color: var(--task-accent);
@@ -1976,8 +2062,9 @@
 
   strong {
     display: block;
-    font-size: 14px;
+    font-size: 13.5px;
     line-height: 1.35;
+    white-space: nowrap;
   }
 
   p {
@@ -2328,22 +2415,17 @@
 }
 
 .wizardFooterBar {
-  position: sticky;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 8;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 76px;
-  margin-top: auto;
-  padding: 14px 24px;
-  border-top: 1px solid var(--task-line);
-  background: color-mix(in srgb, var(--task-surface) 94%, transparent);
-  box-shadow: 0 -12px 30px color-mix(in srgb, #000 6%, transparent);
-  backdrop-filter: blur(14px);
+  min-height: 82px;
+  margin-top: 0;
+  padding: 14px 18px;
+  border: 1px solid var(--task-line);
+  border-radius: 14px;
+  background: var(--task-surface);
+  box-shadow: 0 18px 50px color-mix(in srgb, #000 5%, transparent);
 }
 
 .wizardFooterActions {
@@ -2520,7 +2602,7 @@
 
   .wizardPage {
     min-height: auto;
-    padding-bottom: 88px;
+    padding-bottom: 0;
   }
 
   .wizardHeader {
@@ -2577,13 +2659,31 @@
   }
 
   .scheduleChoiceRow {
+    flex-wrap: wrap;
     gap: 8px;
+    overflow-x: visible;
   }
 
-  .timeChips span,
-  .timeChips button {
+  .radioChoice {
+    padding: 0 12px;
+
+    &:first-child {
+      padding-left: 0;
+    }
+
+    &:not(:last-child)::after {
+      display: none;
+    }
+  }
+
+  .timeChip,
+  .timeChipAdd {
     min-width: 0;
     width: 100%;
+  }
+
+  .executionTipCard strong {
+    white-space: normal;
   }
 
   .dryRunBanner {
