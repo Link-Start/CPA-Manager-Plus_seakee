@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -59,6 +59,14 @@ import type {
   CodexInspectionTaskPayload,
 } from '@/types/codexInspectionTask';
 import { detectApiBaseFromLocation } from '@/utils/connection';
+import {
+  findMockCodexInspectionRunDetail,
+  getCodexInspectionMockDataset,
+  getCodexInspectionMockSearch,
+  getCodexInspectionMockScenario,
+  isCodexInspectionMockEnabled,
+  MOCK_CODEX_INSPECTION_BASE,
+} from './codexInspectionMockData';
 import styles from './CodexInspectionTasksPage.module.scss';
 
 type TaskDraft = {
@@ -553,6 +561,7 @@ const buildTaskPayload = (draft: TaskDraft): CodexInspectionTaskPayload => {
 };
 
 export function CodexInspectionTasksPage() {
+  const location = useLocation();
   const navigate = useNavigate();
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
@@ -560,6 +569,24 @@ export function CodexInspectionTasksPage() {
   const usageServiceBase = useUsageServiceStore((state) => state.serviceBase);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  const mockModeEnabled = isCodexInspectionMockEnabled(location.search);
+  const mockScenario = getCodexInspectionMockScenario(location.search);
+  const mockSearch = getCodexInspectionMockSearch(location.search);
+  const mockDataset = useMemo(() => getCodexInspectionMockDataset(mockScenario), [mockScenario]);
+  const initialSelectedTaskId = mockModeEnabled ? mockDataset.tasks[0]?.id || '' : '';
+  const initialRecentRuns = mockModeEnabled
+    ? mockDataset.runs
+        .filter((run) => run.taskId === initialSelectedTaskId)
+        .sort((left, right) => {
+          const leftTime = left.startedAtMs ?? left.createdAtMs ?? 0;
+          const rightTime = right.startedAtMs ?? right.createdAtMs ?? 0;
+          return rightTime - leftTime;
+        })
+        .slice(0, 10)
+    : [];
+  const initialRecentRunsTotal = mockModeEnabled
+    ? mockDataset.runs.filter((run) => run.taskId === initialSelectedTaskId).length
+    : 0;
 
   const copyToClipboard = useCallback(
     async (text: string, successMessage: string) => {
@@ -585,16 +612,18 @@ export function CodexInspectionTasksPage() {
     [showNotification]
   );
 
-  const [serviceBase, setServiceBase] = useState('');
-  const [tasks, setTasks] = useState<CodexInspectionTask[]>([]);
-  const [runs, setRuns] = useState<CodexInspectionRun[]>([]);
-  const [recentRuns, setRecentRuns] = useState<CodexInspectionRun[]>([]);
-  const [recentRunsTotal, setRecentRunsTotal] = useState(0);
+  const [serviceBase, setServiceBase] = useState(() => (mockModeEnabled ? MOCK_CODEX_INSPECTION_BASE : ''));
+  const [tasks, setTasks] = useState<CodexInspectionTask[]>(() => (mockModeEnabled ? mockDataset.tasks : []));
+  const [runs, setRuns] = useState<CodexInspectionRun[]>(() => (mockModeEnabled ? mockDataset.runs : []));
+  const [recentRuns, setRecentRuns] = useState<CodexInspectionRun[]>(() => initialRecentRuns);
+  const [recentRunsTotal, setRecentRunsTotal] = useState(initialRecentRunsTotal);
   const [recentRunsPage, setRecentRunsPage] = useState(1);
   const [recentRunsPageSize, setRecentRunsPageSize] = useState(10);
-  const [schedulerStatus, setSchedulerStatus] = useState<CodexInspectionSchedulerStatus | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [schedulerStatus, setSchedulerStatus] = useState<CodexInspectionSchedulerStatus | null>(() =>
+    mockModeEnabled ? mockDataset.schedulerStatus : null
+  );
+  const [selectedTaskId, setSelectedTaskId] = useState(initialSelectedTaskId);
+  const [loading, setLoading] = useState(!mockModeEnabled);
   const [saving, setSaving] = useState(false);
   const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(() => new Set());
   const [modalMode, setModalMode] = useState<ModalMode>('create');
@@ -630,6 +659,9 @@ export function CodexInspectionTasksPage() {
   }, [menuTaskId]);
 
   const resolveServiceBase = useCallback(async () => {
+    if (mockModeEnabled) {
+      return MOCK_CODEX_INSPECTION_BASE;
+    }
     if (usageServiceEnabled && usageServiceBase) {
       return usageServiceBase;
     }
@@ -649,13 +681,20 @@ export function CodexInspectionTasksPage() {
       }
     }
     return '';
-  }, [apiBase, usageServiceBase, usageServiceEnabled]);
+  }, [apiBase, mockModeEnabled, usageServiceBase, usageServiceEnabled]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const base = await resolveServiceBase();
       setServiceBase(base);
+      if (mockModeEnabled) {
+        setTasks(mockDataset.tasks);
+        setRuns(mockDataset.runs);
+        setSchedulerStatus(mockDataset.schedulerStatus);
+        setSelectedTaskId((current) => current || mockDataset.tasks[0]?.id || '');
+        return;
+      }
       if (!base) {
         setTasks([]);
         setRuns([]);
@@ -676,7 +715,7 @@ export function CodexInspectionTasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [managementKey, resolveServiceBase, showNotification]);
+  }, [managementKey, mockDataset, mockModeEnabled, resolveServiceBase, showNotification]);
 
   useEffect(() => {
     void loadData();
@@ -694,6 +733,19 @@ export function CodexInspectionTasksPage() {
         setRecentRunsTotal(0);
         return;
       }
+      if (mockModeEnabled) {
+        const filtered = mockDataset.runs
+          .filter((run) => run.taskId === taskId)
+          .sort((left, right) => {
+            const leftTime = left.startedAtMs ?? left.createdAtMs ?? 0;
+            const rightTime = right.startedAtMs ?? right.createdAtMs ?? 0;
+            return rightTime - leftTime;
+          });
+        const start = Math.max(0, (page - 1) * pageSize);
+        setRecentRuns(filtered.slice(start, start + pageSize));
+        setRecentRunsTotal(filtered.length);
+        return;
+      }
       try {
         const response = await usageServiceApi.getCodexInspectionRuns(
           serviceBase,
@@ -706,7 +758,7 @@ export function CodexInspectionTasksPage() {
         showNotification(err instanceof Error ? err.message : String(err), 'error');
       }
     },
-    [managementKey, serviceBase, showNotification]
+    [managementKey, mockDataset, mockModeEnabled, serviceBase, showNotification]
   );
 
   useEffect(() => {
@@ -847,6 +899,11 @@ export function CodexInspectionTasksPage() {
       showNotification('任务名称不能为空', 'error');
       return;
     }
+    if (mockModeEnabled) {
+      setTaskModalOpen(false);
+      showNotification('Mock 模式下不会写入后端，当前操作仅用于界面验证', 'info');
+      return;
+    }
     setSaving(true);
     try {
       if (modalMode === 'edit' && selectedTask) {
@@ -867,6 +924,21 @@ export function CodexInspectionTasksPage() {
 
   const setTaskEnabled = async (task: CodexInspectionTask, enabled: boolean) => {
     if (!serviceBase) return;
+    if (mockModeEnabled) {
+      setTasks((previous) =>
+        previous.map((item) =>
+          item.id === task.id
+            ? {
+                ...item,
+                enabled,
+                updatedAtMs: Date.now(),
+              }
+            : item
+        )
+      );
+      showNotification(enabled ? '任务已启用' : '任务已停用', 'success');
+      return;
+    }
     try {
       await usageServiceApi.setCodexInspectionTaskEnabled(serviceBase, task.id, enabled, managementKey);
       await loadData();
@@ -878,13 +950,29 @@ export function CodexInspectionTasksPage() {
 
   const runTask = async (task: CodexInspectionTask) => {
     if (!serviceBase || runningTaskIds.has(task.id)) return;
+    if (mockModeEnabled) {
+      const detail = findMockCodexInspectionRunDetail(task.lastRunId || '', mockScenario);
+      if (!detail) {
+        showNotification('Mock 模式下该任务暂无可查看的执行日志', 'warning');
+        return;
+      }
+      showNotification('Mock 模式：已打开最近一次执行日志', 'info');
+      navigate({
+        pathname: `/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(detail.run.id)}`,
+        search: mockSearch,
+      });
+      return;
+    }
     setRunningTaskIds((previous) => new Set(previous).add(task.id));
     try {
       const detail = await usageServiceApi.runCodexInspectionTask(serviceBase, task.id, {}, managementKey);
       await loadData();
       showNotification('巡检执行完成', detail.run.status === 'success' ? 'success' : 'warning');
       if (detail.run?.id) {
-        navigate(`/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(detail.run.id)}`);
+        navigate({
+          pathname: `/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(detail.run.id)}`,
+          search: mockSearch,
+        });
       }
     } catch (err) {
       showNotification(err instanceof Error ? err.message : String(err), 'error');
@@ -905,6 +993,17 @@ export function CodexInspectionTasksPage() {
       confirmText: '删除',
       variant: 'danger',
       onConfirm: async () => {
+        if (mockModeEnabled) {
+          setTasks((previous) => previous.filter((item) => item.id !== task.id));
+          setRuns((previous) => previous.filter((item) => item.taskId !== task.id));
+          if (selectedTaskId === task.id) {
+            setSelectedTaskId('');
+            setRecentRuns([]);
+            setRecentRunsTotal(0);
+          }
+          showNotification('巡检任务已删除', 'success');
+          return;
+        }
         await usageServiceApi.deleteCodexInspectionTask(serviceBase, task.id, managementKey);
         if (selectedTaskId === task.id) setSelectedTaskId('');
         await loadData();
@@ -914,7 +1013,10 @@ export function CodexInspectionTasksPage() {
   };
 
   const openRunDetail = (run: CodexInspectionRun) => {
-    navigate(`/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(run.id)}`);
+    navigate({
+      pathname: `/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(run.id)}`,
+      search: mockSearch,
+    });
   };
 
   const updateDraft = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => {
@@ -970,6 +1072,16 @@ export function CodexInspectionTasksPage() {
           </Button>
         </div>
       </header>
+
+      {mockModeEnabled ? (
+        <Card className={styles.notice}>
+          <IconLightbulb size={20} />
+          <div>
+            <strong>Mock 数据模式已启用</strong>
+            <p>当前页面使用本地巡检任务假数据，不会向 Usage Service 发起真实请求。</p>
+          </div>
+        </Card>
+      ) : null}
 
       {!serviceBase && !loading ? (
         <Card className={styles.notice}>
@@ -1478,6 +1590,7 @@ export function CodexInspectionTasksPage() {
         open={notificationModalOpen}
         serviceBase={serviceBase}
         managementKey={managementKey}
+        mockModeEnabled={mockModeEnabled}
         onClose={() => setNotificationModalOpen(false)}
         onNotify={showNotification}
       />
@@ -2894,12 +3007,14 @@ function NotificationChannelModal({
   open,
   serviceBase,
   managementKey,
+  mockModeEnabled,
   onClose,
   onNotify,
 }: {
   open: boolean;
   serviceBase: string;
   managementKey?: string;
+  mockModeEnabled: boolean;
   onClose: () => void;
   onNotify: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
 }) {
@@ -2950,6 +3065,17 @@ function NotificationChannelModal({
   const testNotification = async () => {
     if (!serviceBase) {
       onNotify('Usage Service 未连接，无法测试通知', 'error');
+      return;
+    }
+    if (mockModeEnabled) {
+      const response = {
+        ok: true,
+        mock: true,
+        channel,
+        preview: previewText,
+      };
+      setTestResult(JSON.stringify(response, null, 2));
+      onNotify('Mock 通知测试成功', 'success');
       return;
     }
     setTesting(true);
