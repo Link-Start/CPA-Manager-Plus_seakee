@@ -10,9 +10,19 @@
 @use './layout.scss';
 
 body {
-  background-color: var(--bg-secondary);
+  background-color: var(--app-bg);
+  background-image: var(--app-bg-gradient);
   color: var(--text-primary);
-  transition: background-color $transition-normal, color $transition-normal;
+  transition:
+    background-color $transition-normal,
+    color $transition-normal;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
 }
 
 html.modal-open,
