@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import styles from '@/pages/AuthFilesPage.module.scss';
+import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 
 type UnsupportedError = 'unsupported' | null;
 
@@ -62,4 +62,3 @@ export function OAuthExcludedCard(props: OAuthExcludedCardProps) {
     </Card>
   );
 }
-

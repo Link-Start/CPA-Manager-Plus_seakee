@@ -1,0 +1,148 @@
+import type { CredentialInfo } from '@/types/sourceInfo';
+import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
+import {
+  calculateCost,
+  extractTotalTokens,
+  normalizeAuthIndex,
+  type ModelPrice,
+  type UsageDetailWithEndpoint,
+} from '@/utils/usage';
+import { formatApiKeyHashLabel } from './base';
+import { buildSearchText, maskAuthIndex, maskEmailLike, readString } from './base';
+import { sanitizeApiKeyDisplayText, type ApiKeyDisplayInfo } from './apiKeys';
+import { buildHourLabel, buildLocalDayKey } from './range';
+import type { MonitoringAuthMeta, MonitoringChannelMeta, MonitoringEventRow } from './types';
+
+export const buildEventRows = (
+  details: UsageDetailWithEndpoint[],
+  authMetaMap: Map<string, MonitoringAuthMeta>,
+  authFileMap: Map<string, CredentialInfo>,
+  sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
+  channelByAuthIndex: Map<string, MonitoringChannelMeta>,
+  modelPrices: Record<string, ModelPrice>,
+  apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
+) =>
+  details
+    .map((detail, index) => {
+      const timestampMs =
+        typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
+          ? detail.__timestampMs
+          : Date.parse(detail.timestamp);
+      if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+        return null;
+      }
+
+      const authIndex = normalizeAuthIndex(detail.auth_index) ?? '-';
+      const authMeta = authMetaMap.get(authIndex);
+      const sourceMeta = resolveSourceDisplay(
+        detail.source,
+        detail.auth_index,
+        sourceInfoMap,
+        authFileMap
+      );
+      const snapshotAccount = readString(detail.account_snapshot ?? detail.accountSnapshot);
+      const snapshotLabel = readString(
+        detail.auth_label_snapshot ??
+          detail.authLabelSnapshot ??
+          detail.auth_file_snapshot ??
+          detail.authFileSnapshot
+      );
+      const snapshotProvider = readString(
+        detail.auth_provider_snapshot ?? detail.authProviderSnapshot
+      );
+      const snapshotDisplay = snapshotAccount || snapshotLabel;
+      const sourceLabel = authMeta?.label || snapshotDisplay || sourceMeta.displayName || authIndex;
+      const sourceMasked = maskEmailLike(sourceLabel);
+      const account = authMeta?.account || snapshotAccount || sourceLabel;
+      const accountMasked = maskEmailLike(account);
+      const apiKeyHash = readString(detail.api_key_hash ?? detail.apiKeyHash).toLowerCase();
+      const apiKeyDisplay = apiKeyDisplayMap.get(apiKeyHash);
+      const apiKeyLabel = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.label || formatApiKeyHashLabel(apiKeyHash),
+        formatApiKeyHashLabel(apiKeyHash)
+      );
+      const apiKeyMasked = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.masked || apiKeyLabel,
+        apiKeyLabel
+      );
+      const channelMeta =
+        channelByAuthIndex.get(authIndex) ||
+        (authMeta?.authIndex ? channelByAuthIndex.get(authMeta.authIndex) : undefined);
+      const channelLabel =
+        channelMeta?.name || authMeta?.provider || snapshotProvider || sourceMeta.type || '-';
+      const endpoint = readString(detail.__endpoint) || '-';
+      const endpointMethod = readString(detail.__endpointMethod) || '-';
+      const endpointPath = readString(detail.__endpointPath) || endpoint;
+      const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
+      const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
+      const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
+      const cachedTokens = Math.max(
+        Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
+        Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
+      );
+      const totalTokens = Math.max(
+        Number(detail.tokens?.total_tokens) || 0,
+        extractTotalTokens(detail)
+      );
+      const totalCost = calculateCost(detail, modelPrices);
+      const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
+      const dayKey = buildLocalDayKey(timestampMs);
+      const hourLabel = buildHourLabel(timestampMs);
+      const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
+      const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
+
+      return {
+        id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
+        timestamp: detail.timestamp,
+        timestampMs,
+        dayKey,
+        hourLabel,
+        model: readString(detail.__modelName) || '-',
+        endpoint,
+        endpointMethod,
+        endpointPath,
+        sourceKey,
+        source: sourceLabel,
+        sourceMasked,
+        account,
+        accountMasked,
+        authIndex,
+        authIndexMasked: maskAuthIndex(authIndex),
+        authLabel: authMeta?.label || snapshotLabel || sourceMasked,
+        apiKeyHash,
+        apiKeyLabel,
+        apiKeyMasked,
+        provider: authMeta?.provider || snapshotProvider || sourceMeta.type || '-',
+        planType: authMeta?.planType || '-',
+        channel: channelLabel,
+        channelHost: channelMeta?.host || '-',
+        channelDisabled: channelMeta?.disabled || false,
+        failed: detail.failed === true,
+        statsIncluded,
+        latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
+        inputTokens,
+        outputTokens,
+        reasoningTokens,
+        cachedTokens,
+        totalTokens,
+        totalCost,
+        taskKey,
+        searchText: buildSearchText(
+          detail.__modelName,
+          sourceLabel,
+          authMeta?.account,
+          authMeta?.label,
+          authIndex,
+          apiKeyHash,
+          apiKeyLabel,
+          apiKeyMasked,
+          channelLabel,
+          channelMeta?.host,
+          endpointPath,
+          endpointMethod,
+          authMeta?.provider || snapshotProvider,
+          authMeta?.planType
+        ),
+      } satisfies MonitoringEventRow;
+    })
+    .filter(Boolean) as MonitoringEventRow[];

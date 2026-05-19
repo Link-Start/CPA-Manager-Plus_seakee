@@ -1,0 +1,799 @@
+@use '../../../styles/mixins.scss' as *;
+
+@mixin styles {
+  .summarySection {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+  
+  .summaryHero,
+  .summarySub,
+  .summaryGrid {
+    display: grid;
+    gap: 14px;
+  }
+  
+  .summaryHero {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  
+    @include narrow-laptop {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  
+  .summarySub {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  
+    @include narrow-laptop {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  
+  .summaryCard {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding: 18px;
+    background: var(--monitor-surface-elevated);
+    transition:
+      transform 0.18s ease,
+      border-color 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+  
+  .summaryCardPrimary {
+    min-height: 150px;
+  }
+  
+  .summaryCardSecondary {
+    min-height: 104px;
+    padding: 15px 16px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--monitor-surface-elevated) 78%, var(--monitor-surface));
+    box-shadow: var(--shadow);
+  }
+  
+  .summaryCard:hover {
+    transform: translateY(-1px);
+  }
+  
+  .summaryCard:hover {
+    border-color: var(--monitor-line-strong);
+    box-shadow: var(--shadow-lg);
+  }
+  
+  .summaryLabel,
+  .savedPricesHeader,
+  .priceField label {
+    color: var(--monitor-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+  
+  .summaryValue {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 31px;
+    line-height: 1;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .summaryCardSecondary .summaryValue {
+    font-size: 23px;
+  }
+  
+  .summaryMeta {
+    margin-top: auto;
+    color: var(--monitor-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  
+  .statusBadge {
+    gap: 6px;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  
+  .tonegood {
+    color: var(--monitor-green);
+  }
+  
+  .tonewarn {
+    color: var(--monitor-amber);
+  }
+  
+  .tonebad {
+    color: var(--monitor-red);
+  }
+  
+  .statusBadge.tonegood {
+    border-color: color-mix(in srgb, var(--monitor-green) 26%, var(--monitor-line));
+    background: color-mix(in srgb, var(--monitor-green) 10%, var(--monitor-surface));
+  }
+  
+  .statusBadge.tonewarn {
+    border-color: color-mix(in srgb, var(--monitor-amber) 24%, var(--monitor-line));
+    background: color-mix(in srgb, var(--monitor-amber) 10%, var(--monitor-surface));
+  }
+  
+  .statusBadge.tonebad {
+    border-color: color-mix(in srgb, var(--monitor-red) 26%, var(--monitor-line));
+    background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface));
+  }
+  
+  .goodText {
+    color: var(--monitor-green);
+  }
+  
+  .warnText {
+    color: var(--monitor-amber);
+  }
+  
+  .badText {
+    color: var(--monitor-red);
+  }
+  
+  .patternBars {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 6px;
+    gap: 4px;
+    align-items: center;
+    padding: 7px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--monitor-line);
+    background: var(--monitor-surface-muted);
+  }
+  
+  .patternBarsPlain {
+    grid-auto-columns: 4px;
+    gap: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  
+  .patternBar {
+    width: 6px;
+    height: 16px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--monitor-muted) 24%, transparent);
+  }
+  
+  .patternBarPlain {
+    width: 4px;
+    height: 24px;
+  }
+  
+  .patternSuccess {
+    background: var(--monitor-green);
+  }
+  
+  .patternFailed {
+    background: var(--monitor-red);
+  }
+  
+  .priceEditor {
+    margin-top: 14px;
+    display: grid;
+    gap: 14px;
+  }
+  
+  .priceGrid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-items: end;
+    gap: 12px;
+  }
+  
+  .priceField {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  
+  .priceField :global(.form-group) {
+    margin-bottom: 0;
+  }
+  
+  .priceField :global(.input) {
+    min-height: 44px;
+  }
+  
+  .priceField input,
+  .priceField button {
+    min-height: 44px;
+  }
+  
+  .priceFieldModel {
+    grid-column: span 5;
+  }
+  
+  .priceFieldPrompt {
+    grid-column: span 7;
+  }
+  
+  .priceFieldCompletion,
+  .priceFieldCache {
+    grid-column: span 6;
+  }
+  
+  .priceActionsBar {
+    margin-top: 2px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  
+  .savedPricesList {
+    margin-top: 14px;
+    display: grid;
+    gap: 10px;
+  }
+  
+  .savedPricesHeader {
+    color: var(--monitor-ink);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  
+  .savedPricesTableWrap {
+    overflow-x: auto;
+    border: 1px solid color-mix(in srgb, var(--monitor-line-strong) 30%, var(--monitor-line));
+    border-radius: 16px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--monitor-surface-elevated) 90%, white 10%),
+      var(--monitor-surface)
+    );
+  }
+  
+  .savedPricesTable {
+    width: 100%;
+    min-width: 720px;
+    border-collapse: collapse;
+  }
+  
+  .savedPricesTable thead th {
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 90%, transparent);
+    background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-muted));
+    color: var(--monitor-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1.2;
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  
+  .savedPricesTable tbody td {
+    padding: 13px 14px;
+    border-top: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+    color: var(--monitor-ink);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+    white-space: nowrap;
+    background: color-mix(in srgb, var(--monitor-surface) 88%, white 12%);
+    transition: background 0.18s ease;
+  }
+  
+  .savedPricesTable tbody tr:first-child td {
+    border-top: 0;
+  }
+  
+  .savedPricesTable tbody tr:nth-child(odd) td {
+    background: color-mix(in srgb, var(--monitor-accent) 4%, var(--monitor-surface-elevated));
+  }
+  
+  .savedPricesTable tbody tr:nth-child(even) td {
+    background: color-mix(in srgb, var(--monitor-surface) 92%, var(--monitor-surface-elevated));
+  }
+  
+  .savedPricesTable tbody tr:hover td {
+    background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-hover));
+  }
+  
+  .savedPricesTable th:last-child,
+  .savedPricesTable td:last-child {
+    text-align: left;
+  }
+  
+  .savedPricesModelCell {
+    min-width: 200px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  
+  .savedPricesActionsCell {
+    min-width: 120px;
+  }
+  
+  .savedPricesActions {
+    justify-content: flex-start;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  
+  .tableWrapper {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  
+  .table {
+    width: 100%;
+    min-width: 1120px;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+  }
+  
+  .accountOverviewTable {
+    --account-col-account: 21%;
+    --account-col-status: 8%;
+    --account-col-total-calls: 5%;
+    --account-col-success-calls: 7%;
+    --account-col-failure-calls: 7%;
+    --account-col-success-rate: 8%;
+    --account-col-total-tokens: 10%;
+    --account-col-estimated-cost: 9%;
+    --account-col-latest-request: 13%;
+    --account-col-action: 12%;
+    --account-overview-columns: var(--account-col-account) var(--account-col-status)
+      var(--account-col-total-calls) var(--account-col-success-calls) var(--account-col-failure-calls)
+      var(--account-col-success-rate) var(--account-col-total-tokens)
+      var(--account-col-estimated-cost) var(--account-col-latest-request) var(--account-col-action);
+  
+    min-width: 1180px;
+    overflow: hidden;
+    border: 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    border-radius: 16px;
+    background: var(--monitor-surface-elevated);
+    table-layout: fixed;
+  }
+  
+  .accountOverviewTableWrapper {
+    overflow-x: auto;
+    border: 1px solid var(--monitor-line-strong);
+    border-radius: 16px;
+    background: var(--monitor-surface-elevated);
+  }
+  
+  .apiKeySummaryTable {
+    --api-key-col-key: 28%;
+    --api-key-col-total-calls: 9%;
+    --api-key-col-success-calls: 9%;
+    --api-key-col-failure-calls: 9%;
+    --api-key-col-total-tokens: 13%;
+    --api-key-col-estimated-cost: 12%;
+    --api-key-col-latest-request: 20%;
+  
+    min-width: 980px;
+    overflow: hidden;
+    border: 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    border-radius: 16px;
+    background: var(--monitor-surface-elevated);
+    table-layout: fixed;
+  }
+  
+  .apiKeySummaryTableWrapper {
+    overflow-x: auto;
+    border: 1px solid var(--monitor-line-strong);
+    border-radius: 16px;
+    background: var(--monitor-surface-elevated);
+  }
+  
+  .apiKeySummaryTable col:nth-child(1) {
+    width: var(--api-key-col-key);
+  }
+  
+  .apiKeySummaryTable col:nth-child(2) {
+    width: var(--api-key-col-total-calls);
+  }
+  
+  .apiKeySummaryTable col:nth-child(3) {
+    width: var(--api-key-col-success-calls);
+  }
+  
+  .apiKeySummaryTable col:nth-child(4) {
+    width: var(--api-key-col-failure-calls);
+  }
+  
+  .apiKeySummaryTable col:nth-child(5) {
+    width: var(--api-key-col-total-tokens);
+  }
+  
+  .apiKeySummaryTable col:nth-child(6) {
+    width: var(--api-key-col-estimated-cost);
+  }
+  
+  .apiKeySummaryTable col:nth-child(7) {
+    width: var(--api-key-col-latest-request);
+  }
+  
+  .accountOverviewTable col:nth-child(1) {
+    width: var(--account-col-account);
+  }
+  
+  .accountOverviewTable col:nth-child(2) {
+    width: var(--account-col-status);
+  }
+  
+  .accountOverviewTable col:nth-child(3) {
+    width: var(--account-col-total-calls);
+  }
+  
+  .accountOverviewTable col:nth-child(4) {
+    width: var(--account-col-success-calls);
+  }
+  
+  .accountOverviewTable col:nth-child(5) {
+    width: var(--account-col-failure-calls);
+  }
+  
+  .accountOverviewTable col:nth-child(6) {
+    width: var(--account-col-success-rate);
+  }
+  
+  .accountOverviewTable col:nth-child(7) {
+    width: var(--account-col-total-tokens);
+  }
+  
+  .accountOverviewTable col:nth-child(8) {
+    width: var(--account-col-estimated-cost);
+  }
+  
+  .accountOverviewTable col:nth-child(9) {
+    width: var(--account-col-latest-request);
+  }
+  
+  .accountOverviewTable col:nth-child(10) {
+    width: var(--account-col-action);
+  }
+  
+  .accountOverviewTable td:last-child {
+    min-width: 0;
+  }
+  
+  .accountOverviewTable td:last-child .inlineActionButton {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .accountActionGroup {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    width: 100%;
+  }
+  
+  .accountRowMenuButton {
+    flex: 0 0 auto;
+    min-width: 30px;
+    min-height: 30px;
+    padding: 0;
+    border-color: color-mix(in srgb, var(--monitor-line) 86%, transparent);
+    background: transparent;
+    color: var(--monitor-muted);
+  }
+  
+  .realtimeTable {
+    min-width: 1210px;
+  }
+  
+  .table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--monitor-surface) 92%, var(--monitor-surface-muted));
+    text-align: left;
+    color: var(--monitor-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  
+  .sortableHeaderButton {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: left;
+    text-transform: inherit;
+    cursor: pointer;
+  }
+  
+  .sortableHeaderButton:hover {
+    transform: none;
+    color: var(--monitor-ink);
+  }
+  
+  .sortableHeaderButton:focus,
+  .sortableHeaderButton:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+  
+  .sortableHeaderButtonActive {
+    color: var(--monitor-ink);
+  }
+  
+  .sortIndicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    min-width: 14px;
+    height: 14px;
+    color: var(--monitor-accent-strong);
+  }
+  
+  .sortIndicator svg {
+    display: block;
+  }
+  
+  .table tbody td {
+    padding: 12px 10px;
+    vertical-align: middle;
+    white-space: nowrap;
+    border-top: 1px solid var(--monitor-line);
+    border-bottom: 1px solid var(--monitor-line);
+    background: var(--monitor-surface-elevated);
+    transition:
+      border-color 0.18s ease,
+      background-color 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+  
+  .table tbody td:first-child {
+    border-left: 1px solid var(--monitor-line);
+    border-radius: 18px 0 0 18px;
+  }
+  
+  .table tbody td:last-child {
+    border-right: 1px solid var(--monitor-line);
+    border-radius: 0 18px 18px 0;
+  }
+  
+  .table tbody tr:nth-child(even) td {
+    background: color-mix(in srgb, var(--monitor-surface-elevated) 86%, var(--monitor-surface));
+  }
+  
+  .table tbody tr:hover td {
+    background: var(--monitor-surface-hover);
+  }
+  
+  .accountOverviewTable thead th {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--monitor-line);
+    background: color-mix(in srgb, var(--monitor-surface) 88%, var(--monitor-surface-muted));
+  }
+  
+  .table.accountOverviewTable tbody td {
+    padding: 12px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 88%, transparent);
+    border-radius: 0;
+    background: var(--monitor-surface-elevated);
+    box-shadow: none;
+  }
+  
+  .table.accountOverviewTable tbody td:first-child,
+  .table.accountOverviewTable tbody td:last-child {
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+  
+  .table.accountOverviewTable tbody tr:nth-child(even) td {
+    background: var(--monitor-surface-elevated);
+  }
+  
+  .table.accountOverviewTable tbody .accountSummaryRow:hover td {
+    background: var(--monitor-surface-hover);
+  }
+  
+  .apiKeySummaryTable thead th {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--monitor-line);
+    background: color-mix(in srgb, var(--monitor-surface) 88%, var(--monitor-surface-muted));
+    box-shadow: inset 0 -1px 0 var(--monitor-line);
+  }
+  
+  .table.apiKeySummaryTable tbody td {
+    padding: 12px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 88%, transparent);
+    border-radius: 0;
+    background: var(--monitor-surface-elevated);
+    box-shadow: none;
+  }
+  
+  .table.apiKeySummaryTable tbody td:first-child,
+  .table.apiKeySummaryTable tbody td:last-child {
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+  
+  .table.apiKeySummaryTable tbody tr:nth-child(even) td {
+    background: var(--monitor-surface-elevated);
+  }
+  
+  .table.apiKeySummaryTable tbody .apiKeySummaryRow:hover td {
+    background: var(--monitor-surface-hover);
+  }
+  
+  .table.apiKeySummaryTable tbody .apiKeySummaryRowExpanded td {
+    border-bottom-color: transparent;
+  }
+  
+  .innerTable {
+    min-width: 940px;
+  }
+  
+  .primaryCell {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  
+  .primaryCell small,
+  .statusCell small {
+    color: var(--monitor-muted);
+    font-size: 11px;
+  }
+  
+  .monoCell {
+    font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  }
+  
+  .statusCell {
+    display: grid;
+    gap: 6px;
+    min-width: 88px;
+  }
+  
+  .recentStatusCell {
+    display: flex;
+    align-items: center;
+    min-width: 70px;
+  }
+  
+  .realtimeTable .statusBadge {
+    min-height: 30px;
+    padding: 0 12px;
+    font-size: 11px;
+  }
+  
+  .realtimeTable .statusBadge::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+  
+  .paginationBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--monitor-line);
+  }
+  
+  .paginationInfo {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--monitor-line);
+    background: var(--monitor-surface-elevated);
+    color: var(--monitor-muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  
+  .paginationControls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  
+  .loadMoreEventsBar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    margin-top: 10px;
+    color: var(--monitor-muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  
+  .pageSizeField {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    gap: 8px;
+    min-height: 34px;
+    padding: 0 8px 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--monitor-line);
+    background: var(--monitor-surface-elevated);
+    color: var(--monitor-muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  
+  .pageSizeSelect {
+    width: 104px;
+    flex: 0 0 auto;
+  }
+  
+  .pageSizeSelectTrigger {
+    min-width: 88px;
+    height: 30px !important;
+    padding: 0 2px 0 8px !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--monitor-ink);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  
+  .pageSizeSelectTrigger:hover,
+  .pageSizeSelectTrigger:focus,
+  .pageSizeSelectTrigger[aria-expanded='true'] {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  
+
+}
