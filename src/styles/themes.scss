@@ -31,6 +31,11 @@
   --app-text-muted: #8b95a6;
   --app-accent: #0a7edc;
   --app-accent-soft: rgba(10, 126, 220, 0.12);
+  --surface-subtle: #f6faff;
+  --surface-subtle-hover: #f1f7fe;
+  --surface-subtle-strong: #eef6ff;
+  --border-subtle: #d8e5f2;
+  --border-subtle-dashed: #d3e1ef;
   --app-radius-lg: 20px;
   --app-radius-md: 12px;
   --app-radius-sm: 8px;
@@ -48,7 +53,7 @@
   --sidebar-collapsed-width-token: 54px;
 
   --primary-gradient: linear-gradient(135deg, #0a7edc 0%, #32a6ff 100%);
-  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg: #ffffff;
   --glass-bg-secondary: rgba(255, 255, 255, 0.58);
   --glass-border: rgba(255, 255, 255, 0.6);
   --glass-shadow: none;
@@ -166,7 +171,7 @@
   --app-surface-muted: rgba(255, 255, 255, 0.68);
   --bg-secondary: var(--app-bg);
   --bg-quinary: #ffffff;
-  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-bg: #ffffff;
   --glass-bg-secondary: rgba(255, 255, 255, 0.7);
   --sidebar-bg-color: rgba(255, 255, 255, 0.58);
   --sidebar-logo-bg-color: rgba(255, 255, 255, 0.38);
@@ -193,6 +198,11 @@
   --app-text-regular: #a3a3a3;
   --app-text-muted: #7a7a7a;
   --app-accent-soft: rgba(50, 166, 255, 0.18);
+  --surface-subtle: rgba(255, 255, 255, 0.06);
+  --surface-subtle-hover: rgba(50, 166, 255, 0.12);
+  --surface-subtle-strong: rgba(50, 166, 255, 0.16);
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-subtle-dashed: rgba(255, 255, 255, 0.14);
 
   --sidebar-bg-color: rgba(24, 28, 40, 0.42);
   --sidebar-logo-bg-color: rgba(24, 28, 40, 0.28);

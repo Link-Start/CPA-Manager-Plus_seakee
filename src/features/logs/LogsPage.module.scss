@@ -147,8 +147,8 @@
   gap: 8px;
   flex: 1 1 100%;
   padding: 8px 10px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: $radius-md;
 }
 
@@ -265,7 +265,7 @@
   color: var(--text-secondary);
 
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--surface-subtle-hover);
   }
 }
 
@@ -308,8 +308,8 @@
 }
 
 .logPanel {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: $radius-md;
   flex: 1 1 auto;
   min-height: 280px;

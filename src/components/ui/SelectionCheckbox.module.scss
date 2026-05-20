@@ -32,8 +32,8 @@
   height: 22px;
   flex-shrink: 0;
   border-radius: 7px;
-  border: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
   color: var(--primary-contrast, #fff);
   display: inline-flex;
   align-items: center;
@@ -55,7 +55,7 @@
 }
 
 .disabled:hover .box {
-  border-color: var(--border-color);
+  border-color: var(--border-subtle);
   box-shadow: none;
 }
 

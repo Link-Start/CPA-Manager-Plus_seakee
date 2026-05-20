@@ -110,8 +110,8 @@
   align-items: center;
   padding: 4px 10px;
   border-radius: $radius-full;
-  border: 1px solid var(--border-color);
-  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-subtle);
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -120,7 +120,7 @@
   &:hover {
     border-color: var(--primary-color);
     color: var(--text-primary);
-    background-color: var(--bg-tertiary);
+    background-color: var(--surface-subtle-hover);
   }
 
   &:disabled {

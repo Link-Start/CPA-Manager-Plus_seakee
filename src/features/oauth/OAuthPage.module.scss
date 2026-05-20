@@ -106,8 +106,8 @@
 }
 
 .authUrlBox {
-  background: var(--bg-secondary);
-  border: 1px dashed var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-subtle-dashed);
   border-radius: $radius-md;
   padding: $spacing-md;
   display: flex;
@@ -152,8 +152,8 @@
   }
 
   :global(.input:disabled) {
-    background-color: var(--bg-tertiary);
-    border-color: var(--border-color);
+    background-color: var(--surface-subtle);
+    border-color: var(--border-subtle);
     color: var(--text-tertiary);
     cursor: not-allowed;
   }
@@ -194,8 +194,8 @@
 }
 
 .connectionBox {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: $radius-md;
   padding: $spacing-md;
   display: flex;

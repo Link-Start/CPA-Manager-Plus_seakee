@@ -2,9 +2,9 @@
 .settingsModal {
   --inspect-bg: var(--bg-secondary);
   --inspect-surface: var(--bg-primary);
-  --inspect-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-secondary));
-  --inspect-surface-muted: var(--bg-tertiary);
-  --inspect-surface-hover: color-mix(in srgb, var(--bg-tertiary) 74%, var(--bg-primary));
+  --inspect-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--surface-subtle));
+  --inspect-surface-muted: var(--surface-subtle);
+  --inspect-surface-hover: color-mix(in srgb, var(--surface-subtle-hover) 74%, var(--bg-primary));
   --inspect-line: var(--border-color);
   --inspect-line-strong: var(--border-primary);
   --inspect-ink: var(--text-primary);

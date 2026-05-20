@@ -679,13 +679,6 @@ export function AuthFilesPage() {
     </div>
   );
 
-  const titleNode = (
-    <div className={styles.titleWrapper}>
-      <span>{t('auth_files.title_section')}</span>
-      {files.length > 0 && <span className={styles.countBadge}>{files.length}</span>}
-    </div>
-  );
-
   const deleteAllButtonLabel = (() => {
     if (disabledOnly || healthyOnly) {
       return t('auth_files.delete_filtered_result_button');
@@ -705,65 +698,68 @@ export function AuthFilesPage() {
   return (
     <div className={styles.container}>
       <section className={styles.authFilesShell}>
-        <div className={styles.authFilesHeader}>
-          <div className={styles.authFilesTitle}>{titleNode}</div>
-          <div className={styles.headerActions}>
-            <Button variant="secondary" size="sm" onClick={handleHeaderRefresh} disabled={loading}>
-              {t('common.refresh')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setAuthJsonPasteOpen(true)}
-              disabled={disableControls || authJsonPasteSaving}
-              loading={authJsonPasteSaving}
-            >
-              {t('auth_files.paste_button')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleUploadClick}
-              disabled={disableControls || uploading}
-              loading={uploading}
-            >
-              {t('auth_files.upload_button')}
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() =>
-                handleDeleteAll({
-                  filter: normalizedFilter,
-                  problemOnly,
-                  disabledOnly,
-                  healthyOnly,
-                  onResetFilterToAll: () => setFilter('all'),
-                  onResetProblemOnly: () => setProblemOnly(false),
-                  onResetDisabledOnly: () => setDisabledOnly(false),
-                  onResetHealthyOnly: () => setHealthyOnly(false),
-                })
-              }
-              disabled={disableControls || loading || deletingAll}
-              loading={deletingAll}
-            >
-              {deleteAllButtonLabel}
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
-          </div>
-        </div>
-
         {error && <div className={styles.errorBox}>{error}</div>}
 
         <div className={styles.filterSection}>
           <div className={styles.filterPanel}>
-            <div className={styles.filterPanelTags}>{renderFilterTags()}</div>
+            <div className={styles.filterPanelHeader}>
+              <div className={styles.filterPanelTags}>{renderFilterTags()}</div>
+              <div className={styles.headerActions}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleHeaderRefresh}
+                  disabled={loading}
+                >
+                  {t('common.refresh')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setAuthJsonPasteOpen(true)}
+                  disabled={disableControls || authJsonPasteSaving}
+                  loading={authJsonPasteSaving}
+                >
+                  {t('auth_files.paste_button')}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleUploadClick}
+                  disabled={disableControls || uploading}
+                  loading={uploading}
+                >
+                  {t('auth_files.upload_button')}
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() =>
+                    handleDeleteAll({
+                      filter: normalizedFilter,
+                      problemOnly,
+                      disabledOnly,
+                      healthyOnly,
+                      onResetFilterToAll: () => setFilter('all'),
+                      onResetProblemOnly: () => setProblemOnly(false),
+                      onResetDisabledOnly: () => setDisabledOnly(false),
+                      onResetHealthyOnly: () => setHealthyOnly(false),
+                    })
+                  }
+                  disabled={disableControls || loading || deletingAll}
+                  loading={deletingAll}
+                >
+                  {deleteAllButtonLabel}
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+              </div>
+            </div>
             <div className={styles.filterControlsPanel}>
               <div className={styles.filterControls}>
                 <div className={styles.filterItem}>

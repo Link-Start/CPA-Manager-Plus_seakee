@@ -437,7 +437,7 @@
   
   .accountOverviewEnabledStateDisabled {
     color: var(--text-secondary);
-    background: color-mix(in srgb, var(--bg-tertiary) 84%, transparent);
+    background: color-mix(in srgb, var(--surface-subtle) 84%, transparent);
     border-color: var(--monitor-line);
   }
   

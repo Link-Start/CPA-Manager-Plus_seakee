@@ -6,9 +6,9 @@
 .monitorModal {
   --monitor-bg: var(--bg-secondary);
   --monitor-surface: var(--bg-primary);
-  --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-secondary));
-  --monitor-surface-muted: var(--bg-tertiary);
-  --monitor-surface-hover: color-mix(in srgb, var(--bg-tertiary) 74%, var(--bg-primary));
+  --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--surface-subtle));
+  --monitor-surface-muted: var(--surface-subtle);
+  --monitor-surface-hover: color-mix(in srgb, var(--surface-subtle-hover) 74%, var(--bg-primary));
   --monitor-ink: var(--text-primary);
   --monitor-muted: var(--text-secondary);
   --monitor-line: var(--border-color);
@@ -26,14 +26,6 @@
 .page {
   container: monitoring-page / inline-size;
   display: grid;
-  gap: 20px;
-  min-width: 0;
-}
-
-.headerShell {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   gap: 20px;
   min-width: 0;
 }
@@ -218,8 +210,18 @@
   min-width: 0;
 }
 
-.actionGroupNav {
+.actionBarMeta {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+
+  .statusBar {
+    min-width: 0;
+  }
 }
 
 .actionButton,
@@ -987,10 +989,6 @@
 }
 
 @container monitoring-page (max-width: 1240px) {
-  .headerShell {
-    grid-template-columns: 1fr;
-  }
-
   .statusBar,
   .statusMeta {
     justify-content: flex-start;
@@ -1001,8 +999,9 @@
     flex-direction: column;
   }
 
-  .actionGroupNav {
+  .actionBarMeta {
     justify-content: flex-start;
+    width: 100%;
   }
 
   .masthead {
@@ -1138,10 +1137,6 @@
     gap: 16px;
   }
 
-  .headerShell {
-    gap: 14px;
-  }
-
   .panelSubtitle {
     font-size: 13px;
     line-height: 1.55;
@@ -1167,6 +1162,7 @@
   .toolbarControls,
   .actionBar,
   .actionGroup,
+  .actionBarMeta,
   .refreshControls,
   .filterSearchRow,
   .realtimeHeaderActions {

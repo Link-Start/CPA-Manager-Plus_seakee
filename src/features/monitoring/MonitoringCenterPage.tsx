@@ -50,7 +50,10 @@ import { MonitoringActionBar } from '@/features/monitoring/components/Monitoring
 import { MonitoringCustomRangeModal } from '@/features/monitoring/components/MonitoringCustomRangeModal';
 import { MonitoringFiltersPanel } from '@/features/monitoring/components/MonitoringFiltersPanel';
 import { MonitoringPriceModal } from '@/features/monitoring/components/MonitoringPriceModal';
-import { MonitoringStatusHeader } from '@/features/monitoring/components/MonitoringStatusHeader';
+import {
+  MonitoringStatusHeader,
+  MonitoringStatusSummary,
+} from '@/features/monitoring/components/MonitoringStatusHeader';
 import { MonitoringSummarySection } from '@/features/monitoring/components/MonitoringSummarySection';
 import { RealtimeEventsPanel } from '@/features/monitoring/components/RealtimeEventsPanel';
 import {
@@ -1076,12 +1079,6 @@ export function MonitoringCenterPage() {
     <div className={styles.page}>
       <MonitoringStatusHeader
         showLoadingOverlay={overallLoading && filteredRows.length === 0}
-        connectionTone={connectionTone}
-        connectionLabel={connectionLabel}
-        lastRefreshedAt={monitoringLastRefreshedAt}
-        locale={i18n.language}
-        scopedFailureCount={scopedFailureCount}
-        totalCalls={scopedSummary.totalCalls}
         monitoringUnavailable={monitoringUnavailable}
         monitoringUnavailableTitle={monitoringUnavailableTitle}
         monitoringUnavailableBody={monitoringUnavailableBody}
@@ -1099,6 +1096,17 @@ export function MonitoringCenterPage() {
         onUsageImportClick={handleUsageImportClick}
         onUsageImportChange={handleUsageImportChange}
         onOpenPriceModal={() => setIsPriceModalOpen(true)}
+        statusSummary={
+          <MonitoringStatusSummary
+            connectionTone={connectionTone}
+            connectionLabel={connectionLabel}
+            lastRefreshedAt={monitoringLastRefreshedAt}
+            locale={i18n.language}
+            scopedFailureCount={scopedFailureCount}
+            totalCalls={scopedSummary.totalCalls}
+            t={t}
+          />
+        }
       />
 
       <MonitoringFiltersPanel

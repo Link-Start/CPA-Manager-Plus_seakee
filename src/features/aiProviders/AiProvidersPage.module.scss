@@ -105,9 +105,9 @@ $openai-toolbar-control-height: 36px;
   > button {
     height: $openai-toolbar-control-height;
     padding: 0 12px;
-    border-color: var(--border-primary);
+    border-color: var(--border-subtle);
     border-radius: 6px;
-    background: var(--bg-secondary);
+    background: var(--surface-subtle);
     box-shadow: none;
     font-size: 13px;
   }
@@ -119,15 +119,15 @@ $openai-toolbar-control-height: 36px;
   min-width: 74px;
   height: $openai-toolbar-control-height;
   padding: 0 10px;
-  border-color: var(--border-primary);
+  border-color: var(--border-subtle);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
   color: var(--text-primary);
   gap: 6px;
 
   &:hover {
     border-color: var(--primary-color);
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
   }
 
   > span {
@@ -193,9 +193,9 @@ $openai-toolbar-control-height: 36px;
   align-items: center;
   width: 164px;
   height: $openai-toolbar-control-height;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
   overflow: hidden;
   transition:
     background-color $transition-fast,
@@ -204,13 +204,13 @@ $openai-toolbar-control-height: 36px;
 
   &:hover {
     border-color: var(--primary-color);
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
   }
 }
 
 .modelFilterControlActive {
-  border-color: color-mix(in srgb, var(--primary-color) 46%, var(--border-primary));
-  background: color-mix(in srgb, var(--primary-color) 7%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--primary-color) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--primary-color) 7%, var(--surface-subtle));
 }
 
 .modelFilterControlDisabled {
@@ -218,8 +218,8 @@ $openai-toolbar-control-height: 36px;
   cursor: not-allowed;
 
   &:hover {
-    border-color: var(--border-primary);
-    background: var(--bg-secondary);
+    border-color: var(--border-subtle);
+    background: var(--surface-subtle);
   }
 }
 
@@ -302,7 +302,7 @@ $openai-toolbar-control-height: 36px;
     color $transition-fast;
 
   &:hover {
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
     color: var(--text-primary);
   }
 
@@ -340,8 +340,8 @@ $openai-toolbar-control-height: 36px;
   justify-content: space-between;
   gap: $spacing-xs;
   padding: 6px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-subtle-strong);
 }
 
 .modelDropdownSelectAll:global(.btn.btn-ghost),
@@ -352,7 +352,7 @@ $openai-toolbar-control-height: 36px;
   font-size: 12px;
 
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--surface-subtle-hover);
   }
 }
 
@@ -378,7 +378,7 @@ $openai-toolbar-control-height: 36px;
   transition: background 0.15s ease;
 
   &:hover {
-    background: var(--bg-secondary);
+    background: var(--surface-subtle-hover);
   }
 }
 
@@ -422,7 +422,7 @@ $openai-toolbar-control-height: 36px;
   font-weight: 600;
   line-height: 1.1;
   border: 1px solid transparent;
-  background-color: var(--bg-tertiary);
+  background-color: var(--surface-subtle);
   color: var(--text-primary);
   white-space: nowrap;
 }
@@ -485,8 +485,8 @@ $openai-toolbar-control-height: 36px;
   flex-wrap: wrap;
   min-width: 0;
   max-width: 100%;
-  background: var(--accent-tertiary, #f3f4f6);
-  border: 1px solid var(--border-primary);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 4px 10px;
   font-size: 12px;
@@ -531,16 +531,16 @@ $openai-toolbar-control-height: 36px;
   flex-wrap: wrap;
   min-width: 0;
   max-width: 100%;
-  background: var(--bg-quinary, #f8f9fa);
+  background: var(--surface-subtle);
   color: var(--text-secondary);
-  border: 1px solid var(--border-secondary);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   padding: 4px 10px;
   font-size: 12px;
   transition: all 0.15s ease;
 
   &:hover {
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
     border-color: var(--primary-color);
   }
 }
@@ -618,8 +618,8 @@ $openai-toolbar-control-height: 36px;
   min-width: 0;
   max-width: 100%;
   padding: 8px 12px;
-  background: var(--bg-secondary, #f9fafb);
-  border: 1px solid var(--border-secondary);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   font-size: 12px;
 }
@@ -724,7 +724,7 @@ $openai-toolbar-control-height: 36px;
 
   &:hover {
     border-color: var(--primary-color);
-    background: var(--bg-secondary);
+    background: var(--surface-subtle-hover);
   }
 }
 
@@ -735,7 +735,7 @@ $openai-toolbar-control-height: 36px;
 
 .modelDiscoveryRowSelected {
   border-color: var(--primary-color);
-  background: var(--bg-tertiary);
+  background: var(--surface-subtle-strong);
 }
 
 .modelDiscoveryMeta {
@@ -835,7 +835,7 @@ $openai-toolbar-control-height: 36px;
 }
 
 .statusBlockIdle {
-  background-color: var(--border-secondary, #e5e7eb);
+  background-color: var(--border-subtle);
 }
 
 .statusTooltip {
@@ -844,7 +844,7 @@ $openai-toolbar-control-height: 36px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--bg-primary, #fff);
-  border: 1px solid var(--border-secondary, #e5e7eb);
+  border: 1px solid var(--border-subtle, #d8e5f2);
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 11px;
@@ -873,7 +873,7 @@ $openai-toolbar-control-height: 36px;
     left: 50%;
     transform: translateX(-50%);
     border: 6px solid transparent;
-    border-top-color: var(--border-secondary, #e5e7eb);
+    border-top-color: var(--border-subtle, #d8e5f2);
   }
 }
 
@@ -936,7 +936,7 @@ $openai-toolbar-control-height: 36px;
   white-space: nowrap;
   padding: 4px 8px;
   border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-subtle);
 }
 
 .statusRateHigh {
@@ -1121,9 +1121,9 @@ $openai-toolbar-control-height: 36px;
   gap: $spacing-md;
   margin-top: 0;
   padding: $spacing-sm $spacing-md;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-subtle);
   border-radius: $radius-md;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
 
   @include mobile {
     flex-direction: column;
@@ -1228,8 +1228,8 @@ $openai-toolbar-control-height: 36px;
   gap: $spacing-sm;
   min-width: 760px;
   padding: 10px $spacing-md;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle-strong);
+  border: 1px solid var(--border-subtle);
   border-bottom: none;
   border-radius: $radius-md $radius-md 0 0;
   font-size: 12px;
@@ -1247,8 +1247,8 @@ $openai-toolbar-control-height: 36px;
   gap: $spacing-sm;
   min-width: 760px;
   padding: 10px $spacing-md;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-top: none;
   align-items: center;
 
@@ -1257,7 +1257,7 @@ $openai-toolbar-control-height: 36px;
   }
 
   &:hover {
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
   }
 }
 
@@ -1381,8 +1381,8 @@ $openai-toolbar-control-height: 36px;
   }
 
   .apiKeyEntryCard {
-    background: var(--bg-tertiary);
-    border-color: var(--border-primary);
+    background: var(--surface-subtle);
+    border-color: var(--border-subtle);
   }
 
   .apiKeyEntryIndex {

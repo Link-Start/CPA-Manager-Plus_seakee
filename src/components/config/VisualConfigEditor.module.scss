@@ -61,8 +61,8 @@
   :global(.item-row) {
     border-radius: 18px;
     padding: 14px 16px;
-    background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
-    border-color: color-mix(in srgb, var(--border-color) 86%, transparent);
+    background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
+    border-color: color-mix(in srgb, var(--border-subtle) 86%, transparent);
   }
 
   :global(.item-row .item-meta) {
@@ -74,8 +74,8 @@
   }
 
   :global(.pill) {
-    background: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border-color) 84%, transparent);
+    background: color-mix(in srgb, var(--surface-subtle) 84%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border-subtle) 84%, transparent);
     color: var(--text-secondary);
   }
 }
@@ -215,7 +215,7 @@
   width: 27px;
   height: 27px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
   color: var(--text-secondary);
   flex: 0 0 auto;
 }
@@ -342,8 +342,8 @@
 
   &:hover {
     transform: translateX(2px);
-    background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
-    border-color: color-mix(in srgb, var(--border-color) 88%, transparent);
+    background: color-mix(in srgb, var(--surface-subtle-hover) 86%, transparent);
+    border-color: color-mix(in srgb, var(--border-subtle) 88%, transparent);
   }
 
   @media (max-width: 1024px) {
@@ -369,8 +369,8 @@
   width: 32px;
   height: 32px;
   border-radius: 11px;
-  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-color) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 84%, transparent);
   color: var(--primary-hover);
   flex: 0 0 auto;
 }
@@ -435,8 +435,8 @@
   box-sizing: border-box;
   padding: clamp(20px, 3vw, 30px);
   border-radius: 32px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 84%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 76%, transparent);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
 }
 
 .sectionGrid {
@@ -476,8 +476,8 @@
   box-sizing: border-box;
   padding: 16px 18px;
   border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 84%, transparent);
 
   @include mobile {
     grid-template-columns: minmax(0, 1fr);
@@ -538,8 +538,8 @@
   min-height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
@@ -552,8 +552,7 @@
   gap: 14px;
   padding: 18px 20px;
   border-radius: 24px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
 }
 
 .subsectionHeader {
@@ -612,8 +611,8 @@
   gap: 12px;
   padding: 14px;
   border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 84%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 84%, transparent);
+  background: var(--bg-primary);
 }
 
 .ruleCardHeader {
@@ -645,12 +644,12 @@
 }
 
 .emptyState {
-  border: 1px dashed color-mix(in srgb, var(--border-color) 84%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--border-subtle-dashed) 84%, transparent);
   border-radius: 18px;
   padding: 18px 16px;
   color: var(--text-secondary);
   text-align: center;
-  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
 }
 
 .stringList {

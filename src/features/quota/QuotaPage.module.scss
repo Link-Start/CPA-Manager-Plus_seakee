@@ -67,9 +67,9 @@
   gap: $spacing-md;
   align-items: end;
   padding: $spacing-md;
-  border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+  border: 1px solid var(--glass-border);
   border-radius: $radius-lg;
-  background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
+  background: var(--glass-bg);
 
   @include mobile {
     grid-template-columns: 1fr;
@@ -114,7 +114,7 @@
 
 .statsInfo {
   padding: 8px 12px;
-  background-color: var(--bg-secondary);
+  background-color: var(--surface-subtle);
   border-radius: $radius-md;
   font-size: 13px;
   color: var(--text-secondary);
@@ -174,8 +174,8 @@
   align-items: center;
   padding: 3px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
   @include mobile {
@@ -223,7 +223,7 @@
 .refreshAllButton:global(.btn.btn-sm) {
   padding-inline: 14px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-secondary));
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-subtle));
   border-color: color-mix(in srgb, var(--primary-color) 22%, var(--border-color));
   color: var(--text-primary);
 
@@ -235,7 +235,7 @@
   }
 
   &:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--primary-color) 16%, var(--bg-secondary));
+    background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-subtle));
     border-color: color-mix(in srgb, var(--primary-color) 34%, var(--border-color));
   }
 
@@ -250,7 +250,7 @@
 }
 
 :global([data-theme='dark']) .refreshAllButton:global(.btn.btn-sm) {
-  background: color-mix(in srgb, var(--primary-color) 18%, var(--bg-secondary));
+  background: color-mix(in srgb, var(--primary-color) 18%, var(--surface-subtle));
   border-color: color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
 }
 
@@ -336,7 +336,7 @@
 
 .quotaBar {
   height: 8px;
-  background-color: var(--bg-tertiary);
+  background-color: var(--surface-subtle-strong);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -703,7 +703,7 @@
   font-size: 13px;
   color: var(--text-secondary);
   padding: $spacing-xs $spacing-md;
-  background-color: var(--bg-secondary);
+  background-color: var(--surface-subtle);
   border-radius: $radius-md;
 }
 

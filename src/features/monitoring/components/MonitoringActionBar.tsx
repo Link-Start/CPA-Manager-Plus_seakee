@@ -1,8 +1,7 @@
-import type { ChangeEvent, RefObject } from 'react';
+import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import type { TFunction } from 'i18next';
 import {
-  IconChartLine,
   IconDownload,
   IconExternalLink,
   IconFileText,
@@ -21,6 +20,7 @@ type MonitoringActionBarProps = {
   onUsageImportClick: () => void;
   onUsageImportChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onOpenPriceModal: () => void;
+  statusSummary: ReactNode;
 };
 
 export function MonitoringActionBar({
@@ -34,6 +34,7 @@ export function MonitoringActionBar({
   onUsageImportClick,
   onUsageImportChange,
   onOpenPriceModal,
+  statusSummary,
 }: MonitoringActionBarProps) {
   return (
     <section className={styles.actionBar} aria-label={t('common.action')}>
@@ -83,12 +84,8 @@ export function MonitoringActionBar({
         />
       </div>
 
-      <div className={`${styles.actionGroup} ${styles.actionGroupNav}`}>
-        <Link to="/codex-inspection" className={`${styles.actionButton} ${styles.quickNavLink}`}>
-          <IconChartLine size={16} />
-          <span>{t('monitoring.codex_inspection_entry')}</span>
-          <IconExternalLink size={14} />
-        </Link>
+      <div className={styles.actionBarMeta}>
+        {statusSummary}
         {loggingToFile ? (
           <Link to="/logs" className={`${styles.actionButton} ${styles.quickNavLink}`}>
             <IconFileText size={16} />

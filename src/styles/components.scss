@@ -338,7 +338,7 @@ textarea {
 
     &:hover {
       color: var(--text-primary);
-      background: var(--bg-secondary);
+      background: var(--surface-subtle-hover);
     }
   }
 }
@@ -402,9 +402,9 @@ textarea {
 .pill {
   padding: 4px 10px;
   border-radius: $radius-full;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
   color: var(--text-secondary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-subtle);
   font-size: 12px;
 }
 
@@ -523,8 +523,8 @@ textarea {
   width: 32px;
   height: 32px;
   padding: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   cursor: pointer;
   border-radius: $radius-full;
@@ -543,7 +543,7 @@ textarea {
 
   &:hover {
     color: var(--text-primary);
-    background: var(--bg-tertiary);
+    background: var(--surface-subtle-hover);
     transform: scale(1.1);
   }
 
@@ -559,7 +559,7 @@ textarea {
 
   &:disabled:hover {
     color: var(--text-secondary);
-    background: var(--bg-secondary);
+    background: var(--surface-subtle);
     transform: none;
   }
 }
@@ -647,10 +647,10 @@ textarea {
 }
 
 .empty-state {
-  border: 1px dashed var(--border-color);
+  border: 1px dashed var(--border-subtle-dashed);
   border-radius: $radius-lg;
   padding: $spacing-lg;
-  background: var(--bg-secondary);
+  background: var(--surface-subtle);
   display: flex;
   justify-content: space-between;
   gap: $spacing-md;
@@ -666,7 +666,8 @@ textarea {
     width: 42px;
     height: 42px;
     border-radius: $radius-full;
-    border: 2px solid var(--border-color);
+    border: 2px solid var(--border-subtle);
+    background: var(--surface-subtle-strong);
     display: grid;
     place-items: center;
     color: var(--text-secondary);
@@ -795,7 +796,7 @@ textarea {
   }
 
   .table-header {
-    background: var(--bg-secondary);
+    background: var(--surface-subtle-strong);
     font-weight: 700;
     color: var(--text-primary);
   }
@@ -841,8 +842,8 @@ textarea {
 }
 
 .log-viewer {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: $radius-md;
   padding: $spacing-md;
   max-height: 520px;

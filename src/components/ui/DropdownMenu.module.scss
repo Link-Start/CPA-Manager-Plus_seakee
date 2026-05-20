@@ -25,8 +25,8 @@
 .trigger:hover,
 .triggerOpen {
   transform: translateY(-1px);
-  border-color: var(--border-primary, #d1d5db);
-  background: var(--bg-tertiary, #f3f4f6);
+  border-color: var(--border-subtle, #d8e5f2);
+  background: var(--surface-subtle-hover, #f1f7fe);
 }
 
 .trigger:focus,
@@ -78,7 +78,7 @@
 .item:hover,
 .item:focus,
 .itemActive {
-  background: var(--bg-tertiary, #f3f4f6);
+  background: var(--surface-subtle-hover, #f1f7fe);
 }
 
 .item:focus,
@@ -117,5 +117,5 @@
 .divider {
   height: 1px;
   margin: 4px 4px;
-  background: var(--border-color, #e5e7eb);
+  background: var(--border-subtle, #d8e5f2);
 }

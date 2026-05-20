@@ -7,26 +7,53 @@ import styles from '../MonitoringCenterPage.module.scss';
 
 type MonitoringStatusHeaderProps = {
   showLoadingOverlay: boolean;
-  connectionTone: MonitoringStatusTone;
-  connectionLabel: string;
-  lastRefreshedAt: Date | null;
-  locale: string;
-  scopedFailureCount: number;
-  totalCalls: number;
   monitoringUnavailable: boolean;
   monitoringUnavailableTitle: string;
   monitoringUnavailableBody: string;
   t: TFunction;
 };
 
-export function MonitoringStatusHeader({
-  showLoadingOverlay,
+type MonitoringStatusSummaryProps = {
+  connectionTone: MonitoringStatusTone;
+  connectionLabel: string;
+  lastRefreshedAt: Date | null;
+  locale: string;
+  scopedFailureCount: number;
+  totalCalls: number;
+  t: TFunction;
+};
+
+export function MonitoringStatusSummary({
   connectionTone,
   connectionLabel,
   lastRefreshedAt,
   locale,
   scopedFailureCount,
   totalCalls,
+  t,
+}: MonitoringStatusSummaryProps) {
+  return (
+    <div className={styles.statusBar}>
+      <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
+        <span className={styles.statusDot} aria-hidden="true" />
+        {connectionLabel}
+      </span>
+      <div className={styles.statusMeta}>
+        <span>
+          {t('monitoring.last_sync')}:{' '}
+          {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
+        </span>
+        <span className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}>
+          {`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}
+        </span>
+        <span>{`${t('monitoring.total_calls')}: ${formatCompactNumber(totalCalls)}`}</span>
+      </div>
+    </div>
+  );
+}
+
+export function MonitoringStatusHeader({
+  showLoadingOverlay,
   monitoringUnavailable,
   monitoringUnavailableTitle,
   monitoringUnavailableBody,
@@ -42,25 +69,6 @@ export function MonitoringStatusHeader({
           </div>
         </div>
       ) : null}
-
-      <div className={styles.headerShell}>
-        <div className={styles.statusBar}>
-          <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
-            <span className={styles.statusDot} aria-hidden="true" />
-            {connectionLabel}
-          </span>
-          <div className={styles.statusMeta}>
-            <span>
-              {t('monitoring.last_sync')}:{' '}
-              {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
-            </span>
-            <span className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}>
-              {`${t('monitoring.recent_failures')}: ${scopedFailureCount}`}
-            </span>
-            <span>{`${t('monitoring.total_calls')}: ${formatCompactNumber(totalCalls)}`}</span>
-          </div>
-        </div>
-      </div>
 
       {monitoringUnavailable ? (
         <div className={styles.callout}>
