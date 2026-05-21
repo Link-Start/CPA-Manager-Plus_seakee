@@ -151,7 +151,6 @@ export function useMonitoringAnalytics({
         setLastRefreshedAt(new Date());
       } catch (err) {
         if (requestIdRef.current !== requestId) return;
-        setData(null);
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (requestIdRef.current === requestId) {

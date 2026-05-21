@@ -121,6 +121,42 @@ const buildEventsPageKey = (
     pageItems[pageItems.length - 1]?.event_hash ?? '',
   ].join(':');
 
+export const buildMonitoringEventsScopeKey = (
+  timeRange: UseMonitoringDataParams['timeRange'],
+  analyticsBounds: { startMs: number; endMs: number } | null,
+  searchQuery: string,
+  searchApiKeyHash: string | undefined,
+  filters: unknown,
+  granularity: string
+) =>
+  JSON.stringify({
+    range: timeRange,
+    bounds:
+      timeRange === 'custom'
+        ? analyticsBounds
+        : analyticsBounds
+          ? { startMs: analyticsBounds.startMs }
+          : null,
+    searchQuery,
+    searchApiKeyHash,
+    filters,
+    granularity,
+  });
+
+export const mergeMonitoringEventsPageItems = (
+  previousItems: MonitoringAnalyticsEventRow[],
+  pageItems: MonitoringAnalyticsEventRow[],
+  requestBeforeMs: number | null
+) => {
+  if (requestBeforeMs) {
+    return mergeAnalyticsEventItems(previousItems, pageItems);
+  }
+  if (previousItems.length === 0) {
+    return pageItems;
+  }
+  return mergeAnalyticsEventItems(pageItems, previousItems);
+};
+
 export function useMonitoringData({
   usage,
   config,
@@ -162,6 +198,11 @@ export function useMonitoringData({
       setChannels(payload.channels);
       setError(payload.error);
       setLoading(false);
+      setEventsPageState((previous) =>
+        previous.beforeMs === null && !previous.loadingMore
+          ? previous
+          : { ...previous, beforeMs: null, loadingMore: false }
+      );
       setAnalyticsNowMs(Date.now());
     },
     [config]
@@ -247,22 +288,30 @@ export function useMonitoringData({
     [customTimeRange, timeRange]
   );
 
-  const analyticsScopeKey = useMemo(
+  const eventsScopeKey = useMemo(
     () =>
-      JSON.stringify({
-        bounds: analyticsBounds,
+      buildMonitoringEventsScopeKey(
+        timeRange,
+        analyticsBounds,
         searchQuery,
         searchApiKeyHash,
-        filters: analyticsFilters,
-        granularity: analyticsGranularity,
-      }),
-    [analyticsBounds, analyticsFilters, analyticsGranularity, searchApiKeyHash, searchQuery]
+        analyticsFilters,
+        analyticsGranularity
+      ),
+    [
+      analyticsBounds,
+      analyticsFilters,
+      analyticsGranularity,
+      searchApiKeyHash,
+      searchQuery,
+      timeRange,
+    ]
   );
 
   const activeEventsPageState =
-    eventsPageState.scopeKey === analyticsScopeKey
+    eventsPageState.scopeKey === eventsScopeKey
       ? eventsPageState
-      : createEventsPageState(analyticsScopeKey);
+      : createEventsPageState(eventsScopeKey);
   const eventsBeforeMs = activeEventsPageState.beforeMs;
   const eventItems = activeEventsPageState.items;
   const eventsHasMore = activeEventsPageState.hasMore;
@@ -297,7 +346,7 @@ export function useMonitoringData({
     if (!page) return;
     const requestBeforeMs = eventsBeforeMs;
     const pageKey = buildEventsPageKey(
-      analyticsScopeKey,
+      eventsScopeKey,
       requestBeforeMs,
       page.items,
       page.next_before_ms
@@ -307,14 +356,14 @@ export function useMonitoringData({
       if (cancelled) return;
       setEventsPageState((previous) => {
         const base =
-          previous.scopeKey === analyticsScopeKey
+          previous.scopeKey === eventsScopeKey
             ? previous
-            : createEventsPageState(analyticsScopeKey);
+            : createEventsPageState(eventsScopeKey);
         if (base.lastPageKey === pageKey) return base;
         return {
-          scopeKey: analyticsScopeKey,
-          beforeMs: base.beforeMs,
-          items: requestBeforeMs ? mergeAnalyticsEventItems(base.items, page.items) : page.items,
+          scopeKey: eventsScopeKey,
+          beforeMs: requestBeforeMs,
+          items: mergeMonitoringEventsPageItems(base.items, page.items, requestBeforeMs),
           hasMore: page.has_more,
           loadingMore: false,
           lastPageKey: pageKey,
@@ -324,7 +373,7 @@ export function useMonitoringData({
     return () => {
       cancelled = true;
     };
-  }, [analyticsData?.events, analyticsScopeKey, eventsBeforeMs]);
+  }, [analyticsData?.events, eventsScopeKey, eventsBeforeMs]);
 
   useEffect(() => {
     if (analytics.error) {
@@ -347,16 +396,16 @@ export function useMonitoringData({
     if (!nextBeforeMs) return;
     setEventsPageState((previous) => {
       const base =
-        previous.scopeKey === analyticsScopeKey
+        previous.scopeKey === eventsScopeKey
           ? previous
-          : createEventsPageState(analyticsScopeKey);
+          : createEventsPageState(eventsScopeKey);
       if (base.loadingMore) return base;
       return { ...base, beforeMs: nextBeforeMs, loadingMore: true };
     });
   }, [
     analyticsData?.events?.next_before_ms,
     analytics.loading,
-    analyticsScopeKey,
+    eventsScopeKey,
     eventsHasMore,
     eventsLoadingMore,
   ]);

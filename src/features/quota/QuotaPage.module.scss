@@ -186,13 +186,15 @@
 
 .viewModeToggle {
   display: inline-flex;
-  gap: $spacing-xs;
-  align-items: center;
-  padding: 3px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  align-items: stretch;
+  gap: 0;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--surface-subtle));
+  border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
 
   @include mobile {
     flex: 1 1 auto;
@@ -201,18 +203,22 @@
 }
 
 .viewModeButton:global(.btn.btn-sm) {
-  height: 30px;
-  min-height: 30px;
+  height: auto;
+  min-height: 34px;
   padding: 0 12px;
-  border-radius: 12px;
-  border-color: transparent;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-primary));
   box-shadow: none;
 
+  &:first-child {
+    border-left: 0;
+  }
+
   &:hover:not(:disabled) {
-    border-color: transparent;
-    background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--bg-primary));
     color: var(--text-primary);
   }
 
@@ -226,15 +232,20 @@
 }
 
 .viewModeButtonActive:global(.btn.btn-sm) {
-  background: var(--primary-color);
-  border-color: var(--primary-color);
-  color: var(--primary-contrast, #fff);
-  box-shadow: 0 8px 18px -14px rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-primary));
+  border-left-color: transparent;
+  color: var(--primary-active);
+  box-shadow: none;
+  font-weight: 800;
 
   &:hover:not(:disabled) {
-    background: var(--primary-hover);
-    border-color: var(--primary-hover);
-    color: var(--primary-contrast, #fff);
+    background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-primary));
+    border-color: transparent;
+    color: var(--primary-active);
+  }
+
+  & + .viewModeButton:global(.btn.btn-sm) {
+    border-left-color: transparent;
   }
 }
 
@@ -681,7 +692,7 @@
   &:hover {
     transform: translateY(-2px);
     box-shadow: $shadow-md;
-    border-color: rgba(37, 99, 235, 0.2);
+    border-color: color-mix(in srgb, var(--primary-color) 20%, transparent);
   }
 }
 

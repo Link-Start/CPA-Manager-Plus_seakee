@@ -3,10 +3,13 @@ import {
   buildAccountRows,
   buildApiKeyRows,
   buildApiKeyDisplayMap,
+  buildMonitoringEventsScopeKey,
   buildMonitoringAuthMetaMap,
   buildRangeFilteredRows,
+  mergeMonitoringEventsPageItems,
   type MonitoringEventRow,
 } from './useMonitoringData';
+import type { MonitoringAnalyticsEventRow } from '@/services/api/usageService';
 import { sha256Hex } from '@/utils/apiKeyHash';
 import type { AuthFileItem } from '@/types';
 
@@ -202,5 +205,91 @@ describe('buildRangeFilteredRows', () => {
     expect(
       buildRangeFilteredRows(rows, 'all', null, 'unmatched raw key', 'hash-a').map((row) => row.id)
     ).toEqual(['hash-a']);
+  });
+});
+
+describe('buildMonitoringEventsScopeKey', () => {
+  it('keeps moving ranges stable when only the end time changes', () => {
+    const first = buildMonitoringEventsScopeKey(
+      'today',
+      { startMs: 1_768_755_200_000, endMs: 1_768_759_000_000 },
+      '',
+      '',
+      {},
+      'hour'
+    );
+    const second = buildMonitoringEventsScopeKey(
+      'today',
+      { startMs: 1_768_755_200_000, endMs: 1_768_759_005_000 },
+      '',
+      '',
+      {},
+      'hour'
+    );
+
+    expect(second).toBe(first);
+  });
+
+  it('keeps custom ranges tied to the explicit end time', () => {
+    const first = buildMonitoringEventsScopeKey(
+      'custom',
+      { startMs: 1_768_755_200_000, endMs: 1_768_759_000_000 },
+      '',
+      '',
+      {},
+      'hour'
+    );
+    const second = buildMonitoringEventsScopeKey(
+      'custom',
+      { startMs: 1_768_755_200_000, endMs: 1_768_759_005_000 },
+      '',
+      '',
+      {},
+      'hour'
+    );
+
+    expect(second).not.toBe(first);
+  });
+});
+
+describe('mergeMonitoringEventsPageItems', () => {
+  const createAnalyticsEvent = (
+    eventHash: string,
+    timestampMs: number
+  ): MonitoringAnalyticsEventRow => ({
+    event_hash: eventHash,
+    timestamp_ms: timestampMs,
+    model: 'gpt-4.1',
+    endpoint: 'POST /v1/chat/completions',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    auth_index: 'auth-1',
+    source: 'source-1',
+    source_hash: 'source-hash-1',
+    api_key_hash: 'api-key-hash-1',
+    account_snapshot: 'alice@example.com',
+    auth_label_snapshot: 'alice.json',
+    auth_provider_snapshot: 'codex',
+    input_tokens: 10,
+    output_tokens: 5,
+    cached_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 15,
+    latency_ms: 1200,
+    failed: false,
+  });
+
+  it('merges root refresh results without dropping previously rendered events', () => {
+    const previous = [
+      createAnalyticsEvent('event-2', 1_768_759_001_000),
+      createAnalyticsEvent('event-1', 1_768_759_000_000),
+    ];
+    const nextPage = [
+      createAnalyticsEvent('event-3', 1_768_759_002_000),
+      createAnalyticsEvent('event-2', 1_768_759_001_000),
+    ];
+
+    expect(mergeMonitoringEventsPageItems(previous, nextPage, null).map((item) => item.event_hash))
+      .toEqual(['event-3', 'event-2', 'event-1']);
   });
 });

@@ -11,7 +11,6 @@
   --inspect-muted: var(--text-secondary);
   --inspect-accent: var(--primary-color);
   --inspect-accent-strong: var(--primary-active);
-  --inspect-cyan: #06b6d4;
   --inspect-green: var(--success-color);
   --inspect-amber: var(--warning-color);
   --inspect-red: var(--error-color);
@@ -278,7 +277,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: inherit;
-  background: linear-gradient(135deg, var(--inspect-accent), var(--inspect-cyan));
+  background: var(--inspect-accent);
 }
 
 .progressMeta {
@@ -387,26 +386,43 @@
 
 .segmentedControl {
   display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 14px;
-  border: 1px solid var(--inspect-line);
-  background: var(--inspect-surface-elevated);
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
+  background: color-mix(in srgb, var(--inspect-surface-elevated) 82%, var(--inspect-surface));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.segmentedControl::-webkit-scrollbar {
+  display: none;
 }
 
 .segmentButton {
+  position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
   gap: 6px;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 34px;
+  padding: 0 14px;
   border: 0;
-  border-radius: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
+  border-radius: 0;
   background: transparent;
-  color: var(--inspect-muted);
+  color: color-mix(in srgb, var(--inspect-muted) 84%, var(--inspect-ink));
+  font: inherit;
   font-size: 13px;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background-color 0.18s ease,
@@ -415,17 +431,28 @@
     box-shadow 0.18s ease;
 }
 
+.segmentButton:first-child {
+  border-left: 0;
+}
+
 .segmentButton:hover {
   color: var(--inspect-ink);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--inspect-accent) 5%, var(--inspect-surface));
+  transform: none;
 }
 
 .segmentButtonActive,
 .segmentButtonActive:hover {
-  background: linear-gradient(135deg, var(--inspect-accent), var(--inspect-cyan));
-  color: #fff;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.24);
+  border-left-color: transparent;
+  background: color-mix(in srgb, var(--inspect-accent) 12%, var(--inspect-surface));
+  color: var(--inspect-accent-strong);
+  font-weight: 800;
+  box-shadow: none;
   transform: none;
+}
+
+.segmentButtonActive + .segmentButton {
+  border-left-color: transparent;
 }
 
 .segmentCount {
@@ -443,8 +470,8 @@
 }
 
 .segmentButtonActive .segmentCount {
-  background: rgba(255, 255, 255, 0.24);
-  color: #fff;
+  background: color-mix(in srgb, var(--inspect-accent) 20%, var(--inspect-surface));
+  color: var(--inspect-accent-strong);
 }
 
 .tableWrap {
