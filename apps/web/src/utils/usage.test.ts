@@ -133,4 +133,21 @@ describe('calculateCost model price preference', () => {
     );
     expect(cost).toBeCloseTo(50);
   });
+
+  it('charges cached input tokens only at the cache price', () => {
+    const cost = calculateCost(
+      {
+        tokens: {
+          input_tokens: 1_000_000,
+          output_tokens: 500_000,
+          cached_tokens: 250_000,
+        },
+        __modelName: 'gpt-5.5',
+      },
+      {
+        'gpt-5.5': { prompt: 2, completion: 4, cache: 1 },
+      }
+    );
+    expect(cost).toBeCloseTo(3.75);
+  });
 });
