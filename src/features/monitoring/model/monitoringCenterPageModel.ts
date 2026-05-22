@@ -214,7 +214,13 @@ export const buildSyncPriceModels = (
   rows: MonitoringEventRow[],
   modelPrices: Record<string, ModelPrice>
 ) =>
-  Array.from(new Set([...rows.map((row) => row.model), ...Object.keys(modelPrices)]))
+  Array.from(
+    new Set([
+      ...rows.map((row) => row.model),
+      ...rows.map((row) => row.resolvedModel ?? ''),
+      ...Object.keys(modelPrices),
+    ])
+  )
     .filter(Boolean)
     .sort((left, right) => left.localeCompare(right));
 

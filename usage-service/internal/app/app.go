@@ -11,10 +11,11 @@ import (
 )
 
 type Options struct {
-	EmbeddedPanel     fs.FS
-	ModelPriceSyncURL *string
-	ServiceID         string
-	StartedAt         int64
+	EmbeddedPanel               fs.FS
+	ModelPriceSyncURL           *string
+	OpenRouterModelPriceSyncURL *string
+	ServiceID                   string
+	StartedAt                   int64
 }
 
 func New(ctx context.Context, cfg config.Config, options Options) (*Context, error) {
@@ -39,6 +40,7 @@ func New(ctx context.Context, cfg config.Config, options Options) (*Context, err
 		startedAt,
 		options.EmbeddedPanel,
 		options.ModelPriceSyncURL,
+		options.OpenRouterModelPriceSyncURL,
 		serviceID,
 	), nil
 }

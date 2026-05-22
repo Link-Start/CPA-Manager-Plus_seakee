@@ -118,10 +118,35 @@ export interface ModelPricesResponse {
   prices: Record<string, ModelPrice>;
 }
 
+export interface ModelPriceSyncCandidate {
+  sourceModelId: string;
+  score: number;
+  reason: string;
+  price: ModelPrice;
+}
+
+export interface ModelPriceSyncCandidateSet {
+  model: string;
+  candidates: ModelPriceSyncCandidate[];
+}
+
+export interface ModelPriceSyncSourceResult {
+  source: string;
+  models: number;
+  skipped: number;
+  error?: string;
+}
+
 export interface ModelPriceSyncResponse extends ModelPricesResponse {
   source?: string;
+  sources?: string[];
   imported: number;
   skipped: number;
+  matched?: Record<string, ModelPrice>;
+  candidates?: ModelPriceSyncCandidateSet[];
+  unmatched?: string[];
+  proxyUsed?: boolean;
+  sourceResults?: ModelPriceSyncSourceResult[];
 }
 
 export interface ApiKeyAlias {

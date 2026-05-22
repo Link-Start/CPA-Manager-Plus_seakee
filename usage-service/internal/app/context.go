@@ -45,6 +45,7 @@ func FromExisting(
 	startedAt int64,
 	embeddedPanel fs.FS,
 	modelPriceSyncURL *string,
+	openRouterModelPriceSyncURL *string,
 	serviceID string,
 ) *Context {
 	collectorService := collectorsvc.New(collectorManager)
@@ -61,7 +62,7 @@ func FromExisting(
 		UsageService:         usagesvc.New(st),
 		DashboardService:     dashboardsvc.New(st),
 		MonitoringService:    monitoringsvc.New(st),
-		ModelPriceService:    modelpricesvc.New(st, modelPriceSyncURL),
+		ModelPriceService:    modelpricesvc.NewMultiSource(st, modelPriceSyncURL, openRouterModelPriceSyncURL, managerConfigService),
 		APIKeyAliasService:   apikeyaliassvc.New(st),
 		ProxyService:         proxysvc.New(managerConfigService),
 		PanelService:         panelsvc.New(cfg.PanelPath, embeddedPanel),

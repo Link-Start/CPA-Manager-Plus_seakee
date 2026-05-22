@@ -1,12 +1,7 @@
 import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import type { TFunction } from 'i18next';
-import {
-  IconDownload,
-  IconExternalLink,
-  IconFileText,
-  IconSettings,
-} from '@/components/ui/icons';
+import { IconDownload, IconExternalLink, IconFileText, IconSettings } from '@/components/ui/icons';
 import styles from '../MonitoringCenterPage.module.scss';
 
 type MonitoringActionBarProps = {
@@ -19,7 +14,6 @@ type MonitoringActionBarProps = {
   onUsageExport: () => void | Promise<void>;
   onUsageImportClick: () => void;
   onUsageImportChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onOpenPriceModal: () => void;
   statusSummary: ReactNode;
 };
 
@@ -33,7 +27,6 @@ export function MonitoringActionBar({
   onUsageExport,
   onUsageImportClick,
   onUsageImportChange,
-  onOpenPriceModal,
   statusSummary,
 }: MonitoringActionBarProps) {
   return (
@@ -67,14 +60,10 @@ export function MonitoringActionBar({
           <IconFileText size={16} />
           <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
         </button>
-        <button
-          type="button"
-          className={styles.actionButton}
-          onClick={onOpenPriceModal}
-        >
+        <Link to="/model-prices" className={styles.actionButton}>
           <IconSettings size={16} />
           <span>{t('usage_stats.model_price_settings')}</span>
-        </button>
+        </Link>
         <input
           ref={usageImportInputRef}
           type="file"

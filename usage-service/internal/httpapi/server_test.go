@@ -14,6 +14,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/usage-service/internal/collector"
 	"github.com/seakee/cpa-manager-plus/usage-service/internal/config"
 	"github.com/seakee/cpa-manager-plus/usage-service/internal/store"
+	"github.com/seakee/cpa-manager-plus/usage-service/internal/testutil"
 )
 
 type observedRequest struct {
@@ -74,6 +75,18 @@ func newTestHandlerWithConfig(t *testing.T, cfg config.Config) http.Handler {
 
 	manager := collector.NewManager(cfg, db)
 	return New(cfg, db, manager).Handler()
+}
+
+func stubModelPriceSyncURLs(t *testing.T, liteLLMURL string, openRouterURL string) {
+	t.Helper()
+	oldLiteLLMURL := modelPriceSyncURL
+	oldOpenRouterURL := openRouterModelPriceSyncURL
+	modelPriceSyncURL = liteLLMURL
+	openRouterModelPriceSyncURL = openRouterURL
+	t.Cleanup(func() {
+		modelPriceSyncURL = oldLiteLLMURL
+		openRouterModelPriceSyncURL = oldOpenRouterURL
+	})
 }
 
 func TestModelListProxyPreservesAuthorization(t *testing.T) {
@@ -627,17 +640,28 @@ func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 		}`))
 	}))
 	t.Cleanup(source.Close)
-	oldURL := modelPriceSyncURL
-	modelPriceSyncURL = source.URL
-	t.Cleanup(func() {
-		modelPriceSyncURL = oldURL
-	})
+	openRouterSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{
+					"id": "openrouter/gpt-router",
+					"pricing": {
+						"prompt": "0.000003",
+						"completion": "0.000006"
+					}
+				}
+			]
+		}`))
+	}))
+	t.Cleanup(openRouterSource.Close)
+	stubModelPriceSyncURLs(t, source.URL, openRouterSource.URL)
 
 	handler := newTestHandler(t, "http://example.test", true)
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/v0/management/model-prices/sync",
-		bytes.NewBufferString(`{"models":["gpt-test"]}`),
+		bytes.NewBufferString(`{"models":["gpt-test","openrouter/gpt-router"]}`),
 	)
 	req.Header.Set("Authorization", "Bearer management-key")
 	rr := httptest.NewRecorder()
@@ -648,10 +672,15 @@ func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 		t.Fatalf("sync status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 	var response struct {
-		Source   string `json:"source"`
-		Imported int    `json:"imported"`
-		Skipped  int    `json:"skipped"`
-		Prices   map[string]struct {
+		Source        string   `json:"source"`
+		Sources       []string `json:"sources"`
+		Imported      int      `json:"imported"`
+		Skipped       int      `json:"skipped"`
+		SourceResults []struct {
+			Source string `json:"source"`
+			Models int    `json:"models"`
+		} `json:"sourceResults"`
+		Prices map[string]struct {
 			Prompt        float64 `json:"prompt"`
 			Completion    float64 `json:"completion"`
 			Cache         float64 `json:"cache"`
@@ -662,7 +691,7 @@ func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Source != "litellm" || response.Imported != 1 || response.Skipped != 2 {
+	if response.Source != "multi" || response.Imported != 2 || response.Skipped != 2 || len(response.Sources) != 2 {
 		t.Fatalf("sync summary = %#v", response)
 	}
 	price, ok := response.Prices["gpt-test"]
@@ -674,6 +703,70 @@ func TestModelPricesSyncFromLiteLLMFormat(t *testing.T) {
 	}
 	if price.Source != "litellm" || price.SourceModelID != "gpt-test" {
 		t.Fatalf("source metadata = %#v", price)
+	}
+	routerPrice, ok := response.Prices["openrouter/gpt-router"]
+	if !ok {
+		t.Fatalf("missing openrouter price: %#v", response.Prices)
+	}
+	if routerPrice.Source != "openrouter" || routerPrice.SourceModelID != "openrouter/gpt-router" {
+		t.Fatalf("openrouter source metadata = %#v", routerPrice)
+	}
+}
+
+func TestModelPricesSyncUsesCPAProxyURL(t *testing.T) {
+	proxyObserved := make(chan string, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyObserved <- r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"gpt-proxy": {
+				"input_cost_per_token": 0.000001,
+				"output_cost_per_token": 0.000002
+			}
+		}`))
+	}))
+	t.Cleanup(proxy.Close)
+
+	cpaMock := testutil.NewCPAMock(t)
+	cpaMock.ProxyURL = proxy.URL
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "source should be reached through proxy", http.StatusInternalServerError)
+	}))
+	t.Cleanup(source.Close)
+	stubModelPriceSyncURLs(t, source.URL, "")
+
+	handler := newTestHandler(t, cpaMock.URL(), true)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/model-prices/sync",
+		bytes.NewBufferString(`{"models":["gpt-proxy"]}`),
+	)
+	req.Header.Set("Authorization", "Bearer management-key")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("sync status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	select {
+	case got := <-proxyObserved:
+		if strings.TrimRight(got, "/") != source.URL {
+			t.Fatalf("proxy request URL = %q, want %q", got, source.URL)
+		}
+	default:
+		t.Fatal("proxy was not used")
+	}
+	var response struct {
+		Imported  int  `json:"imported"`
+		ProxyUsed bool `json:"proxyUsed"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Imported != 1 || !response.ProxyUsed {
+		t.Fatalf("sync response = %#v", response)
 	}
 }
 

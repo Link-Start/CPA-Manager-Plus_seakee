@@ -346,11 +346,7 @@ func TestServerCompatModelPricesAndAliases(t *testing.T) {
 		http.Error(w, "upstream failed", http.StatusInternalServerError)
 	}))
 	t.Cleanup(source.Close)
-	oldURL := modelPriceSyncURL
-	modelPriceSyncURL = source.URL
-	t.Cleanup(func() {
-		modelPriceSyncURL = oldURL
-	})
+	stubModelPriceSyncURLs(t, source.URL, "")
 	syncRR := testutil.Request(t, handler, http.MethodPost, "/v0/management/model-prices/sync", `{}`, "management-key")
 	testutil.RequireStatus(t, syncRR, http.StatusBadGateway)
 	if !strings.Contains(syncRR.Body.String(), `"code":"model_price_sync_failed"`) {

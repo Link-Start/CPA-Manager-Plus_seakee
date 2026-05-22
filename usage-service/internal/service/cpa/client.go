@@ -17,6 +17,11 @@ type UsageConfig struct {
 	RetentionSourceDefault          bool `json:"retentionSourceDefault"`
 }
 
+type ManagementConfig struct {
+	UsageConfig
+	ProxyURL string `json:"proxyUrl,omitempty"`
+}
+
 func ValidateManagementAPI(ctx context.Context, baseURL string, key string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeBaseURL(baseURL)+"/v0/management/config", nil)
 	if err != nil {
@@ -36,34 +41,45 @@ func ValidateManagementAPI(ctx context.Context, baseURL string, key string) erro
 }
 
 func FetchUsageConfig(ctx context.Context, baseURL string, key string) (UsageConfig, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeBaseURL(baseURL)+"/v0/management/config", nil)
+	cfg, err := FetchManagementConfig(ctx, baseURL, key)
 	if err != nil {
 		return UsageConfig{}, err
+	}
+	return cfg.UsageConfig, nil
+}
+
+func FetchManagementConfig(ctx context.Context, baseURL string, key string) (ManagementConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeBaseURL(baseURL)+"/v0/management/config", nil)
+	if err != nil {
+		return ManagementConfig{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	client := &http.Client{Timeout: 15 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
-		return UsageConfig{}, err
+		return ManagementConfig{}, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return UsageConfig{}, errors.New("management API config request failed: " + res.Status)
+		return ManagementConfig{}, errors.New("management API config request failed: " + res.Status)
 	}
 
 	var raw map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-		return UsageConfig{}, err
+		return ManagementConfig{}, err
 	}
 	usageEnabled := readBoolField(raw, "usage-statistics-enabled", "usageStatisticsEnabled")
 	retention, hasRetention := readIntField(raw, "redis-usage-queue-retention-seconds", "redisUsageQueueRetentionSeconds")
 	if !hasRetention {
 		retention = 60
 	}
-	return UsageConfig{
-		UsageStatisticsEnabled:          usageEnabled,
-		RedisUsageQueueRetentionSeconds: retention,
-		RetentionSourceDefault:          !hasRetention,
+	return ManagementConfig{
+		UsageConfig: UsageConfig{
+			UsageStatisticsEnabled:          usageEnabled,
+			RedisUsageQueueRetentionSeconds: retention,
+			RetentionSourceDefault:          !hasRetention,
+		},
+		ProxyURL: readStringField(raw, "proxy-url", "proxyUrl", "proxy_url"),
 	}, nil
 }
 
@@ -165,4 +181,15 @@ func readIntField(raw map[string]any, keys ...string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func readStringField(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok || value == nil {
+			continue
+		}
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+	return ""
 }

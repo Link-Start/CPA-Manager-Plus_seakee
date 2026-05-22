@@ -49,7 +49,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, err)
 			return
 		}
-		result, err := h.App.ModelPriceService.SyncFromLiteLLM(r.Context(), req)
+		result, err := h.App.ModelPriceService.Sync(r.Context(), req)
 		if err != nil {
 			response.Error(w, response.ModelPriceErrorStatus(err), err)
 			return

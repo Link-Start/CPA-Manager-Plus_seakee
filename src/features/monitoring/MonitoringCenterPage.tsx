@@ -55,7 +55,6 @@ import { MonitoringActionBar } from '@/features/monitoring/components/Monitoring
 import { MonitoringCustomRangeModal } from '@/features/monitoring/components/MonitoringCustomRangeModal';
 import { MonitoringFiltersPanel } from '@/features/monitoring/components/MonitoringFiltersPanel';
 import { IconInbox } from '@/components/ui/icons';
-import { MonitoringPriceModal } from '@/features/monitoring/components/MonitoringPriceModal';
 import {
   MonitoringStatusHeader,
   MonitoringStatusSummary,
@@ -78,23 +77,18 @@ import {
   buildChannelOptions,
   buildModelOptions,
   buildPaginationState,
-  buildPriceModelOptions,
   buildPrimarySummaryCards,
   buildProviderOptions,
   buildRealtimeLogRows,
   buildSecondarySummaryCards,
   buildStatusOptions,
-  buildSyncPriceModels,
-  createPriceDraft,
   formatAccountOverviewScopeText,
   getCurrentInputValue,
   getTodayStartInputValue,
   isUsageImportFile,
   parseDateTimeLocalValue,
-  parsePriceValue,
   requestAccountQuota,
   type FocusSnapshot,
-  type PriceDraft,
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
@@ -151,13 +145,9 @@ export function MonitoringCenterPage() {
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [expandedApiKeys, setExpandedApiKeys] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
-  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
-  const [syncingPrices, setSyncingPrices] = useState(false);
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
-  const [priceModel, setPriceModel] = useState('');
-  const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
@@ -248,9 +238,7 @@ export function MonitoringCenterPage() {
     error: usageError,
     modelPrices,
     apiKeyAliases,
-    setModelPrices,
     loadApiKeyAliases,
-    syncModelPrices,
     exportUsage,
     importUsage,
   } = useUsageData({ loadUsageEvents: false });
@@ -390,16 +378,6 @@ export function MonitoringCenterPage() {
 
   const statusOptions = useMemo(() => buildStatusOptions(t), [t]);
 
-  const syncPriceModels = useMemo(
-    () => buildSyncPriceModels(filteredRows, modelPrices),
-    [filteredRows, modelPrices]
-  );
-
-  const priceModelOptions = useMemo(
-    () => buildPriceModelOptions(syncPriceModels, t),
-    [syncPriceModels, t]
-  );
-
   const authFilesByAuthIndex = useMemo(() => buildAuthFilesByAuthIndex(authFiles), [authFiles]);
 
   const scopedRows = filteredRows;
@@ -510,10 +488,6 @@ export function MonitoringCenterPage() {
     [accountAuthStateByRowId, accountRows]
   );
   const scopedFailureCount = scopedSummary.failureCalls;
-  const savedPriceEntries = useMemo(
-    () => Object.entries(modelPrices).sort((left, right) => left[0].localeCompare(right[0])),
-    [modelPrices]
-  );
 
   const hasSearchFilter = Boolean(deferredSearch.trim());
   const hasScopeFilter =
@@ -994,93 +968,6 @@ export function MonitoringCenterPage() {
     setApiKeyPage(page);
   }, []);
 
-  const handlePriceModelChange = useCallback(
-    (value: string) => {
-      setPriceModel(value);
-      setPriceDraft(createPriceDraft(modelPrices[value]));
-    },
-    [modelPrices]
-  );
-
-  const handlePriceDraftChange = useCallback((field: keyof PriceDraft, value: string) => {
-    setPriceDraft((previous) => ({ ...previous, [field]: value }));
-  }, []);
-
-  const resetPriceEditor = useCallback(() => {
-    setPriceModel('');
-    setPriceDraft(createPriceDraft());
-  }, []);
-
-  const handleSavePrice = useCallback(async () => {
-    if (!priceModel) {
-      return;
-    }
-
-    const prompt = parsePriceValue(priceDraft.prompt);
-    const completion = parsePriceValue(priceDraft.completion);
-    const cache = priceDraft.cache.trim() === '' ? prompt : parsePriceValue(priceDraft.cache);
-
-    await setModelPrices({
-      ...modelPrices,
-      [priceModel]: {
-        prompt,
-        completion,
-        cache,
-      },
-    });
-    showNotification(t('usage_stats.model_price_saved'), 'success');
-  }, [
-    modelPrices,
-    priceDraft.cache,
-    priceDraft.completion,
-    priceDraft.prompt,
-    priceModel,
-    setModelPrices,
-    showNotification,
-    t,
-  ]);
-
-  const handleDeletePrice = useCallback(
-    async (model: string) => {
-      const nextPrices = { ...modelPrices };
-      delete nextPrices[model];
-      await setModelPrices(nextPrices);
-
-      if (priceModel === model) {
-        resetPriceEditor();
-      }
-    },
-    [modelPrices, priceModel, resetPriceEditor, setModelPrices]
-  );
-
-  const handleSyncModelPrices = useCallback(async () => {
-    if (syncPriceModels.length === 0) {
-      showNotification(t('usage_stats.model_price_sync_no_models'), 'warning');
-      return;
-    }
-    setSyncingPrices(true);
-    try {
-      const result = await syncModelPrices(syncPriceModels);
-      showNotification(
-        t('usage_stats.model_price_sync_success', {
-          count: result.imported,
-          source: result.source || 'LiteLLM',
-        }),
-        'success'
-      );
-    } catch (error: unknown) {
-      const rawMessage =
-        error instanceof Error ? error.message : String(error || t('common.unknown_error'));
-      const message =
-        rawMessage === 'model_price_sync_requires_usage_service'
-          ? t('usage_stats.model_price_sync_requires_usage_service')
-          : rawMessage;
-      showNotification(`${t('usage_stats.model_price_sync_failed')}: ${message}`, 'error');
-    } finally {
-      setSyncingPrices(false);
-    }
-  }, [showNotification, syncModelPrices, syncPriceModels, t]);
-
   const resolveUsageTransferError = useCallback(
     (error: unknown) => {
       const rawMessage =
@@ -1204,7 +1091,6 @@ export function MonitoringCenterPage() {
         onUsageExport={handleUsageExport}
         onUsageImportClick={handleUsageImportClick}
         onUsageImportChange={handleUsageImportChange}
-        onOpenPriceModal={() => setIsPriceModalOpen(true)}
         statusSummary={
           <MonitoringStatusSummary
             connectionTone={connectionTone}
@@ -1359,23 +1245,6 @@ export function MonitoringCenterPage() {
         onApply={applyCustomTimeRange}
         onStartChange={handleCustomDraftStartChange}
         onEndChange={handleCustomDraftEndChange}
-      />
-
-      <MonitoringPriceModal
-        open={isPriceModalOpen}
-        onClose={() => setIsPriceModalOpen(false)}
-        priceModel={priceModel}
-        priceModelOptions={priceModelOptions}
-        priceDraft={priceDraft}
-        savedPriceEntries={savedPriceEntries}
-        syncingPrices={syncingPrices}
-        t={t}
-        onPriceModelChange={handlePriceModelChange}
-        onPriceDraftChange={handlePriceDraftChange}
-        onSyncModelPrices={handleSyncModelPrices}
-        onResetPriceEditor={resetPriceEditor}
-        onSavePrice={handleSavePrice}
-        onDeletePrice={handleDeletePrice}
       />
     </div>
   );

@@ -24,6 +24,7 @@ type CPAMock struct {
 	ManagementKey          string
 	UsageStatisticsEnabled bool
 	RetentionSeconds       int
+	ProxyURL               string
 
 	mu       sync.Mutex
 	requests []ObservedRequest
@@ -87,6 +88,7 @@ func (m *CPAMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"usage-statistics-enabled":            m.UsageStatisticsEnabled,
 			"redis-usage-queue-retention-seconds": m.RetentionSeconds,
+			"proxy-url":                           m.ProxyURL,
 		})
 	case r.URL.Path == "/v0/management/usage-statistics-enabled" && r.Method == http.MethodPut:
 		if !m.hasManagementAuth(r) {

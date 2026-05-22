@@ -18,6 +18,7 @@ var embeddedPanel embed.FS
 const serviceID = "cpa-manager-plus"
 
 var modelPriceSyncURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+var openRouterModelPriceSyncURL = "https://openrouter.ai/api/v1/models"
 
 type Server struct {
 	handler http.Handler
@@ -32,6 +33,7 @@ func New(cfg config.Config, store *store.Store, collector *collector.Manager) *S
 		startedAt,
 		embeddedPanel,
 		&modelPriceSyncURL,
+		&openRouterModelPriceSyncURL,
 		serviceID,
 	)
 	return &Server{

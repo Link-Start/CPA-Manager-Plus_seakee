@@ -9,6 +9,11 @@ export interface ModelPrice {
   prompt: number;
   completion: number;
   cache: number;
+  source?: string;
+  sourceModelId?: string;
+  rawJson?: string;
+  updatedAtMs?: number;
+  syncedAtMs?: number;
 }
 
 export interface UsageTokens {
@@ -434,7 +439,16 @@ export function loadModelPrices(): Record<string, ModelPrice> {
       const cache = Number.isFinite(cacheRaw) && cacheRaw >= 0 ? cacheRaw : prompt;
 
       if (prompt < 0 || completion < 0 || cache < 0) return;
-      normalized[model] = { prompt, completion, cache };
+      normalized[model] = {
+        prompt,
+        completion,
+        cache,
+        source: readDetailString(price.source),
+        sourceModelId: readDetailString(price.sourceModelId),
+        rawJson: readDetailString(price.rawJson),
+        updatedAtMs: toPositiveNumber(price.updatedAtMs),
+        syncedAtMs: toPositiveNumber(price.syncedAtMs),
+      };
     });
 
     return normalized;

@@ -330,7 +330,7 @@ If `CPA_UPSTREAM_URL` and `CPA_MANAGEMENT_KEY` are set, collection starts automa
 | `POST /v0/management/usage/import` | Import JSONL usage events or legacy JSON snapshots |
 | `GET /v0/management/model-prices` | Read SQLite-backed model pricing |
 | `PUT /v0/management/model-prices` | Replace saved model pricing |
-| `POST /v0/management/model-prices/sync` | Sync model prices from LiteLLM pricing metadata |
+| `POST /v0/management/model-prices/sync` | Sync model prices from LiteLLM, OpenRouter, and other pricing metadata sources, including source metadata |
 | `GET /models`, `GET /v1/models` | Proxy model-list requests to CPA after setup |
 | `/v0/management/*` | Proxied to CPA except usage endpoints |
 

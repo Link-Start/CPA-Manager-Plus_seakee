@@ -330,7 +330,7 @@ docker compose -f docker-compose.usage.yml up --build
 | `POST /v0/management/usage/import` | 导入 JSONL 用量事件或旧版 JSON 快照 |
 | `GET /v0/management/model-prices` | 读取 SQLite 中保存的模型价格 |
 | `PUT /v0/management/model-prices` | 替换已保存的模型价格 |
-| `POST /v0/management/model-prices/sync` | 从 LiteLLM 价格元数据同步模型价格 |
+| `POST /v0/management/model-prices/sync` | 从 LiteLLM、OpenRouter 等价格元数据同步模型价格，并返回价格来源 |
 | `GET /models`、`GET /v1/models` | setup 后将模型列表请求反代到 CPA |
 | `/v0/management/*` | 除 usage 外反代到 CPA |
 

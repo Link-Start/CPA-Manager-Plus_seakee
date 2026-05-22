@@ -404,6 +404,15 @@ export function IconDollarSign({ size = 20, ...props }: IconProps) {
   );
 }
 
+export function IconPencil({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <path d="M21.2 6.8 17.2 2.8a2 2 0 0 0-2.8 0L4 13.2V20h6.8L21.2 9.6a2 2 0 0 0 0-2.8Z" />
+      <path d="m13.5 3.7 6.8 6.8" />
+    </svg>
+  );
+}
+
 export function IconGithub({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>
