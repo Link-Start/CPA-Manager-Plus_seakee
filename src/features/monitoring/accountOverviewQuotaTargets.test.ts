@@ -27,7 +27,7 @@ const createAccountRow = (overrides: Partial<MonitoringAccountRow> = {}): Monito
 });
 
 describe('accountOverviewQuotaTargets', () => {
-  it('builds supported quota targets from the full account auth state instead of filtered row auth indices', () => {
+  it('builds quota targets for providers the account actually used', () => {
     const authStateByRowId = new Map<string, MonitoringAccountAuthState>([
       [
         'account@example.com',
@@ -76,7 +76,6 @@ describe('accountOverviewQuotaTargets', () => {
     expect(result.get('account@example.com')).toMatchObject([
       { provider: 'codex', authIndex: '1', fileName: 'alpha.json', authLabel: 'Alpha' },
       { provider: 'codex', authIndex: '2', fileName: 'beta.json', authLabel: 'Beta' },
-      { provider: 'claude', authIndex: '3', fileName: 'gamma.json', authLabel: 'Gamma' },
     ]);
   });
 
@@ -122,7 +121,7 @@ describe('accountOverviewQuotaTargets', () => {
     ]);
   });
 
-  it('includes every quota-supported provider while skipping disabled and runtime-only files', () => {
+  it('includes quota-supported providers actually used while skipping disabled and runtime-only files', () => {
     const authStateByRowId = new Map<string, MonitoringAccountAuthState>([
       [
         'account@example.com',
@@ -172,7 +171,7 @@ describe('accountOverviewQuotaTargets', () => {
         createAccountRow({
           id: 'account@example.com',
           account: 'account@example.com',
-          authIndices: ['1'],
+          authIndices: ['1', '2', '3', '4', '5'],
         }),
       ],
       authStateByRowId
@@ -182,6 +181,49 @@ describe('accountOverviewQuotaTargets', () => {
       { provider: 'antigravity', fileName: 'antigravity.json' },
       { provider: 'gemini-cli', fileName: 'gemini-cli.json' },
       { provider: 'kimi', fileName: 'kimi.json' },
+    ]);
+  });
+
+  it('does not surface providers that share the account but were not used by the row', () => {
+    const authStateByRowId = new Map<string, MonitoringAccountAuthState>([
+      [
+        'account@example.com',
+        {
+          files: [
+            {
+              name: 'codex.json',
+              type: 'codex',
+              authIndex: '1',
+              label: 'Codex',
+              account: 'account@example.com',
+            },
+            {
+              name: 'claude.json',
+              type: 'claude',
+              authIndex: '2',
+              label: 'Claude',
+              account: 'account@example.com',
+            },
+          ],
+          toggleableFileNames: ['codex.json', 'claude.json'],
+          enabledState: 'enabled',
+        },
+      ],
+    ]);
+
+    const result = buildMonitoringAccountQuotaTargetsByAccount(
+      [
+        createAccountRow({
+          id: 'account@example.com',
+          account: 'account@example.com',
+          authIndices: ['1'],
+        }),
+      ],
+      authStateByRowId
+    );
+
+    expect(result.get('account@example.com')).toMatchObject([
+      { provider: 'codex', authIndex: '1', fileName: 'codex.json' },
     ]);
   });
 });

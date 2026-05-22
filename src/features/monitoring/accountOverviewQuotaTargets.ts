@@ -49,13 +49,43 @@ const readAuthFileQuotaLabel = (file: AuthFileItem, authIndex: string) => {
 export const resolveMonitoringAccountQuotaProvider = (
   file: AuthFileItem
 ): MonitoringAccountQuotaProvider | null => {
-  if (isDisabledAuthFile(file)) return null;
   if (isCodexFile(file)) return 'codex';
   if (isClaudeFile(file)) return 'claude';
   if (isAntigravityFile(file)) return 'antigravity';
-  if (isGeminiCliFile(file) && !isRuntimeOnlyAuthFile(file)) return 'gemini-cli';
+  if (isGeminiCliFile(file)) return 'gemini-cli';
   if (isKimiFile(file)) return 'kimi';
   return null;
+};
+
+const isQuotaTargetable = (file: AuthFileItem, provider: MonitoringAccountQuotaProvider) => {
+  if (isDisabledAuthFile(file)) return false;
+  if (provider === 'gemini-cli' && isRuntimeOnlyAuthFile(file)) return false;
+  return true;
+};
+
+const resolveActiveQuotaProvidersForRow = (
+  row: MonitoringAccountRow,
+  authState: MonitoringAccountAuthState | undefined
+): Set<MonitoringAccountQuotaProvider> => {
+  const activeProviders = new Set<MonitoringAccountQuotaProvider>();
+  if (!authState) return activeProviders;
+
+  const rowAuthIndices = new Set(
+    row.authIndices
+      .map((value) => normalizeAuthIndex(value))
+      .filter((value): value is string => Boolean(value))
+  );
+  if (rowAuthIndices.size === 0) return activeProviders;
+
+  authState.files.forEach((file) => {
+    const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+    if (!authIndex || !rowAuthIndices.has(authIndex)) return;
+
+    const provider = resolveMonitoringAccountQuotaProvider(file);
+    if (provider) activeProviders.add(provider);
+  });
+
+  return activeProviders;
 };
 
 export const buildMonitoringAccountQuotaTargetsByAccount = (
@@ -66,11 +96,13 @@ export const buildMonitoringAccountQuotaTargetsByAccount = (
     rows.map((row) => {
       const bucket = new Map<string, MonitoringAccountQuotaTarget>();
       const authState = authStateByRowId.get(row.id);
+      const activeProviders = resolveActiveQuotaProvidersForRow(row, authState);
 
       authState?.files.forEach((file) => {
         const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
         const provider = resolveMonitoringAccountQuotaProvider(file);
-        if (!authIndex || !provider) return;
+        if (!authIndex || !provider || !activeProviders.has(provider)) return;
+        if (!isQuotaTargetable(file, provider)) return;
 
         const dedupeKey = `${provider}::${authIndex}::${file.name}`;
         if (bucket.has(dedupeKey)) return;
