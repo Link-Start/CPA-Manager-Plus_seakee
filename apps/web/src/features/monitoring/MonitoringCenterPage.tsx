@@ -100,6 +100,7 @@ import {
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
 import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
+import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
 import { authFilesApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import { formatFileSize } from '@/utils/format';
@@ -1071,6 +1072,20 @@ export function MonitoringCenterPage() {
     [importUsageFile, showConfirmation, showNotification, t]
   );
 
+  if (monitoringUnavailable) {
+    return (
+      <div className={styles.page}>
+        <MonitoringStatusHeader
+          showLoadingOverlay={false}
+          monitoringUnavailable={monitoringUnavailable}
+          monitoringUnavailableTitle={monitoringUnavailableTitle}
+          monitoringUnavailableBody={monitoringUnavailableBody}
+          t={t}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={styles.page}>
       <MonitoringStatusHeader
@@ -1085,7 +1100,8 @@ export function MonitoringCenterPage() {
         usageTransferAvailable={usageTransferAvailable}
         usageExporting={usageExporting}
         usageImporting={usageImporting}
-        loggingToFile={Boolean(config?.loggingToFile)}
+        loggingToFile={isFileLogsAvailable(config)}
+        modelPricesAvailable={requestMonitoringAvailability.modelPricesAvailable}
         usageImportInputRef={usageImportInputRef}
         t={t}
         onUsageExport={handleUsageExport}

@@ -13,10 +13,9 @@ import {
   formatTimestamp,
   type StatusTone,
 } from '@/features/monitoring/model/codexInspectionPresentation';
-import { buildUsageServiceBaseCandidates } from '@/entities/usageService/baseResolver';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import {
   getUsageServiceErrorCode,
-  isUsageServiceId,
   usageServiceApi,
   type CodexInspectionLog,
   type CodexInspectionResult,
@@ -26,7 +25,7 @@ import {
   type ManagerCodexInspectionScheduleMode,
   type ManagerConfig,
 } from '@/services/api/usageService';
-import { useAuthStore, useNotificationStore, useUsageServiceStore } from '@/stores';
+import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from './CodexInspectionPage.module.scss';
 
 type ServerCodexInspectionDraft = {
@@ -415,11 +414,8 @@ function formatServiceHost(base: string): string {
 
 export function ServerCodexInspectionPage() {
   const { t, i18n } = useTranslation();
-  const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
-  const usageServiceEnabled = useUsageServiceStore((state) => state.enabled);
-  const usageServiceBase = useUsageServiceStore((state) => state.serviceBase);
-  const usageServiceRevision = useUsageServiceStore((state) => state.revision);
+  const featureAvailability = usePanelFeatureAvailability();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
 
@@ -438,16 +434,6 @@ export function ServerCodexInspectionPage() {
   const [logLevelFilter, setLogLevelFilter] = useState<'all' | 'info' | 'success' | 'warning' | 'error'>('all');
   const refreshInFlightRef = useRef(false);
 
-  const candidates = useMemo(
-    () =>
-      buildUsageServiceBaseCandidates({
-        apiBase,
-        usageServiceEnabled,
-        usageServiceBase,
-      }),
-    [apiBase, usageServiceBase, usageServiceEnabled]
-  );
-
   const loadRunDetail = useCallback(
     async (base: string, id: number) => {
       const nextDetail = await usageServiceApi.getCodexInspectionRun(base, managementKey, id);
@@ -462,24 +448,12 @@ export function ServerCodexInspectionPage() {
     setLoading(true);
     setError('');
     try {
-      let resolvedBase = '';
-      let responseConfig: ManagerConfig | null = null;
-      for (const candidate of candidates) {
-        try {
-          const info = await usageServiceApi.getInfo(candidate);
-          if (!isUsageServiceId(info.service)) continue;
-          const response = await usageServiceApi.getManagerConfig(candidate, managementKey);
-          resolvedBase = candidate;
-          responseConfig = response.config;
-          break;
-        } catch {
-          // Continue probing candidates; a regular CPA panel is expected to fail here.
-        }
-      }
-
-      if (!resolvedBase || !responseConfig) {
+      const resolvedBase = featureAvailability.managerServiceBase;
+      if (!resolvedBase || !featureAvailability.serverCodexInspectionAvailable) {
         throw new Error(t('monitoring.server_codex_inspection_service_unavailable'));
       }
+      const response = await usageServiceApi.getManagerConfig(resolvedBase, managementKey);
+      const responseConfig = response.config;
 
       setServiceBase(resolvedBase);
       setManagerConfig(responseConfig);
@@ -510,16 +484,31 @@ export function ServerCodexInspectionPage() {
     } finally {
       setLoading(false);
     }
-  }, [candidates, loadRunDetail, managementKey, t]);
+  }, [
+    featureAvailability.managerServiceBase,
+    featureAvailability.serverCodexInspectionAvailable,
+    loadRunDetail,
+    managementKey,
+    t,
+  ]);
 
   useEffect(() => {
-    if (!managementKey || candidates.length === 0) {
+    if (featureAvailability.checking) {
+      return;
+    }
+    if (!managementKey || !featureAvailability.serverCodexInspectionAvailable) {
       setLoading(false);
       setError(t('monitoring.server_codex_inspection_connection_required'));
       return;
     }
     void loadPageData();
-  }, [candidates, loadPageData, managementKey, t, usageServiceRevision]);
+  }, [
+    featureAvailability.checking,
+    featureAvailability.serverCodexInspectionAvailable,
+    loadPageData,
+    managementKey,
+    t,
+  ]);
 
   const selectedConfig = useMemo(
     () => resolveServerCodexConfig(managerConfig?.codexInspection),

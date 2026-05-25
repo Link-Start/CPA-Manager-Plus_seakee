@@ -203,9 +203,19 @@ export function LoginPage() {
           setMigrationStatus('');
         }
 
-        const autoLoggedIn = await restoreSession();
+        const hostedManagementPage =
+          typeof window !== 'undefined' && /\/management\.html$/i.test(window.location.pathname);
+        const autoLoginExpectedPanelBase =
+          detectedUsageService || hostedManagementPage ? detectedBase : undefined;
+        const autoLoggedIn = await restoreSession({
+          expectedMode: detectedUsageService ? 'manager_embedded' : 'external_panel',
+          expectedPanelBase: autoLoginExpectedPanelBase,
+        });
         if (detectedUsageService) {
-          setUsageServiceConfig({ enabled: true, serviceBase: detectedBase });
+          setUsageServiceConfig(
+            { enabled: true, serviceBase: detectedBase },
+            { panelBase: detectedBase, panelHostMode: 'manager_embedded' }
+          );
         }
         if (autoLoggedIn) {
           setAutoLoginSuccess(true);
@@ -362,16 +372,24 @@ export function LoginPage() {
           },
           trimmedAdminKey
         );
-        setUsageServiceConfig({ enabled: true, serviceBase: detectedBase });
+        setUsageServiceConfig(
+          { enabled: true, serviceBase: detectedBase },
+          { panelBase: detectedBase, panelHostMode: 'manager_embedded' }
+        );
         localStorage.setItem(USAGE_SERVICE_LAST_CPA_BASE_KEY, baseToUse);
       } else if (isManagerServerMode) {
-        setUsageServiceConfig({ enabled: true, serviceBase: detectedBase });
+        setUsageServiceConfig(
+          { enabled: true, serviceBase: detectedBase },
+          { panelBase: detectedBase, panelHostMode: 'manager_embedded' }
+        );
       }
 
       await login({
         apiBase: isManagerServerMode ? detectedBase : baseToUse,
         managementKey: isManagerServerMode ? trimmedAdminKey : trimmedCPAKey,
         rememberPassword: rememberCredential,
+        sessionMode: isManagerServerMode ? 'manager_embedded' : 'external_panel',
+        sessionPanelBase: detectedBase,
       });
       showNotification(t('common.connected_status'), 'success');
       navigate('/', { replace: true });

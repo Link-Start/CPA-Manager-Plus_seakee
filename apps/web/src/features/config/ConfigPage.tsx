@@ -259,12 +259,24 @@ export function ConfigPage() {
         usageServiceBase,
       });
       if (!normalized) return;
-      setUsageServiceConfig({
-        enabled: true,
-        serviceBase: normalized,
-      });
+      setUsageServiceConfig(
+        {
+          enabled: true,
+          serviceBase: normalized,
+        },
+        {
+          panelBase: detectedPanelBase,
+          panelHostMode: panelHostedByUsageService === true ? 'manager_embedded' : 'external_panel',
+        }
+      );
     },
-    [setUsageServiceConfig, usageServiceBase, usageServiceEnabled]
+    [
+      detectedPanelBase,
+      panelHostedByUsageService,
+      setUsageServiceConfig,
+      usageServiceBase,
+      usageServiceEnabled,
+    ]
   );
 
   const applyManagerConfigResponse = useCallback(
@@ -463,10 +475,16 @@ export function ConfigPage() {
       };
       const response = await usageServiceApi.saveManagerConfig(serviceBase, nextConfig, managementKey);
       applyManagerConfigResponse(response, serviceBase);
-      setUsageServiceConfig({
-        enabled: true,
-        serviceBase,
-      });
+      setUsageServiceConfig(
+        {
+          enabled: true,
+          serviceBase,
+        },
+        {
+          panelBase: detectedPanelBase,
+          panelHostMode: panelHostedByUsageService === true ? 'manager_embedded' : 'external_panel',
+        }
+      );
       showNotification(t('config_management.manager.save_success'), 'success');
     } catch (error: unknown) {
       const message = getUsageServiceDisplayError(error, 'usage_service_errors.request_failed');

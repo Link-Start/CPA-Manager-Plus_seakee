@@ -199,6 +199,12 @@ func TestServerCompatExternalPanelModeUsesCPAManagementKey(t *testing.T) {
 	if !strings.Contains(usageRR.Body.String(), `"total_requests":1`) {
 		t.Fatalf("usage body = %s", usageRR.Body.String())
 	}
+
+	proxyRR := testutil.Request(t, handler, http.MethodGet, "/v0/management/config", "", "management-key")
+	testutil.RequireStatus(t, proxyRR, http.StatusUnauthorized)
+	if !strings.Contains(proxyRR.Body.String(), `"code":"invalid_admin_key"`) {
+		t.Fatalf("proxy body = %s", proxyRR.Body.String())
+	}
 }
 
 func TestServerCompatStatusAuthAndCounts(t *testing.T) {

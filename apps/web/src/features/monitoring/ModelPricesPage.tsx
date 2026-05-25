@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { IconPencil, IconSearch, IconTrash2, IconX } from '@/components/ui/icons';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import type { ModelPriceSyncCandidate, ModelPriceSyncResponse } from '@/services/api/usageService';
 import { useNotificationStore } from '@/stores';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
@@ -34,6 +35,7 @@ const resolveErrorMessage = (error: unknown, fallback: string) => {
 export function ModelPricesPage() {
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
+  const featureAvailability = usePanelFeatureAvailability();
   const { usage, loading, modelPrices, setModelPrices, syncModelPrices, usageServiceAvailable } =
     useUsageData();
   const [search, setSearch] = useState('');
@@ -49,7 +51,7 @@ export function ModelPricesPage() {
     [modelPrices, usage]
   );
 
-  const candidateSets = syncResult?.candidates ?? [];
+  const candidateSets = useMemo(() => syncResult?.candidates ?? [], [syncResult?.candidates]);
   const rows = useMemo(
     () => buildModelPriceRows(usage, modelPrices, candidateSets),
     [candidateSets, modelPrices, usage]
@@ -162,9 +164,11 @@ export function ModelPricesPage() {
     <div className={styles.page}>
       <section className={styles.actionBar} aria-label={t('common.action')}>
         <div className={styles.titleGroup}>
-          <Link to="/monitoring" className={styles.backLink}>
-            {t('model_prices.back_to_monitoring')}
-          </Link>
+          {featureAvailability.requestMonitoringAvailable ? (
+            <Link to="/monitoring" className={styles.backLink}>
+              {t('model_prices.back_to_monitoring')}
+            </Link>
+          ) : null}
         </div>
         <div className={styles.actionGroup}>
           <span className={styles.metaPill}>

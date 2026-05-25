@@ -9,6 +9,7 @@ type MonitoringActionBarProps = {
   usageExporting: boolean;
   usageImporting: boolean;
   loggingToFile: boolean;
+  modelPricesAvailable: boolean;
   usageImportInputRef: RefObject<HTMLInputElement | null>;
   t: TFunction;
   onUsageExport: () => void | Promise<void>;
@@ -22,6 +23,7 @@ export function MonitoringActionBar({
   usageExporting,
   usageImporting,
   loggingToFile,
+  modelPricesAvailable,
   usageImportInputRef,
   t,
   onUsageExport,
@@ -60,10 +62,12 @@ export function MonitoringActionBar({
           <IconFileText size={16} />
           <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
         </button>
-        <Link to="/model-prices" className={styles.actionButton}>
-          <IconSettings size={16} />
-          <span>{t('usage_stats.model_price_settings')}</span>
-        </Link>
+        {modelPricesAvailable ? (
+          <Link to="/model-prices" className={styles.actionButton}>
+            <IconSettings size={16} />
+            <span>{t('usage_stats.model_price_settings')}</span>
+          </Link>
+        ) : null}
         <input
           ref={usageImportInputRef}
           type="file"

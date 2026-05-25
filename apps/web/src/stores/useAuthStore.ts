@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AuthState, LoginCredentials, ConnectionStatus } from '@/types';
+import type { AuthSessionMode, AuthState, LoginCredentials, ConnectionStatus } from '@/types';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { obfuscatedStorage } from '@/services/storage/secureStorage';
 import { apiClient } from '@/services/api/client';
@@ -14,6 +14,8 @@ import { useModelsStore } from './useModelsStore';
 import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
 
 interface AuthStoreState extends AuthState {
+  sessionMode: AuthSessionMode | '';
+  sessionPanelBase: string;
   connectionStatus: ConnectionStatus;
   connectionError: string | null;
 
@@ -21,12 +23,40 @@ interface AuthStoreState extends AuthState {
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<boolean>;
-  restoreSession: () => Promise<boolean>;
+  restoreSession: (options?: RestoreSessionOptions) => Promise<boolean>;
   updateServerVersion: (version: string | null, buildDate?: string | null) => void;
   updateConnectionStatus: (status: ConnectionStatus, error?: string | null) => void;
 }
 
+interface RestoreSessionOptions {
+  expectedMode?: AuthSessionMode;
+  expectedPanelBase?: string;
+}
+
 let restoreSessionPromise: Promise<boolean> | null = null;
+
+const sessionMatchesExpectedRuntime = ({
+  expectedMode,
+  expectedPanelBase,
+  resolvedBase,
+  sessionMode,
+}: {
+  expectedMode?: AuthSessionMode;
+  expectedPanelBase?: string;
+  resolvedBase: string;
+  sessionMode: AuthSessionMode | '';
+}) => {
+  const normalizedExpectedPanelBase = normalizeApiBase(expectedPanelBase || '');
+  if (!expectedMode) return true;
+  if (sessionMode && sessionMode !== expectedMode) return false;
+  if (expectedMode === 'manager_embedded' && normalizedExpectedPanelBase) {
+    return resolvedBase === normalizedExpectedPanelBase;
+  }
+  if (expectedMode === 'external_panel' && normalizedExpectedPanelBase) {
+    return resolvedBase === normalizedExpectedPanelBase;
+  }
+  return true;
+};
 
 export const useAuthStore = create<AuthStoreState>()(
   persist(
@@ -38,11 +68,13 @@ export const useAuthStore = create<AuthStoreState>()(
       rememberPassword: false,
       serverVersion: null,
       serverBuildDate: null,
+      sessionMode: '',
+      sessionPanelBase: '',
       connectionStatus: 'disconnected',
       connectionError: null,
 
       // 恢复会话并自动登录
-      restoreSession: () => {
+      restoreSession: (options) => {
         if (restoreSessionPromise) return restoreSessionPromise;
 
         restoreSessionPromise = (async () => {
@@ -54,15 +86,38 @@ export const useAuthStore = create<AuthStoreState>()(
             obfuscatedStorage.getItem<string>('apiUrl', { encrypt: true });
           const legacyKey = obfuscatedStorage.getItem<string>('managementKey');
 
-          const { apiBase, managementKey, rememberPassword } = get();
+          const { apiBase, managementKey, rememberPassword, sessionMode } = get();
           const resolvedBase = normalizeApiBase(apiBase || legacyBase || detectApiBaseFromLocation());
           const resolvedKey = managementKey || legacyKey || '';
           const resolvedRememberPassword = rememberPassword || Boolean(managementKey) || Boolean(legacyKey);
 
+          if (
+            !sessionMatchesExpectedRuntime({
+              expectedMode: options?.expectedMode,
+              expectedPanelBase: options?.expectedPanelBase,
+              resolvedBase,
+              sessionMode,
+            })
+          ) {
+            const fallbackBase = normalizeApiBase(options?.expectedPanelBase || detectApiBaseFromLocation());
+            set({
+              apiBase: fallbackBase,
+              managementKey: '',
+              rememberPassword: false,
+              sessionMode: options?.expectedMode ?? '',
+              sessionPanelBase: normalizeApiBase(options?.expectedPanelBase || ''),
+            });
+            apiClient.setConfig({ apiBase: fallbackBase, managementKey: '' });
+            localStorage.removeItem('isLoggedIn');
+            return false;
+          }
+
           set({
             apiBase: resolvedBase,
             managementKey: resolvedKey,
-            rememberPassword: resolvedRememberPassword
+            rememberPassword: resolvedRememberPassword,
+            sessionMode: options?.expectedMode ?? sessionMode,
+            sessionPanelBase: normalizeApiBase(options?.expectedPanelBase || get().sessionPanelBase)
           });
           apiClient.setConfig({ apiBase: resolvedBase, managementKey: resolvedKey });
 
@@ -111,6 +166,8 @@ export const useAuthStore = create<AuthStoreState>()(
             apiBase,
             managementKey,
             rememberPassword,
+            sessionMode: credentials.sessionMode ?? get().sessionMode,
+            sessionPanelBase: normalizeApiBase(credentials.sessionPanelBase || get().sessionPanelBase),
             connectionStatus: 'connected',
             connectionError: null
           });
@@ -145,6 +202,8 @@ export const useAuthStore = create<AuthStoreState>()(
           managementKey: '',
           serverVersion: null,
           serverBuildDate: null,
+          sessionMode: '',
+          sessionPanelBase: '',
           connectionStatus: 'disconnected',
           connectionError: null
         });
@@ -213,7 +272,9 @@ export const useAuthStore = create<AuthStoreState>()(
         ...(state.rememberPassword ? { managementKey: state.managementKey } : {}),
         rememberPassword: state.rememberPassword,
         serverVersion: state.serverVersion,
-        serverBuildDate: state.serverBuildDate
+        serverBuildDate: state.serverBuildDate,
+        sessionMode: state.sessionMode,
+        sessionPanelBase: state.sessionPanelBase
       })
     }
   )

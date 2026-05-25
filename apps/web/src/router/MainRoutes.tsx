@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Navigate, useRoutes, type Location } from 'react-router-dom';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { AiProvidersPage } from '@/pages/AiProvidersPage';
@@ -23,6 +24,55 @@ import { ServerCodexInspectionPage } from '@/pages/ServerCodexInspectionPage';
 import { ConfigPage } from '@/pages/ConfigPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { SystemPage } from '@/pages/SystemPage';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
+import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
+import { useConfigStore } from '@/stores';
+
+type FeatureKey = 'requestMonitoring' | 'modelPrices' | 'serverCodexInspection';
+
+function FeatureGate({ feature, children }: { feature: FeatureKey; children: ReactElement }) {
+  const availability = usePanelFeatureAvailability();
+  const enabled =
+    feature === 'requestMonitoring'
+      ? availability.requestMonitoringAvailable
+      : feature === 'modelPrices'
+        ? availability.modelPricesAvailable
+        : availability.serverCodexInspectionAvailable;
+
+  if (availability.checking) {
+    return <LoadingSpinner />;
+  }
+
+  if (!enabled) {
+    return <Navigate to="/config" replace />;
+  }
+
+  return children;
+}
+
+function LogsGate({ children }: { children: ReactElement }) {
+  const config = useConfigStore((state) => state.config);
+  const fetchConfig = useConfigStore((state) => state.fetchConfig);
+  const requestedRef = useRef(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (config || requestedRef.current) return;
+    requestedRef.current = true;
+    fetchConfig().catch(() => setFailed(true));
+  }, [config, fetchConfig]);
+
+  if (!config && !failed) {
+    return <LoadingSpinner />;
+  }
+
+  if (!isFileLogsAvailable(config)) {
+    return <Navigate to="/config" replace />;
+  }
+
+  return children;
+}
 
 const mainRoutes = [
   { path: '/', element: <DashboardPage /> },
@@ -76,17 +126,56 @@ const mainRoutes = [
   { path: '/oauth', element: <OAuthPage /> },
   { path: '/quota', element: <QuotaPage /> },
   { path: '/codex-inspection', element: <CodexInspectionPage /> },
-  { path: '/codex-inspection/server', element: <ServerCodexInspectionPage /> },
-  { path: '/model-prices', element: <ModelPricesPage /> },
-  { path: '/monitoring', element: <MonitoringCenterPage /> },
-  { path: '/monitoring/model-prices', element: <Navigate to="/model-prices" replace /> },
+  {
+    path: '/codex-inspection/server',
+    element: (
+      <FeatureGate feature="serverCodexInspection">
+        <ServerCodexInspectionPage />
+      </FeatureGate>
+    ),
+  },
+  {
+    path: '/model-prices',
+    element: (
+      <FeatureGate feature="modelPrices">
+        <ModelPricesPage />
+      </FeatureGate>
+    ),
+  },
+  {
+    path: '/monitoring',
+    element: (
+      <FeatureGate feature="requestMonitoring">
+        <MonitoringCenterPage />
+      </FeatureGate>
+    ),
+  },
+  {
+    path: '/monitoring/model-prices',
+    element: (
+      <FeatureGate feature="modelPrices">
+        <Navigate to="/model-prices" replace />
+      </FeatureGate>
+    ),
+  },
   { path: '/monitoring/codex-inspection', element: <Navigate to="/codex-inspection" replace /> },
   {
     path: '/monitoring/codex-inspection/server',
-    element: <Navigate to="/codex-inspection/server" replace />,
+    element: (
+      <FeatureGate feature="serverCodexInspection">
+        <Navigate to="/codex-inspection/server" replace />
+      </FeatureGate>
+    ),
   },
   { path: '/config', element: <ConfigPage /> },
-  { path: '/logs', element: <LogsPage /> },
+  {
+    path: '/logs',
+    element: (
+      <LogsGate>
+        <LogsPage />
+      </LogsGate>
+    ),
+  },
   { path: '/system', element: <SystemPage /> },
   { path: '*', element: <Navigate to="/" replace /> },
 ];

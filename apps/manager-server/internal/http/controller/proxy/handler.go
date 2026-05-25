@@ -13,14 +13,14 @@ type Handler struct {
 }
 
 func (h *Handler) Management(w http.ResponseWriter, r *http.Request) {
-	if !middleware.AuthorizePanel(w, r, h.App.AdminAuthService) {
+	if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
 		return
 	}
 	h.App.ProxyService.ProxyManagement(w, r, response.Error)
 }
 
 func (h *Handler) CPA(w http.ResponseWriter, r *http.Request) {
-	if !middleware.AuthorizePanel(w, r, h.App.AdminAuthService) {
+	if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
 		return
 	}
 	h.App.ProxyService.ProxyCPA(w, r, response.Error)

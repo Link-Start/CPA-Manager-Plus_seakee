@@ -3,11 +3,15 @@
  * 基于原项目 src/modules/login.js 和 src/core/connection.js
  */
 
+export type AuthSessionMode = 'manager_embedded' | 'external_panel';
+
 // 登录凭据
 export interface LoginCredentials {
   apiBase: string;
   managementKey: string;
   rememberPassword?: boolean;
+  sessionMode?: AuthSessionMode;
+  sessionPanelBase?: string;
 }
 
 // 认证状态

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import styles from '../CodexInspectionPage.module.scss';
 
 export type CodexInspectionMode = 'local' | 'server';
@@ -27,10 +28,17 @@ const MODES: ReadonlyArray<{
 
 export function CodexInspectionModeTabs({ activeMode }: CodexInspectionModeTabsProps) {
   const { t } = useTranslation();
+  const availability = usePanelFeatureAvailability();
   const activeLabel = t(
     activeMode === 'local'
       ? 'monitoring.codex_inspection_mode_local'
       : 'monitoring.codex_inspection_mode_server'
+  );
+  const visibleModes = MODES.filter(
+    (item) =>
+      item.mode === 'local' ||
+      item.mode === activeMode ||
+      availability.serverCodexInspectionAvailable
   );
 
   return (
@@ -44,7 +52,7 @@ export function CodexInspectionModeTabs({ activeMode }: CodexInspectionModeTabsP
           role="tablist"
           aria-label={t('monitoring.codex_inspection_mode_label')}
         >
-          {MODES.map((item) => {
+          {visibleModes.map((item) => {
             const active = activeMode === item.mode;
             return (
               <Link

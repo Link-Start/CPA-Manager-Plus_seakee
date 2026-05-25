@@ -33,7 +33,8 @@ import {
   useThemeStore,
 } from '@/stores';
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
+import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import type { Theme } from '@/types';
@@ -173,7 +174,7 @@ export function MainLayout() {
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const clearCache = useConfigStore((state) => state.clearCache);
-  const requestMonitoringAvailability = useRequestMonitoringAvailability();
+  const featureAvailability = usePanelFeatureAvailability();
 
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
@@ -342,8 +343,9 @@ export function MainLayout() {
     });
   }, [fetchConfig]);
 
+  const fileLogsAvailable = isFileLogsAvailable(config);
   const operationNavItems: NavItem[] = [
-    ...(requestMonitoringAvailability.available
+    ...(featureAvailability.requestMonitoringAvailable
       ? [
           {
             path: '/monitoring',
@@ -352,7 +354,7 @@ export function MainLayout() {
           },
         ]
       : []),
-    ...(config?.loggingToFile
+    ...(fileLogsAvailable
       ? [{ path: '/logs', label: t('nav.logs'), icon: sidebarIcons.logs }]
       : []),
   ];
