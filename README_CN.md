@@ -358,6 +358,8 @@ docker compose -f docker-compose.manager.yml up --build
 
 用量导入支持两类文件：Manager Server 导出的 JSONL/NDJSON 事件文件，以及旧版 CPA `/usage/export` 生成的 JSON 快照。旧版 JSON 只有在 `usage.apis.*.models.*.details[]` 明细存在时才能转换为事件；如果文件只包含聚合总量，Manager Server 会拒绝导入，因为无法还原请求级明细。旧版导入属于迁移/恢复能力，不是与 Manager Server 新采集数据完全等价的历史延续：旧文件可能缺少 `api_key_hash`、渠道、请求 ID、method/path、延迟、缓存 token 或失败原因等元数据，账号匹配、API Key 维度分析和明细精度可能低于新采集数据。导入旧文件会影响总量、趋势图和账号/Key 拆解，准确性敏感时建议先导入测试库或备份库验证。
 
+CPA usage 事件中的失败正文按敏感诊断信息处理。Manager Server 只在本地 SQLite 数据库中保留原始 `fail_body` 用于内部排查；普通 API、兼容用量 payload 和 JSONL 导出只暴露经过脱敏与截断的 `fail_summary`。JSONL 导出会主动省略 `raw_json` 和原始 `fail_body`；导入仍兼容旧导出文件和历史快照。
+
 ## 功能概览
 
 - **仪表盘**：连接状态、后端版本、快速健康概览

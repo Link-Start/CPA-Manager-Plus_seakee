@@ -44,6 +44,10 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.input_tokens': 'Input Tokens',
     'monitoring.output_tokens': 'Output Tokens',
     'monitoring.cached_tokens': 'Cached Tokens',
+    'monitoring.cache_read_tokens': 'Cache Read Tokens',
+    'monitoring.cache_creation_tokens': 'Cache Creation Tokens',
+    'monitoring.cache_read_tokens_short': 'Read',
+    'monitoring.cache_creation_tokens_short': 'Create',
     'monitoring.estimated_cost': 'Estimated Cost',
     'usage_stats.model_price_model': 'Model',
     'monitoring.last_sync': 'Last sync',
@@ -144,6 +148,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 100,
           outputTokens: 50,
           cachedTokens: 10,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
           totalTokens: 160,
           totalCost: 1.25,
           averageLatencyMs: 120,
@@ -197,6 +203,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 35_000_000,
           outputTokens: 68_500,
           cachedTokens: 33_900_000,
+          cacheReadTokens: 1_200_000,
+          cacheCreationTokens: 340_000,
           totalTokens: 35_068_500,
           totalCost: 23.04,
           averageLatencyMs: 120,
@@ -212,6 +220,8 @@ describe('MonitoringCenterPage account card', () => {
               inputTokens: 33_400_000,
               outputTokens: 66_600,
               cachedTokens: 32_500_000,
+              cacheReadTokens: 1_100_000,
+              cacheCreationTokens: 300_000,
               totalTokens: 33_466_600,
               totalCost: 23.04,
               lastSeenAt: Date.UTC(2026, 4, 10, 12, 0, 0),
@@ -225,6 +235,8 @@ describe('MonitoringCenterPage account card', () => {
               inputTokens: 1_600_000,
               outputTokens: 1_900,
               cachedTokens: 1_400_000,
+              cacheReadTokens: 100_000,
+              cacheCreationTokens: 40_000,
               totalTokens: 1_601_900,
               totalCost: 0,
               lastSeenAt: Date.UTC(2026, 4, 10, 12, 0, 0),
@@ -280,6 +292,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 0,
           outputTokens: 0,
           cachedTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
           totalTokens: 0,
           totalCost: 0,
           averageLatencyMs: null,
@@ -314,7 +328,7 @@ describe('MonitoringCenterPage account card', () => {
     expect(html).not.toContain('monitoring.account_overview_enabled_label_short');
   });
 
-  it('renders table expanded details with token cards and a nine-column top model table', () => {
+  it('renders table expanded details with token cards and cache columns in top model table', () => {
     const row = {
       id: 'account@example.com',
       account: 'account@example.com',
@@ -330,6 +344,8 @@ describe('MonitoringCenterPage account card', () => {
       inputTokens: 35_000_000,
       outputTokens: 68_500,
       cachedTokens: 33_900_000,
+      cacheReadTokens: 1_200_000,
+      cacheCreationTokens: 340_000,
       totalTokens: 35_068_500,
       totalCost: 23.04,
       averageLatencyMs: 120,
@@ -345,6 +361,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 33_400_000,
           outputTokens: 66_600,
           cachedTokens: 32_500_000,
+          cacheReadTokens: 1_100_000,
+          cacheCreationTokens: 300_000,
           totalTokens: 33_466_600,
           totalCost: 23.04,
           lastSeenAt: Date.UTC(2026, 4, 10, 12, 0, 0),
@@ -358,6 +376,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 1_600_000,
           outputTokens: 1_900,
           cachedTokens: 1_400_000,
+          cacheReadTokens: 100_000,
+          cacheCreationTokens: 40_000,
           totalTokens: 1_601_900,
           totalCost: 0,
           lastSeenAt: Date.UTC(2026, 4, 10, 12, 1, 0),
@@ -371,6 +391,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 100,
           outputTokens: 20,
           cachedTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
           totalTokens: 120,
           totalCost: 0.01,
           lastSeenAt: Date.UTC(2026, 4, 10, 12, 2, 0),
@@ -399,8 +421,12 @@ describe('MonitoringCenterPage account card', () => {
     expect(html).toContain('Input Tokens');
     expect(html).toContain('Output Tokens');
     expect(html).toContain('Cached Tokens');
+    expect(html).not.toContain('Cache Read Tokens');
+    expect(html).not.toContain('Cache Creation Tokens');
     expect(html).toContain('Model Usage Top 2');
     expect(html).toContain('View All');
+    expect(html).not.toContain('<th>Read</th>');
+    expect(html).not.toContain('<th>Create</th>');
     expect(html).toContain('<th>Total Tokens</th>');
     expect(html).toContain('<th>Latest request</th>');
     expect(html).toContain('gpt-5.5');
@@ -426,6 +452,8 @@ describe('MonitoringCenterPage account card', () => {
           inputTokens: 0,
           outputTokens: 0,
           cachedTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
           totalTokens: 0,
           totalCost: 0,
           averageLatencyMs: null,

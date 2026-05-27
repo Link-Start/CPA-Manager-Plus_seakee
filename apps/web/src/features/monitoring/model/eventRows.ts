@@ -80,6 +80,11 @@ export const buildEventRows = (
       const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
       const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
       const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
+      const cacheReadTokens = Math.max(Number(detail.tokens?.cache_read_tokens) || 0, 0);
+      const cacheCreationTokens = Math.max(
+        Number(detail.tokens?.cache_creation_tokens) || 0,
+        0
+      );
       const cachedTokens = Math.max(
         Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
         Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
@@ -94,6 +99,15 @@ export const buildEventRows = (
       const hourLabel = buildHourLabel(timestampMs);
       const sourceKey = sourceMeta.identityKey || `source:${sourceLabel}`;
       const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
+      const reasoningEffort = readString(detail.reasoning_effort ?? detail.reasoningEffort);
+      const failStatusCodeRaw = detail.fail_status_code ?? detail.failStatusCode;
+      const failStatusCode =
+        failStatusCodeRaw === null || failStatusCodeRaw === undefined
+          ? Number.NaN
+          : Number(failStatusCodeRaw);
+      const normalizedFailStatusCode =
+        Number.isFinite(failStatusCode) && failStatusCode > 0 ? failStatusCode : null;
+      const failSummary = readString(detail.fail_summary ?? detail.failSummary);
 
       return {
         id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
@@ -130,8 +144,13 @@ export const buildEventRows = (
         outputTokens,
         reasoningTokens,
         cachedTokens,
+        cacheReadTokens,
+        cacheCreationTokens,
         totalTokens,
         totalCost,
+        reasoningEffort,
+        failStatusCode: normalizedFailStatusCode,
+        failSummary,
         taskKey,
         searchText: buildSearchText(
           detail.__modelName,
@@ -149,7 +168,10 @@ export const buildEventRows = (
           authMeta?.provider || snapshotProvider,
           authMeta?.planType,
           resolvedModel,
-          projectId
+          projectId,
+          reasoningEffort,
+          normalizedFailStatusCode,
+          failSummary
         ),
       } satisfies MonitoringEventRow;
     })

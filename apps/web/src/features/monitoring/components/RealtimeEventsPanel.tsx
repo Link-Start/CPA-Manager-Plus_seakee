@@ -1,17 +1,18 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
-import { IconFilter } from '@/components/ui/icons';
+import { IconCopy, IconFilter } from '@/components/ui/icons';
 import {
   PaginationControls,
   RecentPattern,
-  StatusBadge,
 } from '@/features/monitoring/components/MonitoringShared';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
-import { maskSensitiveText } from '@/utils/format';
+import { useNotificationStore } from '@/stores';
+import { copyToClipboard } from '@/utils/clipboard';
+import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatCompactNumber, formatDurationMs, formatUsd } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
 
@@ -65,6 +66,40 @@ const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   return maskSensitiveText(text || '-');
 };
 
+const formatOptionalText = (value: string | null | undefined) => {
+  const trimmed = String(value || '').trim();
+  return trimmed || '-';
+};
+
+const buildFailureMetaText = (row: MonitoringEventRow, t: TFunction) => {
+  if (!row.failed) return '';
+  const parts: string[] = [];
+  if (row.failStatusCode) {
+    parts.push(`${t('monitoring.fail_status_code_short')} ${row.failStatusCode}`);
+  }
+  const body = maskSensitiveText(row.failSummary || '');
+  if (body) {
+    parts.push(truncateText(body, 96));
+  }
+  return parts.join(' · ');
+};
+
+const buildFailureDetails = (row: MonitoringEventRow, t: TFunction) => {
+  if (!row.failed) return null;
+  const summary = maskSensitiveText(row.failSummary || '');
+  if (!row.failStatusCode && !summary) return null;
+  const statusText = row.failStatusCode
+    ? `${t('monitoring.fail_status_code_short')} ${row.failStatusCode}`
+    : '';
+  return {
+    statusCode: row.failStatusCode,
+    statusText,
+    summary,
+    label: buildFailureMetaText(row, t),
+    copyText: [statusText, summary].filter(Boolean).join('\n'),
+  };
+};
+
 export function RealtimeEventsPanelActions({
   rowCount,
   scopedFailureCount,
@@ -109,6 +144,15 @@ export function RealtimeEventsPanel({
   onPageSizeChange,
   onLoadMoreEvents,
 }: RealtimeEventsPanelProps) {
+  const tooltipIdPrefix = useId();
+  const showNotification = useNotificationStore((state) => state.showNotification);
+  const handleCopyFailureDetails = async (text: string) => {
+    const copied = await copyToClipboard(text);
+    showNotification(
+      t(copied ? 'notification.link_copied' : 'notification.copy_failed'),
+      copied ? 'success' : 'error'
+    );
+  };
   const actions = (
     <RealtimeEventsPanelActions
       rowCount={rows.length}
@@ -126,6 +170,7 @@ export function RealtimeEventsPanel({
             <tr>
               <th>{t('monitoring.column_type')}</th>
               <th>{t('monitoring.column_model')}</th>
+              <th>{t('monitoring.reasoning_effort')}</th>
               <th>{t('monitoring.recent_status')}</th>
               <th>{t('monitoring.request_status')}</th>
               <th>{t('monitoring.column_success_rate')}</th>
@@ -143,6 +188,11 @@ export function RealtimeEventsPanel({
                 row.resolvedModel &&
                 row.resolvedModel.trim() &&
                 row.resolvedModel.trim() !== row.model;
+              const reasoningEffort = formatOptionalText(row.reasoningEffort);
+              const failureDetails = buildFailureDetails(row, t);
+              const failureTooltipId = failureDetails
+                ? `${tooltipIdPrefix}-failure-tooltip-${row.id}`
+                : undefined;
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
                   <td>
@@ -165,14 +215,78 @@ export function RealtimeEventsPanel({
                     </div>
                   </td>
                   <td>
+                    {reasoningEffort !== '-' ? (
+                      <span className={styles.realtimeReasoningBadge}>{reasoningEffort}</span>
+                    ) : (
+                      <span className={styles.mutedCell}>-</span>
+                    )}
+                  </td>
+                  <td>
                     <div className={styles.recentStatusCell}>
                       <RecentPattern pattern={row.recentPattern} variant="plain" />
                     </div>
                   </td>
                   <td>
-                    <StatusBadge tone={row.failed ? 'bad' : 'good'}>
-                      {row.failed ? t('monitoring.result_failed') : t('monitoring.result_success')}
-                    </StatusBadge>
+                    <div className={styles.primaryCell}>
+                      {failureDetails ? (
+                        <span
+                          className={styles.realtimeFailureStatus}
+                          tabIndex={0}
+                          aria-describedby={failureTooltipId}
+                          aria-label={failureDetails.label}
+                        >
+                          <span
+                            className={`${styles.realtimeRequestStatus} ${styles.realtimeRequestStatusBad}`}
+                          >
+                            {t('monitoring.result_failed')}
+                          </span>
+                          <span
+                            id={failureTooltipId}
+                            role="tooltip"
+                            className={styles.realtimeFailureTooltip}
+                          >
+                            <button
+                              type="button"
+                              className={styles.realtimeFailureCopyButton}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleCopyFailureDetails(failureDetails.copyText);
+                              }}
+                              title={t('common.copy')}
+                              aria-label={t('common.copy')}
+                            >
+                              <IconCopy size={13} />
+                            </button>
+                            {failureDetails.statusCode ? (
+                              <span className={styles.realtimeFailureTooltipStatus}>
+                                {failureDetails.statusText}
+                              </span>
+                            ) : null}
+                            {failureDetails.summary ? (
+                              <span className={styles.realtimeFailureTooltipBody}>
+                                {failureDetails.summary}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      ) : (
+                        <span
+                          className={[
+                            styles.realtimeRequestStatus,
+                            row.failed
+                              ? styles.realtimeRequestStatusBad
+                              : styles.realtimeRequestStatusGood,
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                        >
+                          {row.failed
+                            ? t('monitoring.result_failed')
+                            : t('monitoring.result_success')}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td
                     className={
@@ -203,7 +317,7 @@ export function RealtimeEventsPanel({
                   <td>
                     <div className={styles.primaryCell}>
                       <span>{formatCompactNumber(row.totalTokens)}</span>
-                      <small>{`I ${formatCompactNumber(row.inputTokens)} \u00b7 O ${formatCompactNumber(row.outputTokens)} \u00b7 C ${formatCompactNumber(row.cachedTokens)}`}</small>
+                      <small>{`I ${formatCompactNumber(row.inputTokens)} · O ${formatCompactNumber(row.outputTokens)} · C ${formatCompactNumber(row.cachedTokens)}`}</small>
                     </div>
                   </td>
                   <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
@@ -212,7 +326,7 @@ export function RealtimeEventsPanel({
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={10}>{emptyState}</td>
+                <td colSpan={11}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>

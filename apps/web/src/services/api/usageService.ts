@@ -284,6 +284,8 @@ export interface DashboardTodaySummary {
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
   total_cost: number;
@@ -350,7 +352,7 @@ export interface DashboardTodayRequestHealthTimeline {
 }
 
 export interface DashboardTokenMixSegment {
-  key: 'input' | 'output' | 'reasoning' | 'cached' | string;
+  key: 'input' | 'output' | 'reasoning' | 'cached' | 'cache_read' | 'cache_creation' | string;
   tokens: number;
   share: number;
 }
@@ -479,6 +481,8 @@ export interface MonitoringAnalyticsSummary {
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
   total_cost: number;
@@ -525,6 +529,8 @@ export interface MonitoringAnalyticsModelStat {
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
   cost: number;
 }
@@ -563,6 +569,8 @@ export interface MonitoringAnalyticsTaskBucketRow {
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
   average_latency_ms: number | null;
   max_latency_ms: number | null;
@@ -594,13 +602,18 @@ export interface MonitoringAnalyticsEventRow {
   auth_provider_snapshot: string;
   auth_project_id_snapshot?: string;
   resolved_model?: string;
+  reasoning_effort?: string;
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
   latency_ms: number | null;
   failed: boolean;
+  fail_status_code?: number | null;
+  fail_summary?: string;
 }
 
 export interface MonitoringAnalyticsEventsResponse {

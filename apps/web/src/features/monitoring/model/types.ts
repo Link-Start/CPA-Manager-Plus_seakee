@@ -119,6 +119,9 @@ export type MonitoringTaskBucketRow = {
   failed: boolean;
   modelsText: string;
   totalTokens: number;
+  cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
   maxLatencyMs: number | null;
@@ -171,8 +174,13 @@ export type MonitoringEventRow = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
+  reasoningEffort?: string;
+  failStatusCode?: number | null;
+  failSummary?: string;
   taskKey: string;
   searchText: string;
 };
@@ -186,6 +194,8 @@ export type MonitoringSummary = {
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
@@ -209,6 +219,8 @@ export type MonitoringAccountModelSpendRow = {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
   lastSeenAt: number;
@@ -229,6 +241,8 @@ export type MonitoringAccountRow = {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
@@ -255,6 +269,8 @@ export type MonitoringApiKeyRow = {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
@@ -282,6 +298,8 @@ export type MonitoringRealtimeRow = {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   totalTokens: number;
   totalCost: number;
   lastSeenAt: number;

@@ -83,6 +83,11 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   const outputTokens = rows.reduce((sum, row) => sum + row.outputTokens, 0);
   const reasoningTokens = rows.reduce((sum, row) => sum + row.reasoningTokens, 0);
   const cachedTokens = rows.reduce((sum, row) => sum + row.cachedTokens, 0);
+  const cacheReadTokens = rows.reduce((sum, row) => sum + (row.cacheReadTokens ?? 0), 0);
+  const cacheCreationTokens = rows.reduce(
+    (sum, row) => sum + (row.cacheCreationTokens ?? 0),
+    0
+  );
   const totalTokens = rows.reduce((sum, row) => sum + row.totalTokens, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.totalCost, 0);
 
@@ -122,6 +127,8 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
     outputTokens,
     reasoningTokens,
     cachedTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
     totalTokens,
     totalCost,
     averageLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
@@ -158,6 +165,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
           inputTokens: number;
           outputTokens: number;
           cachedTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
           totalTokens: number;
           totalCost: number;
           lastSeenAt: number;
@@ -170,6 +179,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       inputTokens: number;
       outputTokens: number;
       cachedTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
       totalTokens: number;
       totalCost: number;
       latencySum: number;
@@ -195,6 +206,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
       totalCost: 0,
       latencySum: 0,
@@ -212,6 +225,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
+    existing.cacheReadTokens += row.cacheReadTokens;
+    existing.cacheCreationTokens += row.cacheCreationTokens;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
@@ -229,6 +244,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
       totalCost: 0,
       lastSeenAt: 0,
@@ -240,6 +257,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     modelEntry.inputTokens += row.inputTokens;
     modelEntry.outputTokens += row.outputTokens;
     modelEntry.cachedTokens += row.cachedTokens;
+    modelEntry.cacheReadTokens += row.cacheReadTokens;
+    modelEntry.cacheCreationTokens += row.cacheCreationTokens;
     modelEntry.totalTokens += row.totalTokens;
     modelEntry.totalCost += row.totalCost;
     modelEntry.lastSeenAt = Math.max(modelEntry.lastSeenAt, row.timestampMs);
@@ -266,6 +285,8 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
         inputTokens: item.inputTokens,
         outputTokens: item.outputTokens,
         cachedTokens: item.cachedTokens,
+        cacheReadTokens: item.cacheReadTokens,
+        cacheCreationTokens: item.cacheCreationTokens,
         totalTokens: item.totalTokens,
         totalCost: item.totalCost,
         averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
@@ -311,6 +332,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
           inputTokens: number;
           outputTokens: number;
           cachedTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
           totalTokens: number;
           totalCost: number;
           lastSeenAt: number;
@@ -322,6 +345,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       inputTokens: number;
       outputTokens: number;
       cachedTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
       totalTokens: number;
       totalCost: number;
       latencySum: number;
@@ -355,6 +380,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
       totalCost: 0,
       latencySum: 0,
@@ -384,6 +411,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
+    existing.cacheReadTokens += row.cacheReadTokens;
+    existing.cacheCreationTokens += row.cacheCreationTokens;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
     existing.lastSeenAt = Math.max(existing.lastSeenAt, row.timestampMs);
@@ -401,6 +430,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
       totalCost: 0,
       lastSeenAt: 0,
@@ -412,6 +443,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
     modelEntry.inputTokens += row.inputTokens;
     modelEntry.outputTokens += row.outputTokens;
     modelEntry.cachedTokens += row.cachedTokens;
+    modelEntry.cacheReadTokens += row.cacheReadTokens;
+    modelEntry.cacheCreationTokens += row.cacheCreationTokens;
     modelEntry.totalTokens += row.totalTokens;
     modelEntry.totalCost += row.totalCost;
     modelEntry.lastSeenAt = Math.max(modelEntry.lastSeenAt, row.timestampMs);
@@ -437,6 +470,8 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       inputTokens: item.inputTokens,
       outputTokens: item.outputTokens,
       cachedTokens: item.cachedTokens,
+      cacheReadTokens: item.cacheReadTokens,
+      cacheCreationTokens: item.cacheCreationTokens,
       totalTokens: item.totalTokens,
       totalCost: item.totalCost,
       averageLatencyMs: item.latencyCount > 0 ? item.latencySum / item.latencyCount : null,
@@ -478,6 +513,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
       inputTokens: number;
       outputTokens: number;
       cachedTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
       totalTokens: number;
       totalCost: number;
       latencySum: number;
@@ -515,6 +552,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
       totalTokens: 0,
       totalCost: 0,
       latencySum: 0,
@@ -529,6 +568,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
     existing.inputTokens += row.inputTokens;
     existing.outputTokens += row.outputTokens;
     existing.cachedTokens += row.cachedTokens;
+    existing.cacheReadTokens += row.cacheReadTokens;
+    existing.cacheCreationTokens += row.cacheCreationTokens;
     existing.totalTokens += row.totalTokens;
     existing.totalCost += row.totalCost;
 
@@ -569,6 +610,8 @@ export const buildRealtimeMonitorRows = (rows: MonitoringEventRow[]): Monitoring
         inputTokens: item.inputTokens,
         outputTokens: item.outputTokens,
         cachedTokens: item.cachedTokens,
+        cacheReadTokens: item.cacheReadTokens,
+        cacheCreationTokens: item.cacheCreationTokens,
         totalTokens: item.totalTokens,
         totalCost: item.totalCost,
         lastSeenAt: item.lastSeenAt,

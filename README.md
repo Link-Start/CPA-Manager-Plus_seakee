@@ -358,6 +358,8 @@ After full Docker setup, `/status`, usage, model-pricing, and `/v0/management/*`
 
 Usage import accepts two file families: JSONL/NDJSON event files exported by Manager Server, and legacy JSON snapshots produced by older CPA `/usage/export`. Legacy JSON can be converted only when `usage.apis.*.models.*.details[]` request details are present. Files that contain only aggregate totals are rejected because request-level monitoring data cannot be reconstructed. Legacy import is a migration/recovery path, not a perfect continuation of newly collected Manager Server data: old files may miss metadata such as `api_key_hash`, channel, request ID, method/path, latency, cache tokens, or failure reason, so account matching, API Key level analysis, and detail accuracy may be lower. Importing legacy files affects totals, trend charts, and account/key breakdowns; use a test or backup database first when accuracy matters.
 
+Failure bodies from CPA usage events are treated as sensitive diagnostics. Manager Server keeps the raw `fail_body` only in the local SQLite database for internal troubleshooting, while normal APIs, compatible usage payloads, and JSONL exports expose only `fail_summary`, which is redacted and truncated. JSONL exports intentionally omit `raw_json` and raw `fail_body`; imports remain compatible with older exports and snapshots.
+
 ## Feature Overview
 
 - **Dashboard**: connection state, backend version, quick health summary

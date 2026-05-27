@@ -372,7 +372,11 @@ export const buildSecondarySummaryCards = (
   {
     label: t('monitoring.cached_tokens'),
     value: formatCompactNumber(summary.cachedTokens),
-    meta: `${t('monitoring.of_input_tokens')} ${formatPercent(summary.inputTokens > 0 ? summary.cachedTokens / summary.inputTokens : 0)}`,
+    meta: [
+      `${t('monitoring.of_input_tokens')} ${formatPercent(summary.inputTokens > 0 ? summary.cachedTokens / summary.inputTokens : 0)}`,
+      `${t('monitoring.cache_creation_tokens_short')} ${formatCompactNumber(summary.cacheCreationTokens)}`,
+      `${t('monitoring.cache_read_tokens_short')} ${formatCompactNumber(summary.cacheReadTokens)}`,
+    ].join(' · '),
     variant: 'secondary',
     icon: 'cache',
     accent: 'teal',

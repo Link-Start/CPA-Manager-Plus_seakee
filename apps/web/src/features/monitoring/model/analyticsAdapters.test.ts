@@ -21,13 +21,18 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
         auth_label_snapshot: 'label',
         auth_provider_snapshot: 'codex',
         auth_project_id_snapshot: 'project-1',
+        reasoning_effort: 'medium',
         input_tokens: 10,
         output_tokens: 5,
-        cached_tokens: 2,
+        cached_tokens: 0,
+        cache_read_tokens: 4,
+        cache_creation_tokens: 1,
         reasoning_tokens: 1,
         total_tokens: 18,
         latency_ms: 123,
-        failed: false,
+        failed: true,
+        fail_status_code: 429,
+        fail_summary: 'rate limit exceeded',
       },
     ];
 
@@ -37,6 +42,50 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
       __modelName: 'alias-model',
       __resolvedModel: 'upstream-model',
       auth_project_id_snapshot: 'project-1',
+      reasoning_effort: 'medium',
+      tokens: {
+        cached_tokens: 0,
+        cache_read_tokens: 4,
+        cache_creation_tokens: 1,
+      },
+      failed: true,
+      fail_status_code: 429,
+      fail_summary: 'rate limit exceeded',
     });
+  });
+
+  it('trusts backend-deduped cached tokens from analytics events', () => {
+    const events: MonitoringAnalyticsEventRow[] = [
+      {
+        event_hash: 'event-cache',
+        timestamp_ms: Date.UTC(2026, 4, 20, 1, 2, 3),
+        model: 'mixed-cache-model',
+        endpoint: 'POST /v1/chat/completions',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        auth_index: 'auth-1',
+        source: 'source.json',
+        source_hash: 'source-hash',
+        api_key_hash: 'api-key-hash',
+        account_snapshot: '',
+        auth_label_snapshot: '',
+        auth_provider_snapshot: '',
+        input_tokens: 100,
+        output_tokens: 20,
+        cached_tokens: 5,
+        cache_read_tokens: 4,
+        cache_creation_tokens: 1,
+        reasoning_tokens: 0,
+        total_tokens: 130,
+        latency_ms: null,
+        failed: false,
+      },
+    ];
+
+    const details = buildUsageDetailsFromAnalyticsEvents(events);
+
+    expect(details[0].tokens.cached_tokens).toBe(5);
+    expect(details[0].tokens.cache_read_tokens).toBe(4);
+    expect(details[0].tokens.cache_creation_tokens).toBe(1);
   });
 });
