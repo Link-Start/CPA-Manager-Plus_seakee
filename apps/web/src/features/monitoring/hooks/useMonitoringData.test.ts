@@ -14,7 +14,12 @@ import {
   type MonitoringEventRow,
   type MonitoringPresentationSnapshot,
 } from './useMonitoringData';
+import {
+  buildAccountRowsFromAnalytics,
+  buildApiKeyRowsFromAnalytics,
+} from '../model/analyticsAdapters';
 import type { MonitoringAnalyticsEventRow } from '@/services/api/usageService';
+import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { sha256Hex } from '@/utils/apiKeyHash';
 import type { AuthFileItem } from '@/types';
 
@@ -78,12 +83,156 @@ const createPresentationSnapshot = (id: string): MonitoringPresentationSnapshot 
     failureSourceRows: [],
     taskBuckets: [],
     recentFailures: [],
+    accountRows: buildAccountRows([row]),
+    apiKeyRows: buildApiKeyRows([row]),
+    filterOptions: {
+      accountRows: buildAccountRows([row]),
+      apiKeyRows: buildApiKeyRows([row]),
+      providers: [row.provider],
+      models: [row.model],
+      channels: [row.channel],
+    },
     filteredRows: [row],
     eventsHasMore: id.includes('more'),
     eventsLoadingMore: false,
     lastRefreshedAt: new Date(1_768_759_000_000),
   };
 };
+
+describe('analytics aggregate row adapters', () => {
+  const authMetaMap = buildMonitoringAuthMetaMap([
+    {
+      name: 'team.json',
+      provider: 'codex',
+      authIndex: 'auth-123456',
+      path: '/tmp/auths/team.json',
+      account: 'team@example.com',
+      label: 'Team Account',
+    },
+  ]);
+  const authFileMap = new Map();
+  const sourceInfoMap = buildSourceInfoMap({});
+  const channelByAuthIndex = new Map([
+    [
+      'auth-123456',
+      {
+        key: 'codex',
+        name: 'Codex',
+        baseUrl: 'https://api.openai.com',
+        host: 'api.openai.com',
+        disabled: false,
+        authIndices: ['auth-123456'],
+        modelNames: ['gpt-4.1'],
+      },
+    ],
+  ]);
+
+  it('builds account rows from full backend aggregates instead of event pages', () => {
+    const rows = buildAccountRowsFromAnalytics(
+      [
+        {
+          id: 'team@example.com',
+          account_snapshot: 'team@example.com',
+          auth_label_snapshot: 'Team Account',
+          auth_provider_snapshot: 'codex',
+          auth_indices: ['auth-123456'],
+          sources: ['team.json'],
+          source_hashes: ['source-hash'],
+          calls: 3,
+          success_calls: 2,
+          failure_calls: 1,
+          success_rate: 2 / 3,
+          input_tokens: 31,
+          output_tokens: 12,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 43,
+          cost: 0.42,
+          average_latency_ms: 1200,
+          last_seen_ms: 1_768_759_000_000,
+          models: [
+            {
+              model: 'gpt-4.1',
+              calls: 3,
+              success_calls: 2,
+              failure_calls: 1,
+              success_rate: 2 / 3,
+              input_tokens: 31,
+              output_tokens: 12,
+              cached_tokens: 0,
+              cache_read_tokens: 0,
+              cache_creation_tokens: 0,
+              total_tokens: 43,
+              cost: 0.42,
+              last_seen_ms: 1_768_759_000_000,
+            },
+          ],
+        },
+      ],
+      authMetaMap,
+      authFileMap,
+      sourceInfoMap,
+      channelByAuthIndex
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      account: 'team@example.com',
+      totalCalls: 3,
+      failureCalls: 1,
+      totalTokens: 43,
+      totalCost: 0.42,
+    });
+    expect(rows[0].models[0]).toMatchObject({ model: 'gpt-4.1', totalCalls: 3 });
+  });
+
+  it('builds api key rows from full backend aggregates and keeps aliases', () => {
+    const rows = buildApiKeyRowsFromAnalytics(
+      [
+        {
+          id: 'client-key-hash',
+          api_key_hash: 'client-key-hash',
+          account_snapshot: 'team@example.com',
+          auth_label_snapshot: 'Team Account',
+          auth_provider_snapshot: 'codex',
+          auth_indices: ['auth-123456'],
+          sources: ['team.json'],
+          source_hashes: ['source-hash'],
+          calls: 3,
+          success_calls: 2,
+          failure_calls: 1,
+          success_rate: 2 / 3,
+          input_tokens: 31,
+          output_tokens: 12,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 43,
+          cost: 0.42,
+          average_latency_ms: 1200,
+          last_seen_ms: 1_768_759_000_000,
+          models: [],
+        },
+      ],
+      authMetaMap,
+      authFileMap,
+      sourceInfoMap,
+      channelByAuthIndex,
+      new Map([['client-key-hash', { label: 'Team Key', masked: 'sk********ey' }]])
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      apiKeyHash: 'client-key-hash',
+      apiKeyLabel: 'Team Key',
+      apiKeyMasked: 'sk********ey',
+      totalCalls: 3,
+      failureCalls: 1,
+      totalTokens: 43,
+    });
+  });
+});
 
 describe('buildAccountRows', () => {
   it('keeps raw auth indices for account-level auth file linking', () => {

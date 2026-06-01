@@ -21,9 +21,12 @@ import {
 } from '../model/chartBuilders';
 import {
   buildAnalyticsFilters,
+  buildAccountRowsFromAnalytics,
+  buildApiKeyRowsFromAnalytics,
   buildChannelRowsFromAnalytics,
   buildFailureRowsFromAnalytics,
   buildFailureSourceRowsFromAnalytics,
+  buildFilterOptionsFromAnalytics,
   buildHourlyDistributionFromAnalytics,
   buildModelRowsFromAnalytics,
   buildModelShareRowsFromAnalytics,
@@ -35,6 +38,8 @@ import {
 } from '../model/analyticsAdapters';
 import { buildEventRows } from '../model/eventRows';
 import {
+  buildAccountRows,
+  buildApiKeyRows,
   buildMonitoringSummary,
   buildRangeFilteredRows,
   buildScopeFilteredRows,
@@ -43,6 +48,7 @@ import {
 import type {
   MonitoringAuthMeta,
   MonitoringChannelMeta,
+  MonitoringFilterOptions,
   MonitoringMetadata,
   UseMonitoringDataParams,
   UseMonitoringDataReturn,
@@ -113,6 +119,9 @@ export type MonitoringPresentationSnapshot = Pick<
   | 'failureSourceRows'
   | 'taskBuckets'
   | 'recentFailures'
+  | 'accountRows'
+  | 'apiKeyRows'
+  | 'filterOptions'
   | 'filteredRows'
   | 'eventsHasMore'
   | 'eventsLoadingMore'
@@ -189,6 +198,11 @@ export const mergeMonitoringEventsPageItems = (
   }
   return mergeAnalyticsEventItems(pageItems, previousItems);
 };
+
+const uniqueOptionValues = (values: Array<string | null | undefined>) =>
+  Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean))).sort(
+    (left, right) => left.localeCompare(right)
+  );
 
 export const resolveMonitoringDisplayEventItems = ({
   analyticsData,
@@ -431,6 +445,9 @@ export function useMonitoringData({
       channel_share: true,
       model_stats: true,
       failure_sources: true,
+      account_stats: true,
+      api_key_stats: true,
+      filter_options: true,
       task_buckets: true,
       recent_failures: 8,
       events_page: { limit: MONITORING_EVENTS_PAGE_LIMIT, before_ms: eventsBeforeMs },
@@ -657,6 +674,74 @@ export function useMonitoringData({
         : buildFailureRows(statsRows),
     [currentAnalyticsData, authFileMap, authMetaMap, channelByAuthIndex, sourceInfoMap, statsRows]
   );
+  const accountRows = useMemo(
+    () =>
+      currentAnalyticsData?.account_stats
+        ? buildAccountRowsFromAnalytics(
+            currentAnalyticsData.account_stats,
+            authMetaMap,
+            authFileMap,
+            sourceInfoMap,
+            channelByAuthIndex
+          )
+        : buildAccountRows(filteredRows),
+    [currentAnalyticsData, authFileMap, authMetaMap, channelByAuthIndex, filteredRows, sourceInfoMap]
+  );
+  const apiKeyRows = useMemo(
+    () =>
+      currentAnalyticsData?.api_key_stats
+        ? buildApiKeyRowsFromAnalytics(
+            currentAnalyticsData.api_key_stats,
+            authMetaMap,
+            authFileMap,
+            sourceInfoMap,
+            channelByAuthIndex,
+            apiKeyDisplayMap
+          )
+        : buildApiKeyRows(filteredRows),
+    [
+      apiKeyDisplayMap,
+      currentAnalyticsData,
+      authFileMap,
+      authMetaMap,
+      channelByAuthIndex,
+      filteredRows,
+      sourceInfoMap,
+    ]
+  );
+  const fallbackFilterOptions = useMemo<MonitoringFilterOptions>(
+    () => ({
+      accountRows: buildAccountRows(rangeFilteredRows),
+      apiKeyRows: buildApiKeyRows(rangeFilteredRows),
+      providers: uniqueOptionValues(rangeFilteredRows.map((row) => row.provider)),
+      models: uniqueOptionValues(rangeFilteredRows.map((row) => row.model)),
+      channels: uniqueOptionValues(rangeFilteredRows.map((row) => row.channel)),
+    }),
+    [rangeFilteredRows]
+  );
+  const analyticsFilterOptions = currentAnalyticsData?.filter_options;
+  const filterOptions = useMemo(
+    () =>
+      analyticsFilterOptions
+        ? buildFilterOptionsFromAnalytics(
+            analyticsFilterOptions,
+            authMetaMap,
+            authFileMap,
+            sourceInfoMap,
+            channelByAuthIndex,
+            apiKeyDisplayMap
+          )
+        : fallbackFilterOptions,
+    [
+      apiKeyDisplayMap,
+      authFileMap,
+      authMetaMap,
+      channelByAuthIndex,
+      analyticsFilterOptions,
+      fallbackFilterOptions,
+      sourceInfoMap,
+    ]
+  );
 
   const computedPresentationSnapshot = useMemo<MonitoringPresentationSnapshot>(
     () => ({
@@ -670,6 +755,9 @@ export function useMonitoringData({
       failureSourceRows,
       taskBuckets,
       recentFailures,
+      accountRows,
+      apiKeyRows,
+      filterOptions,
       filteredRows,
       eventsHasMore: displayEventsHasMore,
       eventsLoadingMore,
@@ -677,10 +765,13 @@ export function useMonitoringData({
     }),
     [
       analytics.lastRefreshedAt,
+      accountRows,
+      apiKeyRows,
       channelRows,
       displayEventsHasMore,
       eventsLoadingMore,
       failureSourceRows,
+      filterOptions,
       filteredRows,
       hourlyDistribution,
       modelRows,
@@ -782,6 +873,9 @@ export function useMonitoringData({
     failureSourceRows: presentationSnapshot.failureSourceRows,
     taskBuckets: presentationSnapshot.taskBuckets,
     recentFailures: presentationSnapshot.recentFailures,
+    accountRows: presentationSnapshot.accountRows,
+    apiKeyRows: presentationSnapshot.apiKeyRows,
+    filterOptions: presentationSnapshot.filterOptions,
     filteredRows: presentationSnapshot.filteredRows,
     eventsHasMore: presentationSnapshot.eventsHasMore,
     eventsLoadingMore: presentationSnapshot.eventsLoadingMore,

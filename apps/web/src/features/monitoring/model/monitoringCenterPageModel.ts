@@ -10,6 +10,7 @@ import type {
 } from '@/types';
 import type {
   MonitoringAccountRow,
+  MonitoringApiKeyRow,
   MonitoringEventRow,
   MonitoringSummary,
 } from '@/features/monitoring/hooks/useMonitoringData';
@@ -131,11 +132,17 @@ export const buildProviderOptions = (
   rows: MonitoringEventRow[],
   selectedProvider: string,
   t: TFunction
+) => buildProviderOptionsFromValues(rows.map((row) => row.provider), selectedProvider, t);
+
+export const buildProviderOptionsFromValues = (
+  providers: string[],
+  selectedProvider: string,
+  t: TFunction
 ) =>
   ensureSelectedOption(
     [
       { value: 'all', label: t('monitoring.filter_all_providers') },
-      ...buildSortedValueOptions(rows.map((row) => row.provider)),
+      ...buildSortedValueOptions(providers),
     ],
     selectedProvider
   );
@@ -149,7 +156,9 @@ export const buildAccountOptions = (
     [
       { value: 'all', label: t('monitoring.filter_all_accounts') },
       ...Array.from(
-        new Map(rows.map((row) => [row.account, buildAccountOptionLabel(row)])).entries()
+        new Map(
+          rows.map((row) => [row.filterValue || row.account, buildAccountOptionLabel(row)])
+        ).entries()
       )
         .sort((left, right) => left[1].localeCompare(right[1]))
         .map(([value, label]) => ({ value, label })),
@@ -161,11 +170,17 @@ export const buildModelOptions = (
   rows: MonitoringEventRow[],
   selectedModel: string,
   t: TFunction
+) => buildModelOptionsFromValues(rows.map((row) => row.model), selectedModel, t);
+
+export const buildModelOptionsFromValues = (
+  models: string[],
+  selectedModel: string,
+  t: TFunction
 ) =>
   ensureSelectedOption(
     [
       { value: 'all', label: t('monitoring.filter_all_models') },
-      ...buildSortedValueOptions(rows.map((row) => row.model)),
+      ...buildSortedValueOptions(models),
     ],
     selectedModel
   );
@@ -174,13 +189,35 @@ export const buildChannelOptions = (
   rows: MonitoringEventRow[],
   selectedChannel: string,
   t: TFunction
+) => buildChannelOptionsFromValues(rows.map((row) => row.channel), selectedChannel, t);
+
+export const buildChannelOptionsFromValues = (
+  channels: string[],
+  selectedChannel: string,
+  t: TFunction
 ) =>
   ensureSelectedOption(
     [
       { value: 'all', label: t('monitoring.filter_all_channels') },
-      ...buildSortedValueOptions(rows.map((row) => row.channel)),
+      ...buildSortedValueOptions(channels),
     ],
     selectedChannel
+  );
+
+const buildApiKeyOptionsFromMap = (
+  optionMap: Map<string, string>,
+  selectedApiKeyHash: string,
+  t: TFunction
+) =>
+  ensureSelectedOption(
+    [
+      { value: 'all', label: t('monitoring.filter_all_api_keys') },
+      ...Array.from(optionMap.entries())
+        .sort((left, right) => left[1].localeCompare(right[1]))
+        .map(([value, label]) => ({ value, label })),
+    ],
+    selectedApiKeyHash,
+    selectedApiKeyHash
   );
 
 export const buildApiKeyOptions = (
@@ -194,16 +231,21 @@ export const buildApiKeyOptions = (
     optionMap.set(row.apiKeyHash, row.apiKeyLabel || row.apiKeyMasked || row.apiKeyHash);
   });
 
-  return ensureSelectedOption(
-    [
-      { value: 'all', label: t('monitoring.filter_all_api_keys') },
-      ...Array.from(optionMap.entries())
-        .sort((left, right) => left[1].localeCompare(right[1]))
-        .map(([value, label]) => ({ value, label })),
-    ],
-    selectedApiKeyHash,
-    selectedApiKeyHash
-  );
+  return buildApiKeyOptionsFromMap(optionMap, selectedApiKeyHash, t);
+};
+
+export const buildApiKeyOptionsFromRows = (
+  rows: MonitoringApiKeyRow[],
+  selectedApiKeyHash: string,
+  t: TFunction
+) => {
+  const optionMap = new Map<string, string>();
+  rows.forEach((row) => {
+    if (!row.apiKeyHash || optionMap.has(row.apiKeyHash)) return;
+    optionMap.set(row.apiKeyHash, row.apiKeyLabel || row.apiKeyMasked || row.apiKeyHash);
+  });
+
+  return buildApiKeyOptionsFromMap(optionMap, selectedApiKeyHash, t);
 };
 
 export const buildStatusOptions = (t: TFunction): MonitoringOption[] => [

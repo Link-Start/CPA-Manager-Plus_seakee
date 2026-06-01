@@ -469,6 +469,7 @@ export interface DashboardSummaryParams {
 
 export interface MonitoringAnalyticsFilters {
   models?: string[];
+  providers?: string[];
   accounts?: string[];
   auth_indices?: string[];
   api_key_hashes?: string[];
@@ -491,6 +492,9 @@ export interface MonitoringAnalyticsInclude {
   channel_share?: boolean;
   model_stats?: boolean;
   failure_sources?: boolean;
+  account_stats?: boolean;
+  api_key_stats?: boolean;
+  filter_options?: boolean;
   task_buckets?: boolean;
   recent_failures?: number;
   events_page?: MonitoringAnalyticsEventsPageRequest;
@@ -596,6 +600,78 @@ export interface MonitoringAnalyticsFailureSourceRow {
   average_latency_ms: number | null;
 }
 
+export interface MonitoringAnalyticsAccountModelStatRow {
+  model: string;
+  calls: number;
+  success_calls: number;
+  failure_calls: number;
+  success_rate: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  cost: number;
+  last_seen_ms: number;
+}
+
+export interface MonitoringAnalyticsAccountStatRow {
+  id: string;
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_provider_snapshot?: string;
+  auth_indices?: string[];
+  sources?: string[];
+  source_hashes?: string[];
+  calls: number;
+  success_calls: number;
+  failure_calls: number;
+  success_rate: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  cost: number;
+  average_latency_ms: number | null;
+  last_seen_ms: number;
+  models?: MonitoringAnalyticsAccountModelStatRow[];
+}
+
+export interface MonitoringAnalyticsApiKeyStatRow {
+  id: string;
+  api_key_hash: string;
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_provider_snapshot?: string;
+  auth_indices?: string[];
+  sources?: string[];
+  source_hashes?: string[];
+  calls: number;
+  success_calls: number;
+  failure_calls: number;
+  success_rate: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  cost: number;
+  average_latency_ms: number | null;
+  last_seen_ms: number;
+  models?: MonitoringAnalyticsAccountModelStatRow[];
+}
+
+export interface MonitoringAnalyticsFilterOptions {
+  account_stats?: MonitoringAnalyticsAccountStatRow[];
+  api_key_stats?: MonitoringAnalyticsApiKeyStatRow[];
+  channel_share?: MonitoringAnalyticsChannelShareRow[];
+  model_stats?: MonitoringAnalyticsModelStat[];
+}
+
 export interface MonitoringAnalyticsTaskBucketRow {
   bucket_key: string;
   total: number;
@@ -682,6 +758,9 @@ export interface MonitoringAnalyticsResponse {
   model_stats?: MonitoringAnalyticsModelStat[];
   channel_share?: MonitoringAnalyticsChannelShareRow[];
   failure_sources?: MonitoringAnalyticsFailureSourceRow[];
+  account_stats?: MonitoringAnalyticsAccountStatRow[];
+  api_key_stats?: MonitoringAnalyticsApiKeyStatRow[];
+  filter_options?: MonitoringAnalyticsFilterOptions;
   task_buckets?: MonitoringAnalyticsTaskBucketRow[];
   recent_failures?: MonitoringAnalyticsRecentFailure[];
   events?: MonitoringAnalyticsEventsResponse;

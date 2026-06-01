@@ -1,5 +1,9 @@
 import { formatApiKeyHashLabel } from './base';
 import { sanitizeApiKeyDisplayText, shouldPreferApiKeyAlias } from './apiKeys';
+import {
+  buildMonitoringAccountFilterValue,
+  parseMonitoringAccountFilterValue,
+} from './analyticsAdapters';
 import { getRangeBounds } from './range';
 import type {
   MonitoringAccountRow,
@@ -82,7 +86,11 @@ export const buildScopeFilteredRows = (
 ) => {
   if (!scopeFilters) return rows;
 
-  const account = normalizeScopeValue(scopeFilters.account);
+  const accountCriteria = parseMonitoringAccountFilterValue(scopeFilters.account);
+  const account = normalizeScopeValue(accountCriteria.accounts[0] || scopeFilters.account);
+  const accountAuthIndices = new Set(accountCriteria.authIndices.map(normalizeScopeValue));
+  const accountApiKeyHashes = new Set(accountCriteria.apiKeyHashes.map(normalizeScopeValue));
+  const hasAccountSourceHashFilter = accountCriteria.sourceHashes.length > 0;
   const provider = normalizeScopeValue(scopeFilters.provider);
   const model = normalizeScopeValue(scopeFilters.model);
   const channel = normalizeScopeValue(scopeFilters.channel);
@@ -91,15 +99,24 @@ export const buildScopeFilteredRows = (
 
   return rows.filter((row) => {
     if (isActiveScopeFilterValue(scopeFilters.account)) {
-      const rowAccountValues = [
-        row.account,
-        row.accountMasked,
-        row.authLabel,
-        row.source,
-        row.sourceMasked,
-        row.authIndex,
-      ].map(normalizeScopeValue);
-      if (!rowAccountValues.includes(account)) return false;
+      if (accountAuthIndices.size > 0) {
+        if (!accountAuthIndices.has(normalizeScopeValue(row.authIndex))) return false;
+      } else if (accountApiKeyHashes.size > 0) {
+        if (!accountApiKeyHashes.has(normalizeScopeValue(row.apiKeyHash))) return false;
+      } else if (hasAccountSourceHashFilter) {
+        // source_hash is only available in analytics payloads, so avoid dropping rows after
+        // the backend has already applied the exact source_hash filter.
+      } else {
+        const rowAccountValues = [
+          row.account,
+          row.accountMasked,
+          row.authLabel,
+          row.source,
+          row.sourceMasked,
+          row.authIndex,
+        ].map(normalizeScopeValue);
+        if (!rowAccountValues.includes(account)) return false;
+      }
     }
 
     if (
@@ -218,6 +235,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       accountMasked: string;
       authLabels: Set<string>;
       authIndices: Set<string>;
+      apiKeyHashes: Set<string>;
       channels: Set<string>;
       modelMap: Map<
         string,
@@ -261,6 +279,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       accountMasked: row.accountMasked,
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
+      apiKeyHashes: new Set<string>(),
       channels: new Set<string>(),
       modelMap: new Map(),
       rows: [] as MonitoringEventRow[],
@@ -282,6 +301,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     existing.rows.push(row);
     existing.authLabels.add(row.authLabel);
     existing.authIndices.add(row.authIndex);
+    existing.apiKeyHashes.add(row.apiKeyHash);
     existing.channels.add(row.channel);
     existing.totalCalls += 1;
     existing.successCalls += row.failed ? 0 : 1;
@@ -334,13 +354,21 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
   return Array.from(grouped.values())
     .map((item) => {
       const channels = Array.from(item.channels).sort();
+      const authIndices = Array.from(item.authIndices).sort();
+      const apiKeyHashes = Array.from(item.apiKeyHashes).sort();
       return {
         id: item.id,
         account: item.account,
+        filterValue:
+          buildMonitoringAccountFilterValue({
+            account: item.account,
+            authIndices,
+            apiKeyHashes,
+          }) || item.account,
         displayAccount: resolveAccountDisplayName(item.account, channels),
         accountMasked: item.accountMasked,
         authLabels: Array.from(item.authLabels).sort(),
-        authIndices: Array.from(item.authIndices).sort(),
+        authIndices,
         channels,
         totalCalls: item.totalCalls,
         successCalls: item.successCalls,

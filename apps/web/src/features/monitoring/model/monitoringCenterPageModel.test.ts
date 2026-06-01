@@ -7,7 +7,15 @@ import {
   fetchXaiQuota,
 } from '@/utils/quota';
 import type { MonitoringAccountQuotaTarget } from '@/features/monitoring/accountOverviewQuotaTargets';
-import { requestAccountQuota } from './monitoringCenterPageModel';
+import type { MonitoringAccountRow, MonitoringApiKeyRow } from '@/features/monitoring/hooks/useMonitoringData';
+import {
+  buildAccountOptions,
+  buildApiKeyOptionsFromRows,
+  buildChannelOptionsFromValues,
+  buildModelOptionsFromValues,
+  buildProviderOptionsFromValues,
+  requestAccountQuota,
+} from './monitoringCenterPageModel';
 
 vi.mock('@/utils/quota', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/quota')>();
@@ -70,6 +78,106 @@ const createTarget = (
   },
   accountId: overrides.accountId ?? null,
   planType: overrides.planType ?? null,
+});
+
+const createAccountRow = (
+  account: string,
+  overrides: Partial<MonitoringAccountRow> = {}
+): MonitoringAccountRow => ({
+  id: account,
+  account,
+  displayAccount: account,
+  accountMasked: account,
+  authLabels: [],
+  authIndices: [],
+  channels: [],
+  totalCalls: 1,
+  successCalls: 1,
+  failureCalls: 0,
+  successRate: 1,
+  inputTokens: 1,
+  outputTokens: 1,
+  cachedTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalTokens: 2,
+  totalCost: 0,
+  averageLatencyMs: null,
+  lastSeenAt: 1,
+  recentPattern: [],
+  models: [],
+  ...overrides,
+});
+
+const createApiKeyRow = (apiKeyHash: string, label: string): MonitoringApiKeyRow => ({
+  id: apiKeyHash,
+  apiKeyHash,
+  apiKeyLabel: label,
+  apiKeyMasked: label,
+  isUnknown: false,
+  authLabels: [],
+  sourceLabels: [],
+  channels: [],
+  totalCalls: 1,
+  successCalls: 1,
+  failureCalls: 0,
+  successRate: 1,
+  inputTokens: 1,
+  outputTokens: 1,
+  cachedTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalTokens: 2,
+  totalCost: 0,
+  averageLatencyMs: null,
+  lastSeenAt: 1,
+  models: [],
+});
+
+describe('monitoringCenterPageModel filter options', () => {
+  it('keeps alternate candidates when a dynamic filter already has a selected value', () => {
+    expect(buildProviderOptionsFromValues(['codex', 'gemini'], 'codex', t).map((item) => item.value)).toEqual([
+      'all',
+      'codex',
+      'gemini',
+    ]);
+    expect(
+      buildAccountOptions(
+        [createAccountRow('alice@example.com'), createAccountRow('bob@example.com')],
+        'alice@example.com',
+        t
+      ).map((item) => item.value)
+    ).toEqual(['all', 'alice@example.com', 'bob@example.com']);
+    expect(buildModelOptionsFromValues(['gpt-a', 'gpt-b'], 'gpt-a', t).map((item) => item.value)).toEqual([
+      'all',
+      'gpt-a',
+      'gpt-b',
+    ]);
+    expect(
+      buildChannelOptionsFromValues(['Primary', 'Backup'], 'Primary', t).map((item) => item.value)
+    ).toEqual(['all', 'Backup', 'Primary']);
+    expect(
+      buildApiKeyOptionsFromRows(
+        [createApiKeyRow('key-a', 'Key A'), createApiKeyRow('key-b', 'Key B')],
+        'key-a',
+        t
+      ).map((item) => item.value)
+    ).toEqual(['all', 'key-a', 'key-b']);
+  });
+
+  it('uses account row filter values for account options', () => {
+    expect(
+      buildAccountOptions(
+        [
+          createAccountRow('OpenAI Compatible', {
+            filterValue: 'auth:openai-auth',
+          }),
+        ],
+        'auth:openai-auth',
+        t
+      ).map((item) => item.value)
+    ).toEqual(['all', 'auth:openai-auth']);
+  });
 });
 
 describe('monitoringCenterPageModel account quota', () => {

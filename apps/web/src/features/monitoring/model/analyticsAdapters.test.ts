@@ -6,9 +6,11 @@ import type {
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import {
   buildAnalyticsFilters,
+  buildMonitoringAccountFilterValue,
   buildChannelRowsFromAnalytics,
   buildFailureRowsFromAnalytics,
   buildFailureSourceRowsFromAnalytics,
+  buildFilterOptionsFromAnalytics,
   buildUsageDetailsFromAnalyticsEvents,
 } from './analyticsAdapters';
 
@@ -149,6 +151,331 @@ describe('buildAnalyticsFilters', () => {
     expect(filters).toEqual({
       accounts: ['legacy@example.com'],
     });
+  });
+
+  it('maps account filter tokens into exact backend identity filters', () => {
+    expect(
+      buildAnalyticsFilters(
+        {
+          account: buildMonitoringAccountFilterValue({
+            account: 'OpenAI Compatible',
+            authIndices: ['openai-auth'],
+          }),
+        },
+        new Map(),
+        []
+      )
+    ).toEqual({
+      auth_indices: ['openai-auth'],
+    });
+
+    expect(
+      buildAnalyticsFilters(
+        {
+          account: buildMonitoringAccountFilterValue({
+            account: 'OpenAI Compatible',
+            sourceHashes: ['source-hash'],
+          }),
+        },
+        new Map(),
+        []
+      )
+    ).toEqual({
+      source_hashes: ['source-hash'],
+    });
+
+    expect(
+      buildAnalyticsFilters(
+        {
+          account: buildMonitoringAccountFilterValue({
+            account: 'OpenAI Compatible',
+            apiKeyHashes: ['API-Key-Hash'],
+          }),
+        },
+        new Map(),
+        []
+      )
+    ).toEqual({
+      api_key_hashes: ['api-key-hash'],
+    });
+  });
+
+  it('falls back to provider filters when auth metadata cannot resolve a provider', () => {
+    const filters = buildAnalyticsFilters(
+      {
+        provider: 'legacy-provider',
+      },
+      new Map(),
+      []
+    );
+
+    expect(filters).toEqual({
+      providers: ['legacy-provider'],
+    });
+  });
+});
+
+describe('buildFilterOptionsFromAnalytics', () => {
+  it('maps backend option aggregates into stable dropdown candidates', () => {
+    const options = buildFilterOptionsFromAnalytics(
+      {
+        account_stats: [
+          {
+            id: 'alice@example.com',
+            account_snapshot: 'alice@example.com',
+            auth_label_snapshot: 'Alice Auth',
+            auth_provider_snapshot: 'codex',
+            auth_indices: ['auth-1'],
+            sources: ['alice.json'],
+            source_hashes: ['source-a'],
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+            last_seen_ms: 1,
+            models: [],
+          },
+          {
+            id: 'bob@example.com',
+            account_snapshot: 'bob@example.com',
+            auth_label_snapshot: 'Bob Auth',
+            auth_provider_snapshot: 'gemini',
+            auth_indices: ['auth-2'],
+            sources: ['bob.json'],
+            source_hashes: ['source-b'],
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+            last_seen_ms: 2,
+            models: [],
+          },
+        ],
+        api_key_stats: [
+          {
+            id: 'key-a',
+            api_key_hash: 'key-a',
+            account_snapshot: 'alice@example.com',
+            auth_label_snapshot: 'Alice Auth',
+            auth_provider_snapshot: 'codex',
+            auth_indices: ['auth-1'],
+            sources: ['alice.json'],
+            source_hashes: ['source-a'],
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+            last_seen_ms: 1,
+            models: [],
+          },
+        ],
+        channel_share: [
+          {
+            auth_index: 'auth-1',
+            auth_provider_snapshot: 'codex',
+            calls: 1,
+            success: 1,
+            failure: 0,
+            tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+          },
+          {
+            auth_index: 'auth-2',
+            auth_provider_snapshot: 'gemini',
+            calls: 1,
+            success: 1,
+            failure: 0,
+            tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+          },
+        ],
+        model_stats: [
+          {
+            model: 'gpt-a',
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+          },
+          {
+            model: 'gpt-b',
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+          },
+        ],
+      },
+      new Map([
+        [
+          'auth-1',
+          {
+            authIndex: 'auth-1',
+            label: 'Alice Auth',
+            account: 'alice@example.com',
+            provider: 'codex',
+            status: 'active',
+            disabled: false,
+            unavailable: false,
+            runtimeOnly: false,
+            planType: 'pro',
+            updatedAt: '',
+          },
+        ],
+      ]),
+      new Map(),
+      buildSourceInfoMap({}),
+      new Map([
+        [
+          'auth-1',
+          {
+            key: 'primary:0',
+            name: 'Primary Channel',
+            baseUrl: 'https://primary.example.com',
+            host: 'primary.example.com',
+            disabled: false,
+            authIndices: ['auth-1'],
+            modelNames: [],
+          },
+        ],
+      ]),
+      new Map([['key-a', { label: 'Key A', masked: 'sk********aa' }]])
+    );
+
+    expect(options.accountRows.map((row) => row.account).sort()).toEqual([
+      'alice@example.com',
+      'bob@example.com',
+    ]);
+    expect(options.apiKeyRows.map((row) => row.apiKeyLabel)).toEqual(['Key A']);
+    expect(options.providers).toEqual(['codex', 'gemini']);
+    expect(options.models).toEqual(['gpt-a', 'gpt-b']);
+    expect(options.channels).toEqual(['Primary Channel', 'gemini']);
+  });
+
+  it('uses auth or source identities for OpenAI-compatible account option rows', () => {
+    const options = buildFilterOptionsFromAnalytics(
+      {
+        account_stats: [
+          {
+            id: 'openai-provider',
+            account_snapshot: '',
+            auth_label_snapshot: '',
+            auth_provider_snapshot: 'openai',
+            auth_indices: ['openai-auth'],
+            sources: ['k:upstream-key'],
+            source_hashes: ['source-a'],
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+            last_seen_ms: 2,
+            models: [],
+          },
+          {
+            id: 'openai-provider-without-auth',
+            account_snapshot: '',
+            auth_label_snapshot: '',
+            auth_provider_snapshot: 'openai',
+            auth_indices: [],
+            sources: ['k:upstream-key-2'],
+            source_hashes: ['source-b'],
+            calls: 1,
+            success_calls: 1,
+            failure_calls: 0,
+            success_rate: 1,
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_tokens: 2,
+            cost: 0,
+            average_latency_ms: null,
+            last_seen_ms: 1,
+            models: [],
+          },
+        ],
+      },
+      new Map(),
+      new Map(),
+      buildSourceInfoMap({
+        openaiCompatibility: [
+          {
+            name: 'OpenAI Compatible',
+            baseUrl: 'https://compat.example.com',
+            apiKeyEntries: [{ apiKey: 'upstream-key', authIndex: 'openai-auth' }],
+          },
+        ],
+      }),
+      new Map([
+        [
+          'openai-auth',
+          {
+            key: 'openai:0',
+            name: 'OpenAI Compatible',
+            baseUrl: 'https://compat.example.com',
+            host: 'compat.example.com',
+            disabled: false,
+            authIndices: ['openai-auth'],
+            modelNames: [],
+          },
+        ],
+      ]),
+      new Map()
+    );
+
+    expect(options.accountRows.map((row) => row.filterValue)).toEqual([
+      'auth:openai-auth',
+      'source:source-b',
+    ]);
   });
 });
 

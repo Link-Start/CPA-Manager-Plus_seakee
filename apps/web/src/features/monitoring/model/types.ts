@@ -231,6 +231,7 @@ export type MonitoringAccountModelSpendRow = {
 export type MonitoringAccountRow = {
   id: string;
   account: string;
+  filterValue?: string;
   displayAccount: string;
   accountMasked: string;
   authLabels: string[];
@@ -278,6 +279,14 @@ export type MonitoringApiKeyRow = {
   averageLatencyMs: number | null;
   lastSeenAt: number;
   models: MonitoringApiKeyModelSpendRow[];
+};
+
+export type MonitoringFilterOptions = {
+  accountRows: MonitoringAccountRow[];
+  apiKeyRows: MonitoringApiKeyRow[];
+  providers: string[];
+  models: string[];
+  channels: string[];
 };
 
 export type MonitoringRealtimeRow = {
@@ -357,6 +366,9 @@ export interface UseMonitoringDataReturn {
   failureSourceRows: MonitoringFailureSourceRow[];
   taskBuckets: MonitoringTaskBucketRow[];
   recentFailures: MonitoringFailureRow[];
+  accountRows: MonitoringAccountRow[];
+  apiKeyRows: MonitoringApiKeyRow[];
+  filterOptions: MonitoringFilterOptions;
   filteredRows: MonitoringEventRow[];
   eventsHasMore: boolean;
   eventsLoadingMore: boolean;

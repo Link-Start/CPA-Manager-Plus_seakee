@@ -9,8 +9,6 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  buildAccountRows,
-  buildApiKeyRows,
   buildRealtimeMonitorRows,
   getRangeBounds,
   type MonitoringAccountRow,
@@ -70,15 +68,15 @@ import {
   buildAccountOptions,
   buildAccountOverviewColumns,
   buildAccountSortOptions,
-  buildApiKeyOptions,
+  buildApiKeyOptionsFromRows,
   buildApiKeyOverviewColumns,
   buildAuthFilesByAuthIndex,
   buildAccountQuotaErrorEntry,
-  buildChannelOptions,
-  buildModelOptions,
+  buildChannelOptionsFromValues,
+  buildModelOptionsFromValues,
   buildPaginationState,
   buildPrimarySummaryCards,
-  buildProviderOptions,
+  buildProviderOptionsFromValues,
   buildRealtimeLogRows,
   buildSecondarySummaryCards,
   buildStatusOptions,
@@ -297,6 +295,9 @@ export function MonitoringCenterPage() {
     error: monitoringError,
     authFiles,
     summary: monitoringSummary,
+    accountRows: monitoringAccountRows,
+    apiKeyRows: monitoringApiKeyRows,
+    filterOptions: monitoringFilterOptions,
     filteredRows,
     eventsHasMore,
     eventsLoadingMore,
@@ -416,30 +417,28 @@ export function MonitoringCenterPage() {
   ]);
 
   const providerOptions = useMemo(
-    () => buildProviderOptions(filteredRows, selectedProvider, t),
-    [filteredRows, selectedProvider, t]
+    () => buildProviderOptionsFromValues(monitoringFilterOptions.providers, selectedProvider, t),
+    [monitoringFilterOptions.providers, selectedProvider, t]
   );
 
-  const accountOptionRows = useMemo(() => buildAccountRows(filteredRows), [filteredRows]);
-
   const accountOptions = useMemo(
-    () => buildAccountOptions(accountOptionRows, selectedAccount, t),
-    [accountOptionRows, selectedAccount, t]
+    () => buildAccountOptions(monitoringFilterOptions.accountRows, selectedAccount, t),
+    [monitoringFilterOptions.accountRows, selectedAccount, t]
   );
 
   const modelOptions = useMemo(
-    () => buildModelOptions(filteredRows, selectedModel, t),
-    [filteredRows, selectedModel, t]
+    () => buildModelOptionsFromValues(monitoringFilterOptions.models, selectedModel, t),
+    [monitoringFilterOptions.models, selectedModel, t]
   );
 
   const channelOptions = useMemo(
-    () => buildChannelOptions(filteredRows, selectedChannel, t),
-    [filteredRows, selectedChannel, t]
+    () => buildChannelOptionsFromValues(monitoringFilterOptions.channels, selectedChannel, t),
+    [monitoringFilterOptions.channels, selectedChannel, t]
   );
 
   const apiKeyOptions = useMemo(
-    () => buildApiKeyOptions(filteredRows, selectedApiKeyHash, t),
-    [filteredRows, selectedApiKeyHash, t]
+    () => buildApiKeyOptionsFromRows(monitoringFilterOptions.apiKeyRows, selectedApiKeyHash, t),
+    [monitoringFilterOptions.apiKeyRows, selectedApiKeyHash, t]
   );
 
   const statusOptions = useMemo(() => buildStatusOptions(t), [t]);
@@ -462,8 +461,8 @@ export function MonitoringCenterPage() {
   );
 
   const scopedSummary = monitoringSummary;
-  const accountRows = useMemo(() => buildAccountRows(scopedRows), [scopedRows]);
-  const apiKeyRows = useMemo(() => buildApiKeyRows(scopedRows), [scopedRows]);
+  const accountRows = monitoringAccountRows;
+  const apiKeyRows = monitoringApiKeyRows;
   const accountStatusDataByRowId = useMemo(
     () => buildMonitoringAccountStatusDataMap(scopedRows, accountStatusBounds),
     [accountStatusBounds, scopedRows]
@@ -837,7 +836,9 @@ export function MonitoringCenterPage() {
   );
 
   const focusAccount = useCallback(
-    (account: string) => {
+    (row: MonitoringAccountRow) => {
+      const account = row.account;
+      const accountFilterValue = row.filterValue || row.account;
       if (focusedAccount === account) {
         restoreFocusSnapshot();
         return;
@@ -856,7 +857,7 @@ export function MonitoringCenterPage() {
       }
 
       setFocusedAccount(account);
-      setSelectedAccount(account);
+      setSelectedAccount(accountFilterValue);
     },
     [
       focusedAccount,
