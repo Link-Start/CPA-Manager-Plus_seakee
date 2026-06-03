@@ -2044,7 +2044,7 @@
       "cpa_management_key_saving": "Validating the new key against CPA…",
       "cpa_connection_risk_inline": "Changing the CPA URL or management key affects proxying, usage collection, and monitoring data. Save only after confirming the target CPA is correct.",
       "cpa_connection_risk_title": "Confirm CPA Connection Change",
-      "cpa_connection_risk_message": "You are changing the Manager Server CPA connection. Current CPA: {{currentBase}}; CPA after save: {{nextBase}}. This creates life-threatening risk. Confirm the target CPA URL and Management Key are exactly correct before continuing.",
+      "cpa_connection_risk_message": "You are changing the Manager Server CPA connection. Current CPA: {{currentBase}}; CPA after save: {{nextBase}}. This affects proxying, usage collection, and monitoring data. Confirm the target CPA URL and Management Key are exactly correct before continuing.",
       "cpa_connection_risk_confirm": "Confirm and Accept Risk",
       "current_cpa_base": "Current CPA URL",
       "bound_cpa_base": "Manager Server bound CPA",

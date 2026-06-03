@@ -2044,7 +2044,7 @@
       "cpa_management_key_saving": "正在用新密钥访问 CPA 验证…",
       "cpa_connection_risk_inline": "修改 CPA 链接地址或管理密钥会影响代理、用量采集和监控数据，请只在确认目标 CPA 正确时保存。",
       "cpa_connection_risk_title": "确认修改 CPA 连接",
-      "cpa_connection_risk_message": "你正在修改 Manager Server 的 CPA 连接。当前 CPA：{{currentBase}}；保存后 CPA：{{nextBase}}。这样做会产生生命风险，请确认目标 CPA 地址和 Management Key 完全正确后再继续。",
+      "cpa_connection_risk_message": "你正在修改 Manager Server 的 CPA 连接。当前 CPA：{{currentBase}}；保存后 CPA：{{nextBase}}。这会影响代理、用量采集和监控数据，请确认目标 CPA 地址和 Management Key 完全正确后再继续。",
       "cpa_connection_risk_confirm": "确认并承担风险",
       "current_cpa_base": "当前 CPA 地址",
       "bound_cpa_base": "Manager Server 已绑定 CPA",

@@ -14,9 +14,10 @@ CPA Manager Plus 是 CPA-Manager 的推荐后续版本。它把 CPA 管理面板
 
 ## 面板预览
 
-![首页仪表盘，展示流量概览、采集器状态、用量指标、健康提醒和版本信息](img/home.jpg)
-![监控中心，展示用量分析、实时请求事件、账号汇总、API Key 拆解和模型费用统计](img/monitoring.jpg)
-![Codex 账号巡检，展示探测进度、账号状态、清理建议和执行日志](img/codex-inspection.png)
+![首页仪表盘，展示 Manager Server 状态、用量指标、请求健康度、Token 构成、模型成本和采集器状态](img/dashboard-overview.png)
+![请求监控账号汇总，展示账号统计、额度进度、Token 结构、模型使用和单账号成本](img/request-monitoring-account-overview.png)
+![请求监控实时事件，展示最近调用、模型、推理强度、请求状态、TPS、延迟、用量和费用](img/request-monitoring-realtime-events.png)
+![服务端 Codex 账号巡检，展示定时运行、结果分页、账号状态、清理建议和日志](img/server-codex-inspection.png)
 
 ## 提供什么
 

@@ -14,9 +14,10 @@ CPA Manager Plus is the recommended successor to CPA-Manager. It combines the CP
 
 ## Panel Preview
 
-![Home dashboard showing traffic overview, collector status, usage metrics, health alerts, and version information](img/home.jpg)
-![Monitoring center showing usage analytics, realtime request events, account overview, API key breakdowns, and model cost statistics](img/monitoring.jpg)
-![Codex account inspection showing probe progress, account status, cleanup recommendations, and execution logs](img/codex-inspection.png)
+![Dashboard overview showing Manager Server status, usage metrics, request health, token breakdowns, model costs, and collector state](img/dashboard-overview.png)
+![Request monitoring account overview showing account statistics, quota progress, token structure, model usage, and per-account costs](img/request-monitoring-account-overview.png)
+![Request monitoring realtime events showing recent calls, model, reasoning effort, request status, TPS, latency, usage, and cost](img/request-monitoring-realtime-events.png)
+![Server Codex account inspection showing scheduled runs, result pagination, account status, cleanup recommendations, and logs](img/server-codex-inspection.png)
 
 ## What This Provides
 

@@ -2040,7 +2040,7 @@
       "cpa_management_key_saving": "Проверка нового ключа через CPA…",
       "cpa_connection_risk_inline": "Изменение URL CPA или management key влияет на проксирование, сбор usage и данные мониторинга. Сохраняйте только после проверки целевого CPA.",
       "cpa_connection_risk_title": "Подтвердите изменение подключения CPA",
-      "cpa_connection_risk_message": "Вы меняете подключение CPA для Manager Server. Текущий CPA: {{currentBase}}; CPA после сохранения: {{nextBase}}. Это создаёт риск для жизни. Перед продолжением убедитесь, что URL CPA и Management Key полностью верны.",
+      "cpa_connection_risk_message": "Вы меняете подключение CPA для Manager Server. Текущий CPA: {{currentBase}}; CPA после сохранения: {{nextBase}}. Это влияет на проксирование, сбор статистики использования и данные мониторинга. Перед продолжением убедитесь, что URL CPA и Management Key полностью верны.",
       "cpa_connection_risk_confirm": "Подтвердить и принять риск",
       "current_cpa_base": "Текущий URL CPA",
       "bound_cpa_base": "CPA, привязанный к Manager Server",

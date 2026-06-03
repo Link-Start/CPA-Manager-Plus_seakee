@@ -2069,7 +2069,7 @@
       "cpa_management_key_saving": "正在用新金鑰存取 CPA 驗證…",
       "cpa_connection_risk_inline": "修改 CPA 連結位址或管理金鑰會影響代理、用量採集和監控資料，請只在確認目標 CPA 正確時儲存。",
       "cpa_connection_risk_title": "確認修改 CPA 連線",
-      "cpa_connection_risk_message": "你正在修改 Manager Server 的 CPA 連線。目前 CPA：{{currentBase}}；儲存後 CPA：{{nextBase}}。這樣做會產生生命風險，請確認目標 CPA 位址和 Management Key 完全正確後再繼續。",
+      "cpa_connection_risk_message": "你正在修改 Manager Server 的 CPA 連線。目前 CPA：{{currentBase}}；儲存後 CPA：{{nextBase}}。這會影響代理、用量採集和監控資料，請確認目標 CPA 位址和 Management Key 完全正確後再繼續。",
       "cpa_connection_risk_confirm": "確認並承擔風險",
       "current_cpa_base": "目前 CPA 位址",
       "bound_cpa_base": "Manager Server 已綁定 CPA",
