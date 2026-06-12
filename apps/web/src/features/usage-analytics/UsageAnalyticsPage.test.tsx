@@ -250,6 +250,14 @@ const createUsageState = (overrides: Record<string, unknown> = {}) => {
         points: [{ bucketMs: point.bucketMs, label: point.label, value: 12 }],
       },
     ],
+    credentialTrendSeries: [
+      {
+        id: 'credential-prod',
+        label: 'prod-auth',
+        color: '#2563eb',
+        points: [{ bucketMs: point.bucketMs, label: point.label, value: 8 }],
+      },
+    ],
     keyAnomalies: [
       {
         id: 'abcdef1234567890',
@@ -258,6 +266,16 @@ const createUsageState = (overrides: Record<string, unknown> = {}) => {
         reasonKey: 'usage_analytics.anomaly_reason_error_rate',
         triggeredAtMs: point.bucketMs,
         row: apiKeyRow,
+      },
+    ],
+    credentialAnomalies: [
+      {
+        id: 'credential-prod',
+        label: 'prod-auth',
+        severity: 'low',
+        reasonKey: 'usage_analytics.anomaly_reason_usage_skew',
+        triggeredAtMs: point.bucketMs,
+        row: credentialRow,
       },
     ],
     credentialQuotaRows: [

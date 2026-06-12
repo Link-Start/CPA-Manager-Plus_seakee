@@ -2066,10 +2066,12 @@ function KeyAnomalyTable({
   locale,
   rows,
   onOpen,
+  type = 'apiKey',
 }: {
   locale: string;
   rows: UsageKeyAnomalyRow[];
   onOpen?: (row: UsageKeyAnomalyRow) => void;
+  type?: 'apiKey' | 'credential';
 }) {
   const { t } = useTranslation();
   return (
@@ -2077,7 +2079,7 @@ function KeyAnomalyTable({
       <table className={styles.compactTable}>
         <thead>
           <tr>
-            <th>{t('usage_analytics.col_api_key')}</th>
+            <th>{t(type === 'credential' ? 'usage_analytics.col_credential' : 'usage_analytics.col_api_key')}</th>
             <th>{t('usage_analytics.col_reason')}</th>
             <th>{t('usage_analytics.col_severity')}</th>
             <th>{t('usage_analytics.col_triggered_at')}</th>
@@ -2094,7 +2096,7 @@ function KeyAnomalyTable({
           ) : (
             rows.slice(0, 8).map((row) => (
               <tr key={row.id}>
-                <td>{maskApiKeyHash(row.row.apiKeyHash || row.id)}</td>
+                <td>{type === 'credential' ? row.label : maskApiKeyHash(row.row.apiKeyHash || row.id)}</td>
                 <td>{t(row.reasonKey)}</td>
                 <td>
                   <span className={`${styles.severityBadge} ${styles[`severity${row.severity}`]}`}>
@@ -2462,9 +2464,7 @@ function UsageAnalyticsPageInner() {
         : [],
     [usage.apiKeyRows, usage.selectedModel]
   );
-  const abnormalCredentialCount = usage.credentialRows.filter(
-    (row) => row.failureCount > 0 || row.share > 0.3
-  ).length;
+  const abnormalCredentialCount = usage.credentialAnomalies.length;
   const anomalyUrl = usage.anomalyAnalysis
     ? buildMonitoringDetailUrl(usage.anomalyAnalysis.point, usage.filters)
     : '';
@@ -2854,6 +2854,32 @@ function UsageAnalyticsPageInner() {
             />
           </section>
 
+          <section className={styles.analysisGrid}>
+            <div className={styles.sidePanels}>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <h2>{t('usage_analytics.provider_usage_share_title')}</h2>
+                </div>
+                <ProviderSharePanel rows={usage.providerRows} />
+              </div>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <h2>{t('usage_analytics.provider_health_title')}</h2>
+                </div>
+                <ProviderHealthPanel rows={usage.providerRows} />
+              </div>
+            </div>
+            <div className={styles.tablePanel}>
+              <div className={styles.panelHeader}>
+                <div>
+                  <h2>{t('usage_analytics.quota_status_title')}</h2>
+                  <p>{t('usage_analytics.quota_status_hint')}</p>
+                </div>
+              </div>
+              <CredentialQuotaTable rows={usage.credentialQuotaRows} locale={i18n.language} />
+            </div>
+          </section>
+
           {usage.selectedBucket ? (
             <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
           ) : null}
@@ -3204,20 +3230,6 @@ function UsageAnalyticsPageInner() {
                 onSelect={(row) => usage.setSelectedCredentialId(row.id)}
               />
             </div>
-            <div className={styles.sidePanels}>
-              <div className={styles.panel}>
-                <div className={styles.panelHeader}>
-                  <h2>{t('usage_analytics.provider_usage_share_title')}</h2>
-                </div>
-                <ProviderSharePanel rows={usage.providerRows} />
-              </div>
-              <div className={styles.panel}>
-                <div className={styles.panelHeader}>
-                  <h2>{t('usage_analytics.provider_health_title')}</h2>
-                </div>
-                <ProviderHealthPanel rows={usage.providerRows} />
-              </div>
-            </div>
             {usage.selectedCredential ? (
               <DetailPanel
                 row={usage.selectedCredential}
@@ -3242,14 +3254,44 @@ function UsageAnalyticsPageInner() {
                 }
               />
             ) : null}
-            <div className={styles.tablePanel}>
+            <div className={styles.warningPanel}>
+              <div className={styles.panelHeader}>
+                <h2>{t('usage_analytics.credential_warning_title')}</h2>
+              </div>
+              <KeyAnomalyTable
+                rows={usage.credentialAnomalies}
+                locale={i18n.language}
+                type="credential"
+                onOpen={(row) =>
+                  navigate(
+                    `/monitoring?auth_file=${encodeURIComponent(
+                      row.row.authFile || ''
+                    )}&project_id=${encodeURIComponent(
+                      row.row.projectId || ''
+                    )}`
+                  )
+                }
+              />
+            </div>
+            <div className={styles.panel}>
               <div className={styles.panelHeader}>
                 <div>
-                  <h2>{t('usage_analytics.quota_status_title')}</h2>
-                  <p>{t('usage_analytics.quota_status_hint')}</p>
+                  <h2>{t('usage_analytics.entity_trend_title')}</h2>
+                  <p>{t('usage_analytics.entity_trend_hint')}</p>
                 </div>
+                <Select
+                  value={usage.trendMetric}
+                  options={trendMetricSelectOptions}
+                  onChange={(value) => usage.setTrendMetric(value as UsageTrendMetricKey)}
+                  ariaLabel={t('usage_analytics.filter_metric')}
+                  triggerClassName={styles.compactSelectTrigger}
+                />
               </div>
-              <CredentialQuotaTable rows={usage.credentialQuotaRows} locale={i18n.language} />
+              <EntityTrendChart
+                series={usage.credentialTrendSeries}
+                metric={usage.trendMetric}
+                highlightId={usage.selectedCredential?.id}
+              />
             </div>
             <InsightsPanel
               insights={credentialInsights}
@@ -3663,6 +3705,10 @@ function DetailPanel({
                 row.requestCount > 0 ? row.estimatedCost / row.requestCount : 0
               )}
             </strong>
+          </div>
+          <div>
+            <span>{t('usage_analytics.cache_read_rate')}</span>
+            <strong>{formatPercent(computeRowCacheHitRate(row))}</strong>
           </div>
           <div>
             <span>{t('usage_analytics.success_rate')}</span>

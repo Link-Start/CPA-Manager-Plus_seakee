@@ -162,6 +162,10 @@ export function useUsageAnalytics() {
     () => buildEntityTrendSeries(adapted.apiKeyRows, adapted.timeline, trendMetric, 4),
     [adapted.apiKeyRows, adapted.timeline, trendMetric]
   );
+  const credentialTrendSeries = useMemo(
+    () => buildEntityTrendSeries(visibleCredentialRows, adapted.timeline, trendMetric, 4),
+    [visibleCredentialRows, adapted.timeline, trendMetric]
+  );
   const matrix = useMemo(
     () =>
       buildUsageMatrix({
@@ -175,6 +179,10 @@ export function useUsageAnalytics() {
   const keyAnomalies = useMemo(
     () => buildKeyAnomalies(adapted.apiKeyRows),
     [adapted.apiKeyRows]
+  );
+  const credentialAnomalies = useMemo(
+    () => buildKeyAnomalies(adapted.credentialRows),
+    [adapted.credentialRows]
   );
   const credentialQuotaRows = useMemo(
     () => buildCredentialQuotaRows(visibleCredentialRows, nowMs),
@@ -266,7 +274,9 @@ export function useUsageAnalytics() {
     setTrendMetric,
     modelTrendSeries,
     apiKeyTrendSeries,
+    credentialTrendSeries,
     keyAnomalies,
+    credentialAnomalies,
     credentialQuotaRows,
     activeCredentialsOnly,
     setActiveCredentialsOnly,
