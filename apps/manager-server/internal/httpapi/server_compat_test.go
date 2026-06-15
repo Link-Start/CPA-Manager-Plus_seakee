@@ -537,7 +537,7 @@ func TestServerCompatPluginProxyRoutes(t *testing.T) {
 		body          string
 	}
 
-	observed := make(chan observedRequest, 4)
+	observed := make(chan observedRequest, 6)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		observed <- observedRequest{
@@ -610,6 +610,39 @@ func TestServerCompatPluginProxyRoutes(t *testing.T) {
 		method:        http.MethodPost,
 		path:          "/plugin-store/demo/install",
 		authorization: "Bearer management-key",
+	})
+
+	managementInstallRR := testutil.Request(
+		t,
+		handler,
+		http.MethodPost,
+		"/v0/management/plugin-store/demo/install?source=official",
+		"",
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, managementInstallRR, http.StatusOK)
+	assertObserved("/v0/management/plugin-store/demo/install", observedRequest{
+		method:        http.MethodPost,
+		path:          "/v0/management/plugin-store/demo/install",
+		query:         "source=official",
+		authorization: "Bearer management-key",
+	})
+
+	pluginManagementRR := testutil.Request(
+		t,
+		handler,
+		http.MethodPatch,
+		"/v0/management/plugins/demo/custom?mode=full",
+		`{"refresh":true}`,
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, pluginManagementRR, http.StatusOK)
+	assertObserved("/v0/management/plugins/demo/custom", observedRequest{
+		method:        http.MethodPatch,
+		path:          "/v0/management/plugins/demo/custom",
+		query:         "mode=full",
+		authorization: "Bearer management-key",
+		body:          `{"refresh":true}`,
 	})
 
 	resourcePostRR := testutil.Request(
