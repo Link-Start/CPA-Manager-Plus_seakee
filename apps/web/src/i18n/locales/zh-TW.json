@@ -171,8 +171,57 @@
     "monitoring_center": "請求監控",
     "account_actions": "認證異常",
     "config_management": "設定面板",
+    "automation": "自動化",
     "logs": "記錄檢視",
     "system_info": "系統資訊"
+  },
+  "automation": {
+    "eyebrow": "Automation",
+    "title": "自動化設定",
+    "section_title": "自動化開關",
+    "section_hint": "目前 Manager Server 生效的自動化開關。此處為唯讀。",
+    "restart_required_note": "這些開關在啟動時生效。請透過環境變數或 config.json 修改並重啟服務後生效。",
+    "description": "查看目前生效的自動化開關與安全邊界。這裡是唯讀檢視，修改請透過環境變數或 config.json。",
+    "readonly_note": "這些開關在這裡是唯讀的。請透過環境變數或 config.json 設定後重啟服務生效。",
+    "refresh": "重新整理",
+    "load_failed_title": "載入失敗",
+    "load_failed": "載入失敗：{{message}}",
+    "state_on": "已啟用",
+    "state_off": "未啟用",
+    "meta_config_key": "設定欄位",
+    "meta_env_key": "環境變數",
+    "open_pending_accounts": "查看認證異常",
+    "quotaCooldown_title": "Codex 使用額度冷卻",
+    "quotaCooldown_description": "#132 引入的 usage-limit 冷卻能力。當請求監控確認 Codex 短視窗額度耗盡時，會暫時停用對應認證檔案，並在重置時間後自動恢復。",
+    "quotaCooldown_behavior": [
+      "只處理 Codex",
+      "只處理 429 + usage_limit_reached",
+      "必須帶 resets_at 或 resets_in_seconds",
+      "會暫時停用認證檔案",
+      "重置時間後自動恢復",
+      "只恢復 CPAMP 自己停用的",
+      "不會恢復使用者手動停用的認證檔案"
+    ],
+    "accountActions_title": "認證異常佇列",
+    "accountActions_description": "#141 引入的待處理認證異常佇列。請求監控發現 token 被撤銷、認證不可用或工作區停用時，會記錄為認證異常候選，等待你手動處理。",
+    "accountActions_behavior": [
+      "認證異常時記錄候選",
+      "在認證異常頁面手動處理",
+      "未開啟時不記錄新候選",
+      "既有的待處理候選仍可繼續處理"
+    ],
+    "accountActionsAutoDisable_title": "認證異常自動停用",
+    "accountActionsAutoDisable_description": "#146 引入的可選自動停用。開啟後，高置信度異常候選會先被自動停用對應認證檔案，仍需你後續手動處理。",
+    "accountActionsAutoDisable_behavior": [
+      "只對高置信度 delete / reauth 候選自動停用",
+      "review 不會自動停用",
+      "普通 payment/quota 402 不處理",
+      "自動停用前重新讀取認證檔案並校驗身分",
+      "只停用，不刪除",
+      "不會自動恢復",
+      "需要你後續手動處理"
+    ],
+    "accountActionsAutoDisable_dependency_note": "該能力依賴「認證異常佇列」先開啟，目前認證異常佇列未啟用。"
   },
   "account_actions": {
     "eyebrow": "Auth Issue Queue",

@@ -68,6 +68,20 @@ export interface UsageServiceStatus {
   collector?: UsageServiceCollectorStatus;
 }
 
+export interface AutomationCapability {
+  enabled: boolean;
+  envKey: string;
+  configFileKey: string;
+  dependsOn?: string;
+}
+
+export interface AutomationStatus {
+  source: string;
+  quotaCooldown: AutomationCapability;
+  accountActions: AutomationCapability;
+  accountActionsAutoDisable: AutomationCapability;
+}
+
 export interface UsageServiceSetupRequest {
   cpaBaseUrl: string;
   cpaManagementKey: string;
@@ -1068,6 +1082,20 @@ export const usageServiceApi = {
       return response.data;
     });
   },
+
+  getAutomationStatus: async (base: string, managementKey?: string): Promise<AutomationStatus> => {
+    return withUsageServiceError(async () => {
+      const response = await axios.get<AutomationStatus>(
+        buildUrl(base, '/usage-service/automation'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
+
 
   getUsage: async (base: string, managementKey?: string): Promise<UsagePayload> => {
     return withUsageServiceError(async () => {

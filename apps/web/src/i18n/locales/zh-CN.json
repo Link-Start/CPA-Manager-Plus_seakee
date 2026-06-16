@@ -172,8 +172,57 @@
     "monitoring_center": "请求监控",
     "account_actions": "认证异常",
     "config_management": "配置面板",
+    "automation": "自动化",
     "logs": "日志查看",
     "system_info": "系统信息"
+  },
+  "automation": {
+    "eyebrow": "Automation",
+    "title": "自动化设置",
+    "section_title": "自动化开关",
+    "section_hint": "当前 Manager Server 生效的自动化开关。此处为只读。",
+    "restart_required_note": "这些开关在启动时生效。请通过环境变量或 config.json 修改并重启服务后生效。",
+    "description": "查看当前生效的自动化开关与安全边界。这里是只读视图，修改请通过环境变量或 config.json。",
+    "readonly_note": "这些开关在这里是只读的。请通过环境变量或 config.json 配置后重启服务生效。",
+    "refresh": "刷新",
+    "load_failed_title": "加载失败",
+    "load_failed": "加载失败：{{message}}",
+    "state_on": "已启用",
+    "state_off": "未启用",
+    "meta_config_key": "配置字段",
+    "meta_env_key": "环境变量",
+    "open_pending_accounts": "查看认证异常",
+    "quotaCooldown_title": "Codex 使用额度冷却",
+    "quotaCooldown_description": "#132 引入的 usage-limit 冷却能力。当请求监控确认 Codex 短窗口额度耗尽时，会临时禁用对应认证文件，并在重置时间后自动恢复。",
+    "quotaCooldown_behavior": [
+      "只处理 Codex",
+      "只处理 429 + usage_limit_reached",
+      "必须带 resets_at 或 resets_in_seconds",
+      "会临时禁用认证文件",
+      "重置时间后自动恢复",
+      "只恢复 CPAMP 自己禁用的",
+      "不会恢复用户手动禁用的认证文件"
+    ],
+    "accountActions_title": "认证异常队列",
+    "accountActions_description": "#141 引入的待处理认证异常队列。请求监控发现 token 被撤销、认证不可用或工作区停用时，会记录为认证异常候选，等待你手动处理。",
+    "accountActions_behavior": [
+      "认证异常时记录候选",
+      "在认证异常页面手动处理",
+      "未开启时不记录新候选",
+      "已有的待处理候选仍可继续处理"
+    ],
+    "accountActionsAutoDisable_title": "认证异常自动禁用",
+    "accountActionsAutoDisable_description": "#146 引入的可选自动禁用。开启后，高置信度异常候选会先被自动禁用对应认证文件，仍需你后续手动处理。",
+    "accountActionsAutoDisable_behavior": [
+      "只对高置信度 delete / reauth 候选自动禁用",
+      "review 不会自动禁用",
+      "普通 payment/quota 402 不处理",
+      "自动禁用前重新读取认证文件并校验身份",
+      "只禁用，不删除",
+      "不会自动恢复",
+      "需要你后续手动处理"
+    ],
+    "accountActionsAutoDisable_dependency_note": "该能力依赖「认证异常队列」先开启，当前认证异常队列未启用。"
   },
   "account_actions": {
     "eyebrow": "Auth Issue Queue",
