@@ -250,6 +250,17 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('>Executor: codex<');
   });
 
+  it('keeps long realtime model names constrained with a full title', () => {
+    const longModel =
+      'claude-opus-4-6-thinking-with-a-very-long-provider-routing-suffix-for-realtime-monitoring';
+    const markup = renderPanel(baseRow({ model: longModel, resolvedModel: longModel }));
+
+    expect(markup).toContain(`title="${longModel}"`);
+    expect(markup).toContain(longModel);
+    expect(markup).toMatch(/class="[^"]*realtimeModelCell[^"]*"/);
+    expect(markup).toMatch(/class="[^"]*realtimeModelText[^"]*"/);
+  });
+
   it('switches realtime source labels between masked and full display', () => {
     const row = baseRow({
       source: 'very-long-user@example.com',
