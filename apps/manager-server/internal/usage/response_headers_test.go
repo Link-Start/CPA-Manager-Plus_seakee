@@ -51,6 +51,60 @@ func TestParseResponseHeaderMetadataCodexQuotaAndTrace(t *testing.T) {
 	}
 }
 
+func TestParseResponseHeaderMetadataKeepsRecoverAtOnSummaryWindow(t *testing.T) {
+	base := time.Unix(1_780_000_000, 0)
+	metadata := ParseResponseHeaderMetadata(map[string]any{
+		"X-Codex-Primary-Used-Percent":        []any{"100"},
+		"X-Codex-Primary-Reset-After-Seconds": []any{"18000"},
+		"X-Codex-Primary-Window-Minutes":      []any{"300"},
+		"X-Codex-Secondary-Used-Percent":      []any{"20"},
+		"X-Codex-Secondary-Reset-At":          []any{base.Add(7 * 24 * time.Hour).UnixMilli()},
+		"X-Codex-Secondary-Window-Minutes":    []any{"10080"},
+	}, base)
+	if metadata == nil || metadata.Quota == nil {
+		t.Fatalf("quota metadata missing: %#v", metadata)
+	}
+	if metadata.Quota.UsedPercent == nil || *metadata.Quota.UsedPercent != 100 {
+		t.Fatalf("used percent = %#v", metadata.Quota.UsedPercent)
+	}
+	if got, want := metadata.Quota.RecoverAtMS, base.Add(5*time.Hour).UnixMilli(); got != want {
+		t.Fatalf("recover at = %d, want %d", got, want)
+	}
+	if metadata.Quota.SummaryWindowKind != "five_hour" || metadata.Quota.SummaryWindowSource != "primary" {
+		t.Fatalf("summary window = %s/%s", metadata.Quota.SummaryWindowKind, metadata.Quota.SummaryWindowSource)
+	}
+	if metadata.Quota.ReachedWindowKind != "five_hour" || metadata.Quota.ReachedWindowSource != "primary" {
+		t.Fatalf("reached window = %s/%s", metadata.Quota.ReachedWindowKind, metadata.Quota.ReachedWindowSource)
+	}
+}
+
+func TestParseResponseHeaderMetadataSummarizesHighestUsedNonReachedWindow(t *testing.T) {
+	base := time.Unix(1_780_000_000, 0)
+	metadata := ParseResponseHeaderMetadata(map[string]any{
+		"X-Codex-Primary-Used-Percent":        []any{"80"},
+		"X-Codex-Primary-Reset-After-Seconds": []any{"18000"},
+		"X-Codex-Primary-Window-Minutes":      []any{"300"},
+		"X-Codex-Secondary-Used-Percent":      []any{"95"},
+		"X-Codex-Secondary-Reset-At":          []any{base.Add(7 * 24 * time.Hour).UnixMilli()},
+		"X-Codex-Secondary-Window-Minutes":    []any{"10080"},
+	}, base)
+	if metadata == nil || metadata.Quota == nil {
+		t.Fatalf("quota metadata missing: %#v", metadata)
+	}
+	if metadata.Quota.UsedPercent == nil || *metadata.Quota.UsedPercent != 95 {
+		t.Fatalf("used percent = %#v", metadata.Quota.UsedPercent)
+	}
+	if got, want := metadata.Quota.RecoverAtMS, base.Add(7*24*time.Hour).UnixMilli(); got != want {
+		t.Fatalf("recover at = %d, want %d", got, want)
+	}
+	if metadata.Quota.SummaryWindowKind != "weekly" || metadata.Quota.SummaryWindowSource != "secondary" {
+		t.Fatalf("summary window = %s/%s", metadata.Quota.SummaryWindowKind, metadata.Quota.SummaryWindowSource)
+	}
+	if metadata.Quota.ReachedWindowKind != "" || metadata.Quota.ReachedWindowSource != "" {
+		t.Fatalf("reached window = %s/%s", metadata.Quota.ReachedWindowKind, metadata.Quota.ReachedWindowSource)
+	}
+}
+
 func TestParseResponseHeaderMetadataErrors(t *testing.T) {
 	base := time.Unix(1_780_000_000, 0)
 	metadata := ParseResponseHeaderMetadata(map[string]any{

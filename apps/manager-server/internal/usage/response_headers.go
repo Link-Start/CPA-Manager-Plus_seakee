@@ -22,6 +22,10 @@ type HeaderQuotaMetadata struct {
 	PlanType                         string             `json:"plan_type,omitempty"`
 	ActiveLimit                      string             `json:"active_limit,omitempty"`
 	RateLimitReachedType             string             `json:"rate_limit_reached_type,omitempty"`
+	SummaryWindowKind                string             `json:"summary_window_kind,omitempty"`
+	SummaryWindowSource              string             `json:"summary_window_source,omitempty"`
+	ReachedWindowKind                string             `json:"reached_window_kind,omitempty"`
+	ReachedWindowSource              string             `json:"reached_window_source,omitempty"`
 	CreditsBalance                   string             `json:"credits_balance,omitempty"`
 	CreditsHasCredits                *bool              `json:"credits_has_credits,omitempty"`
 	CreditsUnlimited                 *bool              `json:"credits_unlimited,omitempty"`
@@ -236,7 +240,12 @@ func sanitizeResponseHeaderMetadata(metadata *ResponseHeaderMetadata) {
 		metadata.Quota.PlanType = normalizeHeaderValue(metadata.Quota.PlanType)
 		metadata.Quota.ActiveLimit = normalizeHeaderValue(metadata.Quota.ActiveLimit)
 		metadata.Quota.RateLimitReachedType = normalizeHeaderValue(metadata.Quota.RateLimitReachedType)
+		metadata.Quota.SummaryWindowKind = normalizeQuotaWindowKind(metadata.Quota.SummaryWindowKind)
+		metadata.Quota.SummaryWindowSource = normalizeQuotaWindowSource(metadata.Quota.SummaryWindowSource)
+		metadata.Quota.ReachedWindowKind = normalizeQuotaWindowKind(metadata.Quota.ReachedWindowKind)
+		metadata.Quota.ReachedWindowSource = normalizeQuotaWindowSource(metadata.Quota.ReachedWindowSource)
 		metadata.Quota.CreditsBalance = normalizeHeaderValue(metadata.Quota.CreditsBalance)
+		applyQuotaWindowSemantics(metadata.Quota)
 		if metadata.Quota.isEmpty() {
 			metadata.Quota = nil
 		}
@@ -512,8 +521,7 @@ func parseQuotaHeaders(headers map[string][]string, base time.Time) *HeaderQuota
 	if value, ok := parseFloatHeader(headerFirst(headers, "x-codex-primary-over-secondary-limit-percent")); ok {
 		quota.PrimaryOverSecondaryLimitPercent = &value
 	}
-	quota.UsedPercent = maxQuotaUsedPercent(quota.Primary, quota.Secondary)
-	quota.RecoverAtMS = maxInt64(quotaWindowResetAt(quota.Primary), quotaWindowResetAt(quota.Secondary))
+	applyQuotaWindowSemantics(quota)
 	if quota.isEmpty() {
 		return nil
 	}
@@ -758,25 +766,199 @@ func classifyHeaderError(errors *HeaderErrorMetadata) (string, string) {
 	return "", ""
 }
 
-func maxQuotaUsedPercent(windows ...*HeaderQuotaWindow) *float64 {
-	var selected *float64
-	for _, window := range windows {
-		if window == nil || window.UsedPercent == nil {
-			continue
-		}
-		if selected == nil || *window.UsedPercent > *selected {
-			value := *window.UsedPercent
-			selected = &value
-		}
-	}
-	return selected
+const (
+	quotaWindowKindFiveHour = "five_hour"
+	quotaWindowKindWeekly   = "weekly"
+	quotaWindowKindMonthly  = "monthly"
+	quotaWindowKindUnknown  = "unknown"
+
+	quotaWindowSourcePrimary    = "primary"
+	quotaWindowSourceSecondary  = "secondary"
+	quotaWindowSourceAggregate  = "aggregate"
+	quotaWindowSourceRetryAfter = "retry_after"
+	quotaWindowSourceUnknown    = "unknown"
+)
+
+type quotaWindowSelection struct {
+	source         string
+	kind           string
+	usedPercent    float64
+	hasUsedPercent bool
+	resetAtMS      int64
 }
 
-func quotaWindowResetAt(window *HeaderQuotaWindow) int64 {
+func applyQuotaWindowSemantics(quota *HeaderQuotaMetadata) {
+	if quota == nil {
+		return
+	}
+	selections := quotaWindowSelections(quota)
+	if len(selections) == 0 {
+		if quota.UsedPercent != nil || quota.RecoverAtMS > 0 {
+			if quota.SummaryWindowKind == "" {
+				quota.SummaryWindowKind = quotaWindowKindUnknown
+			}
+			if quota.SummaryWindowSource == "" {
+				quota.SummaryWindowSource = quotaWindowSourceAggregate
+			}
+		}
+		if strings.TrimSpace(quota.RateLimitReachedType) != "" {
+			if quota.ReachedWindowKind == "" {
+				quota.ReachedWindowKind = quotaWindowKindUnknown
+			}
+			if quota.ReachedWindowSource == "" {
+				quota.ReachedWindowSource = quotaWindowSourceUnknown
+			}
+		}
+		return
+	}
+
+	if summary, ok := selectQuotaSummaryWindow(selections); ok {
+		quota.UsedPercent = float64Pointer(summary.usedPercent)
+		quota.RecoverAtMS = summary.resetAtMS
+		quota.SummaryWindowKind = summary.kind
+		quota.SummaryWindowSource = summary.source
+	} else if quota.UsedPercent != nil || quota.RecoverAtMS > 0 {
+		if quota.SummaryWindowKind == "" {
+			quota.SummaryWindowKind = quotaWindowKindUnknown
+		}
+		if quota.SummaryWindowSource == "" {
+			quota.SummaryWindowSource = quotaWindowSourceAggregate
+		}
+	}
+
+	if reached, ok := selectQuotaReachedWindow(quota, selections); ok {
+		quota.ReachedWindowKind = reached.kind
+		quota.ReachedWindowSource = reached.source
+		if quota.RecoverAtMS <= 0 && reached.resetAtMS > 0 {
+			quota.RecoverAtMS = reached.resetAtMS
+		}
+	} else if strings.TrimSpace(quota.RateLimitReachedType) != "" {
+		quota.ReachedWindowKind = quotaWindowKindUnknown
+		quota.ReachedWindowSource = quotaWindowSourceUnknown
+	}
+}
+
+func quotaWindowSelections(quota *HeaderQuotaMetadata) []quotaWindowSelection {
+	if quota == nil {
+		return nil
+	}
+	selections := make([]quotaWindowSelection, 0, 2)
+	if quota.Primary != nil {
+		selections = append(selections, newQuotaWindowSelection(quotaWindowSourcePrimary, quota.Primary))
+	}
+	if quota.Secondary != nil {
+		selections = append(selections, newQuotaWindowSelection(quotaWindowSourceSecondary, quota.Secondary))
+	}
+	return selections
+}
+
+func newQuotaWindowSelection(source string, window *HeaderQuotaWindow) quotaWindowSelection {
+	selection := quotaWindowSelection{
+		source:    source,
+		kind:      quotaWindowKind(window),
+		resetAtMS: quotaWindowResetAtMS(window),
+	}
+	if window != nil && window.UsedPercent != nil {
+		selection.usedPercent = *window.UsedPercent
+		selection.hasUsedPercent = true
+	}
+	return selection
+}
+
+func selectQuotaSummaryWindow(selections []quotaWindowSelection) (quotaWindowSelection, bool) {
+	var selected quotaWindowSelection
+	found := false
+	for _, selection := range selections {
+		if !selection.hasUsedPercent {
+			continue
+		}
+		if !found ||
+			selection.usedPercent > selected.usedPercent ||
+			(selection.usedPercent == selected.usedPercent && selection.resetAtMS > selected.resetAtMS) {
+			selected = selection
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func selectQuotaReachedWindow(quota *HeaderQuotaMetadata, selections []quotaWindowSelection) (quotaWindowSelection, bool) {
+	reachedType := strings.ToLower(strings.TrimSpace(quota.RateLimitReachedType))
+	switch reachedType {
+	case quotaWindowSourcePrimary, quotaWindowSourceSecondary:
+		for _, selection := range selections {
+			if selection.source == reachedType {
+				return selection, true
+			}
+		}
+	}
+
+	var selected quotaWindowSelection
+	found := false
+	for _, selection := range selections {
+		if !selection.hasUsedPercent || selection.usedPercent < 100 {
+			continue
+		}
+		if !found || selection.resetAtMS > selected.resetAtMS {
+			selected = selection
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func quotaWindowKind(window *HeaderQuotaWindow) string {
+	if window == nil || window.WindowMinutes == nil || *window.WindowMinutes <= 0 {
+		return quotaWindowKindUnknown
+	}
+	minutes := *window.WindowMinutes
+	switch {
+	case nearlyEqualFloat(minutes, 300):
+		return quotaWindowKindFiveHour
+	case nearlyEqualFloat(minutes, 10_080):
+		return quotaWindowKindWeekly
+	case minutes >= 28*24*60 && minutes <= 31*24*60:
+		return quotaWindowKindMonthly
+	default:
+		return quotaWindowKindUnknown
+	}
+}
+
+func normalizeQuotaWindowKind(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case quotaWindowKindFiveHour, quotaWindowKindWeekly, quotaWindowKindMonthly, quotaWindowKindUnknown:
+		return normalized
+	default:
+		return ""
+	}
+}
+
+func normalizeQuotaWindowSource(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case quotaWindowSourcePrimary, quotaWindowSourceSecondary, quotaWindowSourceAggregate, quotaWindowSourceRetryAfter, quotaWindowSourceUnknown:
+		return normalized
+	default:
+		return ""
+	}
+}
+
+func quotaWindowResetAtMS(window *HeaderQuotaWindow) int64 {
 	if window == nil {
 		return 0
 	}
 	return window.ResetAtMS
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
+}
+
+func nearlyEqualFloat(left float64, right float64) bool {
+	return math.Abs(left-right) < 0.001
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -793,6 +975,10 @@ func (q *HeaderQuotaMetadata) isEmpty() bool {
 		(q.PlanType == "" &&
 			q.ActiveLimit == "" &&
 			q.RateLimitReachedType == "" &&
+			q.SummaryWindowKind == "" &&
+			q.SummaryWindowSource == "" &&
+			q.ReachedWindowKind == "" &&
+			q.ReachedWindowSource == "" &&
 			q.CreditsBalance == "" &&
 			q.CreditsHasCredits == nil &&
 			q.CreditsUnlimited == nil &&

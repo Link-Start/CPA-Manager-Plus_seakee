@@ -385,21 +385,7 @@ func codexUsageLimitResetTimeFromHeaders(event usage.Event, now time.Time) (time
 		return time.Time{}, false
 	}
 	if metadata.Quota != nil {
-		switch strings.ToLower(strings.TrimSpace(metadata.Quota.RateLimitReachedType)) {
-		case "primary":
-			resetAtMS = quotaWindowResetAtMS(metadata.Quota.Primary)
-		case "secondary":
-			resetAtMS = quotaWindowResetAtMS(metadata.Quota.Secondary)
-		}
-		if resetAtMS <= 0 {
-			resetAtMS = metadata.Quota.RecoverAtMS
-		}
-		if resetAtMS <= 0 {
-			resetAtMS = maxInt64(
-				quotaWindowResetAtMS(metadata.Quota.Primary),
-				quotaWindowResetAtMS(metadata.Quota.Secondary),
-			)
-		}
+		resetAtMS = codexQuotaReachedResetAtMS(metadata.Quota)
 	}
 	if resetAtMS <= 0 && metadata.Errors != nil {
 		resetAtMS = metadata.Errors.RetryAfterRecoverAtMS
@@ -416,6 +402,9 @@ func codexUsageLimitSignalFromHeaders(event usage.Event, metadata *usage.Respons
 		return false
 	}
 	if metadata.Quota != nil && strings.TrimSpace(metadata.Quota.RateLimitReachedType) != "" {
+		return true
+	}
+	if metadata.Quota != nil && codexQuotaHasFullWindow(metadata.Quota) {
 		return true
 	}
 	values := []string{event.HeaderErrorKind, event.HeaderErrorCode}
@@ -443,18 +432,52 @@ func isCodexUsageLimitSignalText(value string) bool {
 	return strings.Contains(normalized, "usage_limit_reached")
 }
 
+func codexQuotaReachedResetAtMS(quota *usage.HeaderQuotaMetadata) int64 {
+	if quota == nil {
+		return 0
+	}
+	switch strings.ToLower(strings.TrimSpace(quota.RateLimitReachedType)) {
+	case "primary":
+		return quotaWindowResetAtMS(quota.Primary)
+	case "secondary":
+		return quotaWindowResetAtMS(quota.Secondary)
+	default:
+		return codexQuotaFullWindowResetAtMS(quota)
+	}
+}
+
+func codexQuotaHasFullWindow(quota *usage.HeaderQuotaMetadata) bool {
+	if quota == nil {
+		return false
+	}
+	return quotaWindowUsedAtLimit(quota.Primary) || quotaWindowUsedAtLimit(quota.Secondary)
+}
+
+func codexQuotaFullWindowResetAtMS(quota *usage.HeaderQuotaMetadata) int64 {
+	if quota == nil {
+		return 0
+	}
+	resetAtMS := int64(0)
+	for _, window := range []*usage.HeaderQuotaWindow{quota.Primary, quota.Secondary} {
+		if !quotaWindowUsedAtLimit(window) {
+			continue
+		}
+		if reset := quotaWindowResetAtMS(window); reset > resetAtMS {
+			resetAtMS = reset
+		}
+	}
+	return resetAtMS
+}
+
+func quotaWindowUsedAtLimit(window *usage.HeaderQuotaWindow) bool {
+	return window != nil && window.UsedPercent != nil && *window.UsedPercent >= 100
+}
+
 func quotaWindowResetAtMS(window *usage.HeaderQuotaWindow) int64 {
 	if window == nil {
 		return 0
 	}
 	return window.ResetAtMS
-}
-
-func maxInt64(left int64, right int64) int64 {
-	if left > right {
-		return left
-	}
-	return right
 }
 
 // forEachJSONValue decodes every JSON value found in text, calling fn for each.
