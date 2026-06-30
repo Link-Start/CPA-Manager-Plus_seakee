@@ -4,13 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
-    "apps/web"
+    "apps/web",
+    "apps/docs"
   ],
   "scripts": {
     "dev": "npm --workspace apps/web run dev",
     "dev:demo": "npm --workspace apps/web run dev:demo",
     "build": "npm --workspace apps/web run build",
     "build:demo": "npm --workspace apps/web run build:demo",
+    "docs:dev": "npm --workspace apps/docs run dev",
+    "docs:build": "npm --workspace apps/docs run build",
+    "docs:preview": "npm --workspace apps/docs run preview",
     "check:demo-isolation": "node bin/release/check-web-demo-isolation.mjs",
     "preview": "npm --workspace apps/web run preview",
     "preview:demo": "npm --workspace apps/web run preview:demo",
