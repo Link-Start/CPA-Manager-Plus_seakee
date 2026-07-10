@@ -20,6 +20,7 @@ type Aggregate struct {
 	CacheCreationTokens int64
 	TotalTokens         int64
 	AvgLatencyMS        sql.NullFloat64
+	LatencySamples      int64
 	ZeroTokenCalls      int64
 }
 
@@ -76,6 +77,7 @@ const aggregateSQL = `select
 	coalesce(sum(cache_creation_tokens), 0),
 	coalesce(sum(total_tokens), 0),
 	avg(nullif(latency_ms, 0)),
+	count(nullif(latency_ms, 0)),
 	coalesce(sum(case when total_tokens = 0 and failed = 0 then 1 else 0 end), 0)
 from usage_events
 where timestamp_ms >= ? and timestamp_ms < ?`
@@ -97,6 +99,7 @@ func (r *repository) AggregateBetween(ctx context.Context, fromMs, toMs int64) (
 		&agg.CacheCreationTokens,
 		&agg.TotalTokens,
 		&agg.AvgLatencyMS,
+		&agg.LatencySamples,
 		&agg.ZeroTokenCalls,
 	); err != nil {
 		return Aggregate{}, err

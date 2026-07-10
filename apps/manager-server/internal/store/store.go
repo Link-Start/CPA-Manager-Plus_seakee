@@ -73,6 +73,7 @@ type HeaderSnapshot = usageevent.HeaderSnapshot
 type UsageRollupCheckpoint = usagerollup.Checkpoint
 type UsageRollupCatchUpResult = usagerollup.CatchUpResult
 type AccountHistoryRollupRow = usagerollup.AccountHistoryRow
+type DashboardHourlyRollupRow = usagerollup.DashboardHourlyRow
 
 type Store struct {
 	db *sql.DB
@@ -266,8 +267,16 @@ func (s *Store) CatchUpAccountHistoryRollups(ctx context.Context, limit int, now
 	return s.UsageRollups.CatchUpAccountHistory(ctx, limit, nowMS)
 }
 
+func (s *Store) CatchUpDashboardHourlyRollups(ctx context.Context, limit int, nowMS int64) (UsageRollupCatchUpResult, error) {
+	return s.UsageRollups.CatchUpDashboardHourly(ctx, limit, nowMS)
+}
+
 func (s *Store) AccountHistoryRollupCheckpoint(ctx context.Context) (UsageRollupCheckpoint, error) {
 	return s.UsageRollups.Checkpoint(ctx, usagerollup.AccountHistoryCheckpointName)
+}
+
+func (s *Store) DashboardHourlyRollupCheckpoint(ctx context.Context) (UsageRollupCheckpoint, error) {
+	return s.UsageRollups.Checkpoint(ctx, usagerollup.DashboardHourlyCheckpointName)
 }
 
 func (s *Store) LatestUsageEventID(ctx context.Context) (int64, error) {
@@ -276,6 +285,10 @@ func (s *Store) LatestUsageEventID(ctx context.Context) (int64, error) {
 
 func (s *Store) AccountHistoryRollupRows(ctx context.Context, accountKeys []string) ([]AccountHistoryRollupRow, error) {
 	return s.UsageRollups.AccountHistoryRows(ctx, accountKeys)
+}
+
+func (s *Store) DashboardHourlyRollupRows(ctx context.Context, fromMS, toMS int64) ([]DashboardHourlyRollupRow, error) {
+	return s.UsageRollups.DashboardHourlyRows(ctx, fromMS, toMS)
 }
 
 func AccountHistoryKey(accountSnapshot, authLabelSnapshot, source, authIndex string) string {

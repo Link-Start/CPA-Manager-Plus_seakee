@@ -17,7 +17,7 @@ import (
 func TestMigrationCreatesAccountHistoryRollupTables(t *testing.T) {
 	db := newRollupTestDB(t)
 
-	for _, table := range []string{"usage_rollup_checkpoints", "usage_account_model_rollups"} {
+	for _, table := range []string{"usage_rollup_checkpoints", "usage_account_model_rollups", "usage_dashboard_hourly_rollups"} {
 		var count int
 		if err := db.QueryRow(`select count(*) from sqlite_master where type = 'table' and name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("query sqlite_master for %s: %v", table, err)

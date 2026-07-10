@@ -10,12 +10,15 @@ import (
 )
 
 const AccountHistoryCheckpointName = "account_history"
+const DashboardHourlyCheckpointName = "dashboard_hourly"
 
 type Repository interface {
 	CatchUpAccountHistory(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error)
+	CatchUpDashboardHourly(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error)
 	Checkpoint(ctx context.Context, name string) (Checkpoint, error)
 	LatestEventID(ctx context.Context) (int64, error)
 	AccountHistoryRows(ctx context.Context, accountKeys []string) ([]AccountHistoryRow, error)
+	DashboardHourlyRows(ctx context.Context, fromMS, toMS int64) ([]DashboardHourlyRow, error)
 }
 
 type Checkpoint struct {
