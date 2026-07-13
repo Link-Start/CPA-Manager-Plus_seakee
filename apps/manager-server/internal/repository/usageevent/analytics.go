@@ -647,8 +647,8 @@ func (r *repository) LatencyPercentilesWithFilter(ctx context.Context, filter An
 	where, args := analyticsWhere(filter)
 	query := fmt.Sprintf(`select
 	timestamp_ms,
-	latency_ms,
-	ttft_ms
+	coalesce(latency_ms, 0),
+	coalesce(ttft_ms, 0)
 from usage_events %s
 and (latency_ms > 0 or ttft_ms > 0)
 order by timestamp_ms`, where)
@@ -680,9 +680,9 @@ order by timestamp_ms`, where)
 	}
 	for rows.Next() {
 		var timestampMS int64
-		var latency sql.NullFloat64
-		var ttft sql.NullFloat64
-		if err := rows.Scan(&timestampMS, &latency, &ttft); err != nil {
+		var latencyMS int64
+		var ttftMS int64
+		if err := rows.Scan(&timestampMS, &latencyMS, &ttftMS); err != nil {
 			return nil, err
 		}
 		bucketMS := usage.AnalyticsBucketMS(timestampMS, granularity, location)
@@ -691,11 +691,11 @@ order by timestamp_ms`, where)
 			currentBucketMS = bucketMS
 			hasCurrentBucket = true
 		}
-		if latency.Valid && latency.Float64 > 0 {
-			latencies = append(latencies, latency.Float64)
+		if latencyMS > 0 {
+			latencies = append(latencies, float64(latencyMS))
 		}
-		if ttft.Valid && ttft.Float64 > 0 {
-			ttfts = append(ttfts, ttft.Float64)
+		if ttftMS > 0 {
+			ttfts = append(ttfts, float64(ttftMS))
 		}
 	}
 	if err := rows.Err(); err != nil {
