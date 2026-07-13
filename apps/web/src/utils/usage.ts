@@ -345,6 +345,46 @@ export const compatibleCachedTokens = (
   return Math.max(cached - fineGrained, 0);
 };
 
+export type CacheHitMetricsInput = {
+  modelName?: string;
+  inputTokens: unknown;
+  cachedTokens: unknown;
+  cacheReadTokens: unknown;
+  cacheCreationTokens: unknown;
+};
+
+export const getCacheHitTotals = ({
+  modelName = '',
+  inputTokens,
+  cachedTokens,
+  cacheReadTokens,
+  cacheCreationTokens,
+}: CacheHitMetricsInput): { hitTokens: number; inputTokens: number } => {
+  const input = Math.max(toFiniteNumber(inputTokens), 0);
+  const cached = Math.max(toFiniteNumber(cachedTokens), 0);
+  const cacheRead = Math.max(toFiniteNumber(cacheReadTokens), 0);
+  const cacheCreation = Math.max(toFiniteNumber(cacheCreationTokens), 0);
+  const fineGrainedCacheIsIncluded = isGpt56Model(modelName);
+  return {
+    hitTokens: cached + cacheRead,
+    inputTokens:
+      (cacheRead > 0 || cacheCreation > 0) && !fineGrainedCacheIsIncluded
+        ? input + cacheRead + cacheCreation
+        : input,
+  };
+};
+
+export const calculateCacheHitRate = (input: CacheHitMetricsInput): number => {
+  const totals = getCacheHitTotals(input);
+  return calculateCacheHitRateFromTotals(totals.hitTokens, totals.inputTokens);
+};
+
+export const calculateCacheHitRateFromTotals = (hitTokens: unknown, inputTokens: unknown): number => {
+  const normalizedInput = Math.max(toFiniteNumber(inputTokens), 0);
+  if (normalizedInput <= 0) return 0;
+  return Math.min(1, Math.max(toFiniteNumber(hitTokens), 0) / normalizedInput);
+};
+
 const getApisRecord = (usageData: unknown): Record<string, unknown> | null => {
   const usageRecord = isRecord(usageData) ? usageData : null;
   const apisRaw = usageRecord ? usageRecord.apis : null;

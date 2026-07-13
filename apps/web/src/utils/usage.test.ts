@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCandidateUsageSourceIds,
+  calculateCacheHitRate,
+  calculateCacheHitRateFromTotals,
   calculateCost,
   collectUsageDetails,
   collectUsageDetailsWithEndpoint,
@@ -289,6 +291,40 @@ describe('usage token helpers', () => {
     expect(compatibleCachedTokens(5, 0, 4, 1)).toBe(0);
     expect(compatibleCachedTokens(10, 0, 4, 1)).toBe(5);
     expect(compatibleCachedTokens(0, 8, 3, 0)).toBe(5);
+  });
+
+  it('normalizes cache hit rates across legacy, Anthropic, and GPT-5.6 usage', () => {
+    expect(
+      calculateCacheHitRate({
+        modelName: 'gpt-5.4',
+        inputTokens: 1_000,
+        cachedTokens: 400,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      })
+    ).toBeCloseTo(0.4, 6);
+    expect(
+      calculateCacheHitRate({
+        modelName: 'claude-sonnet-4',
+        inputTokens: 100,
+        cachedTokens: 0,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 50,
+      })
+    ).toBeCloseTo(300 / 450, 6);
+    expect(
+      calculateCacheHitRate({
+        modelName: 'openai/gpt-5.6-sol',
+        inputTokens: 152_600,
+        cachedTokens: 0,
+        cacheReadTokens: 151_000,
+        cacheCreationTokens: 1_000,
+      })
+    ).toBeCloseTo(151_000 / 152_600, 6);
+  });
+
+  it('clamps aggregated malformed cache ratios to 100%', () => {
+    expect(calculateCacheHitRateFromTotals(1_500, 1_000)).toBe(1);
   });
 
   it('uses fine-grained cache fields when total tokens are missing', () => {

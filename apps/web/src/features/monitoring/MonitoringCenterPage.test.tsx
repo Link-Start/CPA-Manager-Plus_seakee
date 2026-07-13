@@ -231,6 +231,41 @@ describe('MonitoringCenterPage summary cards', () => {
 
     expect(cachedCard?.meta).toBe('Hit rate 35.7%');
   });
+
+  it('uses the normalized GPT-5.6 cache hit rate from analytics', () => {
+    const secondaryCards = buildSecondarySummaryCards(
+      {
+        totalCalls: 1,
+        successCalls: 1,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 152_600,
+        outputTokens: 385,
+        reasoningTokens: 238,
+        cachedTokens: 0,
+        cacheReadTokens: 151_000,
+        cacheCreationTokens: 1_000,
+        cacheHitRate: 151_000 / 152_600,
+        totalTokens: 153_223,
+        totalCost: 0,
+        averageLatencyMs: null,
+        rpm30m: 0,
+        tpm30m: 0,
+        avgDailyRequests: 0,
+        avgDailyTokens: 0,
+        approxTasks: 0,
+        approxTaskFailures: 0,
+        approxTaskSuccessRate: 0,
+        zeroTokenCalls: 0,
+        zeroTokenModels: [],
+      },
+      'en',
+      t
+    );
+    const cachedCard = secondaryCards.find((card) => card.label === 'Cached Tokens');
+
+    expect(cachedCard?.meta).toBe('Hit rate 99.0%');
+  });
 });
 
 describe('MonitoringCenterPage account card', () => {
