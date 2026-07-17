@@ -1,8 +1,15 @@
-# 配额管理
+---
+title: Codex、Claude 与 xAI 配额管理
+description: 查看 Codex、Claude、xAI/Grok 等账号的配额、reset、Provider 证据和 CPAMP 安全冷却状态。
+---
+
+# Codex、Claude 与 xAI 配额管理
 
 配额管理页面回答的是“这个账号现在还能不能继续跑请求”。它不只看剩余额度，也会结合认证文件、巡检结果、请求失败摘要和冷却记录判断账号是否应该暂停或恢复。
 
 它面向账号状态，不负责展示成本；成本拆解请看 [用量分析](./usage-analytics.md)。
+
+打开[配额演示](https://seakee.github.io/CPA-Manager-Plus/#/demo/quota)可以查看虚构的 Codex、Claude 和 xAI 窗口数据。
 
 ## 进入页面前
 
@@ -23,6 +30,15 @@
 - CPAMP 的配额冷却记录。
 
 不同提供商能返回的信息不一样。未知状态只代表 CPAMP 没拿到足够信息，不代表账号一定无限可用。
+
+## Provider 能力概览
+
+| Provider       | 可能显示的证据                                          | 边界                                                           |
+| -------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| Codex          | 5 小时/周窗口、reset、Header 观察、workspace 和巡检状态 | 字段取决于账号计划和接口返回。                                 |
+| Claude         | 基础额度、周额度、模型级 scoped limits                  | scoped limits 可能重复、缺失或停用，CPAMP 按身份和新鲜度归并。 |
+| xAI/Grok OAuth | CLI billing 周/月数据、官方 API 身份、请求事件耗尽信号  | 付费 API 身份不等于可查询费用或剩余百分比。                    |
+| 其他 Provider  | CPA quota、认证文件元数据或最近响应 Header              | 不假设存在统一主动额度接口。                                   |
 
 ### xAI 付费 OAuth
 
@@ -61,7 +77,7 @@ xAI 的免费 Grok Build OAuth 可以通过 CLI billing 接口返回周额度和
 账号看起来可用但请求失败时：
 
 1. 查看请求监控中的失败摘要。
-2. 查看 Codex 账号巡检是否提示配额、工作区或认证问题。
+2. 查看账号巡检是否提示 Codex/xAI 配额、工作区、billing 或认证问题。
 3. 查看认证文件页面是否处于手动禁用或冷却状态。
 4. 查看账号处理队列是否有待处理候选项。
 5. 如果页面没有配额数据，确认该提供商是否支持主动查询，或是否只能通过请求 Header 被动观察。
