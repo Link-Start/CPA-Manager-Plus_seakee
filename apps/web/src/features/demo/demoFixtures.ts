@@ -260,7 +260,7 @@ const initialRawConfig: Record<string, unknown> = {
 };
 
 const demoAuthFiles: AuthFilesResponse = {
-  total: 12,
+  total: 13,
   files: [
     {
       name: 'codex-team-01.json',
@@ -274,8 +274,25 @@ const demoAuthFiles: AuthFilesResponse = {
       modified: now() - 2 * hour,
       account_snapshot: 'Platform Team',
       account_id: 'acct_codex_team',
+      plan_type: 'team',
       success: 1842,
       failed: 18,
+    },
+    {
+      name: 'codex-pro-20x-01.json',
+      type: 'codex',
+      provider: 'codex',
+      authIndex: 'codex-pro-20x-01',
+      disabled: false,
+      status: 'healthy',
+      statusMessage: 'Ready',
+      size: 4960,
+      modified: now() - hour,
+      account_snapshot: 'Pro 20x Workspace',
+      account_id: 'acct_codex_pro_20x',
+      plan_type: 'pro',
+      success: 1260,
+      failed: 8,
     },
     {
       name: 'codex-fallback-02.json',
@@ -289,6 +306,7 @@ const demoAuthFiles: AuthFilesResponse = {
       modified: now() - 6 * hour,
       account_snapshot: 'Automation Pool',
       account_id: 'acct_codex_auto',
+      plan_type: 'team',
       success: 934,
       failed: 42,
     },
@@ -2782,31 +2800,32 @@ export const getDemoConfigYaml = () =>
 export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
   const requestUrl = String(payload.url || '');
   const authIndex = String(payload.authIndex || '');
+  const isCodexPro20x = authIndex === 'codex-pro-20x-01';
   let body: unknown = { data: demoProviderModels.map((model) => ({ id: model.name })) };
 
   if (requestUrl.includes('/wham/usage')) {
     body = {
-      user_id: 'demo-user',
-      account_id: 'acct_codex_team',
-      email: 'platform@example.com',
-      plan_type: 'team',
+      user_id: isCodexPro20x ? 'demo-pro-user' : 'demo-user',
+      account_id: isCodexPro20x ? 'acct_codex_pro_20x' : 'acct_codex_team',
+      email: isCodexPro20x ? 'pro20x@example.com' : 'platform@example.com',
+      plan_type: isCodexPro20x ? 'pro' : 'team',
       rate_limit: {
         allowed: true,
         primary_window: {
-          used_percent: 0.63,
+          used_percent: isCodexPro20x ? 0.71 : 0.63,
           limit_window_seconds: 18000,
-          reset_after_seconds: 8280,
+          reset_after_seconds: isCodexPro20x ? 6120 : 8280,
         },
         secondary_window: {
-          used_percent: 0.42,
+          used_percent: isCodexPro20x ? 0.48 : 0.42,
           limit_window_seconds: 604800,
-          reset_after_seconds: 246000,
+          reset_after_seconds: isCodexPro20x ? 198000 : 246000,
         },
       },
       code_review_rate_limit: {
         allowed: true,
         primary_window: {
-          used_percent: 0.38,
+          used_percent: isCodexPro20x ? 0.29 : 0.38,
           limit_window_seconds: 18000,
           reset_after_seconds: 7200,
         },
@@ -2814,24 +2833,56 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
       credits: {
         has_credits: true,
         unlimited: false,
-        balance: 18.4,
+        balance: isCodexPro20x ? 42.6 : 18.4,
       },
       rate_limit_reset_credits: {
-        available_count: 2,
+        available_count: isCodexPro20x ? 3 : 2,
       },
       subscription_active_until: new Date(now() + 23 * day).toISOString(),
     };
   } else if (requestUrl.includes('/rate-limit-reset-credits')) {
     body = {
-      available_count: 2,
-      credits: [
-        {
-          id: 'demo-credit-1',
-          status: 'available',
-          granted_at: new Date(now() - day).toISOString(),
-          expires_at: new Date(now() + 6 * day).toISOString(),
-        },
-      ],
+      available_count: isCodexPro20x ? 3 : 2,
+      credits: isCodexPro20x
+        ? [
+            {
+              id: 'demo-pro-credit-1',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: new Date(now() - 2 * day).toISOString(),
+              expires_at: new Date(now() + 3 * day + 4 * hour).toISOString(),
+            },
+            {
+              id: 'demo-pro-credit-2',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: new Date(now() - day).toISOString(),
+              expires_at: new Date(now() + 9 * day).toISOString(),
+            },
+            {
+              id: 'demo-pro-credit-3',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: new Date(now() - 6 * hour).toISOString(),
+              expires_at: new Date(now() + 18 * day).toISOString(),
+            },
+          ]
+        : [
+            {
+              id: 'demo-credit-1',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: new Date(now() - day).toISOString(),
+              expires_at: new Date(now() + 6 * day).toISOString(),
+            },
+            {
+              id: 'demo-credit-2',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: new Date(now() - 12 * hour).toISOString(),
+              expires_at: new Date(now() + 14 * day).toISOString(),
+            },
+          ],
     };
   } else if (requestUrl.includes('anthropic.com/api/oauth/profile')) {
     body =
