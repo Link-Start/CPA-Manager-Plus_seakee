@@ -108,7 +108,7 @@ func TestRunPersistsLogsResultsAndDetail(t *testing.T) {
 	}
 	foundStart := false
 	for _, logEntry := range result.Logs {
-		if logEntry.Message == "Codex 巡检开始" {
+		if logEntry.Message == "凭证健康巡检开始" {
 			foundStart = true
 			if logEntry.Detail == nil {
 				t.Fatalf("start log detail is nil: %#v", logEntry)
@@ -121,16 +121,20 @@ func TestRunPersistsLogsResultsAndDetail(t *testing.T) {
 	}
 }
 
-func TestRunXAIUsesBillingEndpointsInsteadOfCodexUsage(t *testing.T) {
-	requestedURLs := make([]string, 0, 2)
+func TestRunXAIUsesBillingAndInferenceEndpoints(t *testing.T) {
+	const customModel = "grok-custom"
+	const customPrompt = "Return a short health response."
+	requestedURLs := make([]string, 0, 3)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"files":[{"name":"xai-auth.json","auth_index":"xai-1","provider":"xai","account":"xai@example.com","user":{"id":"user-1"}}]}`))
+			_, _ = w.Write([]byte(`{"files":[{"name":"xai-auth.json","auth_index":"xai-1","provider":"xai","auth_kind":"oauth","account":"xai@example.com","user":{"id":"user-1"}}]}`))
 		case r.URL.Path == "/v0/management/api-call" && r.Method == http.MethodPost:
 			var payload struct {
+				Method string            `json:"method"`
 				URL    string            `json:"url"`
 				Header map[string]string `json:"header"`
+				Data   string            `json:"data"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode api-call payload: %v", err)
@@ -143,8 +147,35 @@ func TestRunXAIUsesBillingEndpointsInsteadOfCodexUsage(t *testing.T) {
 				t.Fatalf("xAI headers = %#v", payload.Header)
 			}
 			if strings.Contains(payload.URL, "format=credits") {
+				if payload.Method != http.MethodGet {
+					t.Fatalf("weekly billing method = %q, want GET", payload.Method)
+				}
 				_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"credit_usage_percent":25,"current_period":{"end":"2026-07-22T00:00:00Z"}}}}`))
 				return
+			}
+			if strings.HasSuffix(payload.URL, "/responses") {
+				if payload.Method != http.MethodPost {
+					t.Fatalf("xAI inference method = %q, want POST", payload.Method)
+				}
+				if payload.Header["User-Agent"] != xaiInferenceUserAgent {
+					t.Fatalf("xAI inference user agent = %q, want %q", payload.Header["User-Agent"], xaiInferenceUserAgent)
+				}
+				var requestData map[string]any
+				if err := json.Unmarshal([]byte(payload.Data), &requestData); err != nil {
+					t.Fatalf("decode xAI inference data: %v", err)
+				}
+				if requestData["model"] != customModel || requestData["stream"] != true {
+					t.Fatalf("xAI inference data = %#v", requestData)
+				}
+				input, _ := requestData["input"].([]any)
+				if len(input) != 1 || !strings.Contains(fmt.Sprint(input[0]), customPrompt) {
+					t.Fatalf("xAI inference prompt = %#v", requestData["input"])
+				}
+				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+				return
+			}
+			if payload.Method != http.MethodGet {
+				t.Fatalf("monthly billing method = %q, want GET", payload.Method)
 			}
 			_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"monthly_limit":10000,"used":4000,"billing_period_end":"2026-08-01T00:00:00Z"}}}`))
 		default:
@@ -156,6 +187,8 @@ func TestRunXAIUsesBillingEndpointsInsteadOfCodexUsage(t *testing.T) {
 	db := newCodexInspectionTestStore(t)
 	managerCfg := newCodexInspectionManagerConfig(upstream.URL)
 	managerCfg.CodexInspection.TargetType = "xai"
+	managerCfg.CodexInspection.XAIInferenceModel = customModel
+	managerCfg.CodexInspection.XAIInferencePrompt = customPrompt
 	managerCfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionNone
 	if err := db.SaveManagerConfig(context.Background(), managerCfg); err != nil {
 		t.Fatalf("save manager config: %v", err)
@@ -165,14 +198,124 @@ func TestRunXAIUsesBillingEndpointsInsteadOfCodexUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run xAI inspection: %v", err)
 	}
-	if len(requestedURLs) != 2 {
-		t.Fatalf("requested URLs = %#v, want weekly and monthly billing", requestedURLs)
+	if len(requestedURLs) != 3 || !strings.HasSuffix(requestedURLs[2], "/responses") {
+		t.Fatalf("requested URLs = %#v, want weekly/monthly billing and inference", requestedURLs)
 	}
 	if len(result.Results) != 1 || result.Results[0].Provider != "xai" || result.Results[0].Action != "keep" {
 		t.Fatalf("xAI result = %#v", result.Results)
 	}
-	if result.Results[0].ErrorKind != "billing_healthy" || len(result.Results[0].QuotaWindows) != 2 {
-		t.Fatalf("xAI billing result = %#v", result.Results[0])
+	if result.Results[0].ErrorKind != "inference_healthy" || len(result.Results[0].QuotaWindows) != 2 {
+		t.Fatalf("xAI inference result = %#v", result.Results[0])
+	}
+}
+
+func TestXAIInferenceCompletionRequiresCompletedStatus(t *testing.T) {
+	if !hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{"status":"completed"}}`) {
+		t.Fatal("completed inference event was not accepted")
+	}
+	if hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{}}`) {
+		t.Fatal("completion event without completed status was accepted")
+	}
+	if hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{"status":"failed"}}`) {
+		t.Fatal("failed inference event was accepted")
+	}
+}
+
+func TestResolveXAIInferenceURLMatchesRuntimeUsingAPISemantics(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    authFile
+		wantURL string
+		wantCLI bool
+	}{
+		{
+			name:    "oauth defaults to cli proxy",
+			file:    authFile{"auth_kind": "oauth", "base_url": xaiOfficialAPIBaseURL},
+			wantURL: xaiCLIChatProxyBaseURL + "/responses",
+			wantCLI: true,
+		},
+		{
+			name:    "explicit false defaults to cli proxy without auth kind",
+			file:    authFile{"using_api": false, "base_url": xaiOfficialAPIBaseURL},
+			wantURL: xaiCLIChatProxyBaseURL + "/responses",
+			wantCLI: true,
+		},
+		{
+			name:    "api credential defaults to official api",
+			file:    authFile{"auth_kind": "apikey"},
+			wantURL: xaiOfficialAPIBaseURL + "/responses",
+			wantCLI: false,
+		},
+		{
+			name:    "custom base url is preserved",
+			file:    authFile{"using_api": false, "base_url": "https://xai.example.test/v1"},
+			wantURL: "https://xai.example.test/v1/responses",
+			wantCLI: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotURL, gotCLI := resolveXAIInferenceURL(tt.file)
+			if gotURL != tt.wantURL || gotCLI != tt.wantCLI {
+				t.Fatalf("resolveXAIInferenceURL() = %q, %t; want %q, %t", gotURL, gotCLI, tt.wantURL, tt.wantCLI)
+			}
+		})
+	}
+}
+
+func TestRunCombinedTargetsSamplesEachCredentialProvider(t *testing.T) {
+	requestedInference := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"files":[{"name":"codex.json","auth_index":"codex-1","provider":"codex","account":"codex@example.com"},{"name":"xai-a.json","auth_index":"xai-1","provider":"xai","account":"xai-a@example.com"},{"name":"xai-b.json","auth_index":"xai-2","provider":"xai","account":"xai-b@example.com"}]}`))
+		case r.URL.Path == "/v0/management/api-call" && r.Method == http.MethodPost:
+			var payload struct {
+				URL string `json:"url"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode api-call payload: %v", err)
+			}
+			switch {
+			case strings.Contains(payload.URL, "chatgpt.com"):
+				_, _ = w.Write([]byte(`{"status_code":200,"body":{"rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":18000}}}}`))
+			case strings.HasSuffix(payload.URL, "/responses"):
+				requestedInference++
+				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+			case strings.Contains(payload.URL, "/billing"):
+				_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"credit_usage_percent":20,"current_period":{"end":"2026-07-22T00:00:00Z"}}}}`))
+			default:
+				t.Fatalf("unexpected provider URL %q", payload.URL)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	db := newCodexInspectionTestStore(t)
+	managerCfg := newCodexInspectionManagerConfig(upstream.URL)
+	managerCfg.CodexInspection.TargetTypes = []string{model.CodexInspectionTargetCodex, model.CodexInspectionTargetXAI}
+	managerCfg.CodexInspection.TargetType = model.CodexInspectionTargetCodex
+	managerCfg.CodexInspection.SampleSize = 1
+	managerCfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionNone
+	if err := db.SaveManagerConfig(context.Background(), managerCfg); err != nil {
+		t.Fatalf("save manager config: %v", err)
+	}
+
+	detail, err := newCodexInspectionTestService(t, db).Run(context.Background(), RunRequest{TriggerType: "manual"})
+	if err != nil {
+		t.Fatalf("run combined credential inspection: %v", err)
+	}
+	if detail.Run.ProbeSetCount != 3 || detail.Run.SampledCount != 2 || len(detail.Results) != 2 {
+		t.Fatalf("combined run = %#v, results=%#v", detail.Run, detail.Results)
+	}
+	providers := map[string]bool{}
+	for _, result := range detail.Results {
+		providers[result.Provider] = true
+	}
+	if !providers["codex"] || !providers["xai"] || requestedInference != 1 {
+		t.Fatalf("providers=%#v inference=%d", providers, requestedInference)
 	}
 }
 
@@ -192,8 +335,15 @@ func TestRunXAIFallsBackToOfficialAPIIdentityHealth(t *testing.T) {
 				t.Fatalf("decode api-call payload: %v", err)
 			}
 			requestedURLs = append(requestedURLs, payload.URL)
+			if strings.HasSuffix(payload.URL, "/responses") {
+				if payload.Method != http.MethodPost {
+					t.Fatalf("xAI inference method = %q, want POST", payload.Method)
+				}
+				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+				return
+			}
 			if payload.Method != http.MethodGet {
-				t.Fatalf("xAI health method = %q, want GET", payload.Method)
+				t.Fatalf("xAI billing health method = %q, want GET", payload.Method)
 			}
 			if payload.URL == xaiOfficialAPIMeURL {
 				if payload.Header["Authorization"] != "Bearer $TOKEN$" || payload.Header["x-grok-client-version"] != "" {
@@ -221,18 +371,18 @@ func TestRunXAIFallsBackToOfficialAPIIdentityHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run xAI inspection: %v", err)
 	}
-	if len(requestedURLs) != 3 || requestedURLs[2] != xaiOfficialAPIMeURL {
-		t.Fatalf("requested URLs = %#v, want two billing requests followed by /me", requestedURLs)
+	if len(requestedURLs) != 4 || requestedURLs[2] != xaiOfficialAPIMeURL || !strings.HasSuffix(requestedURLs[3], "/responses") {
+		t.Fatalf("requested URLs = %#v, want billing, identity fallback, and inference", requestedURLs)
 	}
 	if len(result.Results) != 1 {
 		t.Fatalf("xAI result = %#v", result.Results)
 	}
 	item := result.Results[0]
-	if item.Action != "keep" || item.ErrorKind != "official_api_healthy" || item.StatusCode == nil || *item.StatusCode != http.StatusOK {
-		t.Fatalf("xAI official API result = %#v", item)
+	if item.Action != "keep" || item.ErrorKind != "inference_healthy" || item.StatusCode == nil || *item.StatusCode != http.StatusOK {
+		t.Fatalf("xAI inference result = %#v", item)
 	}
-	if item.ActionReason != "monitoring.xai_inspection_reason_official_api_manual_disable" {
-		t.Fatalf("xAI official API action reason = %q", item.ActionReason)
+	if item.ActionReason != "monitoring.xai_inspection_reason_inference_manual_disable" {
+		t.Fatalf("xAI inference action reason = %q", item.ActionReason)
 	}
 	if item.UsedPercent != nil || len(item.QuotaWindows) != 0 || item.AutoRecoverEligible {
 		t.Fatalf("xAI official API synthesized quota or recovery = %#v", item)
@@ -282,8 +432,8 @@ func TestRunXAIDoesNotFallbackToOfficialAPIForExplicitBillingDenials(t *testing.
 			if err != nil {
 				t.Fatalf("run xAI inspection: %v", err)
 			}
-			if len(requestedURLs) != 2 {
-				t.Fatalf("requested URLs = %#v, want only two billing requests", requestedURLs)
+			if len(requestedURLs) != 3 || !strings.HasSuffix(requestedURLs[2], "/responses") {
+				t.Fatalf("requested URLs = %#v, want billing requests followed by inference", requestedURLs)
 			}
 			for _, requestedURL := range requestedURLs {
 				if requestedURL == xaiOfficialAPIMeURL {
@@ -345,8 +495,8 @@ func TestRunXAIRejectsInvalidOfficialAPIIdentityPayload(t *testing.T) {
 			if err != nil {
 				t.Fatalf("run xAI inspection: %v", err)
 			}
-			if len(requestedURLs) != 3 || requestedURLs[2] != xaiOfficialAPIMeURL {
-				t.Fatalf("requested URLs = %#v, want billing requests followed by /me", requestedURLs)
+			if len(requestedURLs) != 4 || requestedURLs[2] != xaiOfficialAPIMeURL || !strings.HasSuffix(requestedURLs[3], "/responses") {
+				t.Fatalf("requested URLs = %#v, want billing, identity fallback, and inference", requestedURLs)
 			}
 			if len(result.Results) != 1 || result.Results[0].ErrorKind == "official_api_healthy" {
 				t.Fatalf("invalid official API payload reported healthy: %#v", result.Results)
@@ -394,8 +544,8 @@ func TestRunXAIFailedBillingNeverReportsHealthyAndRetriesTransientFailures(t *te
 			if err != nil {
 				t.Fatalf("run xAI inspection: %v", err)
 			}
-			if requestCount != 4 {
-				t.Fatalf("billing requests = %d, want 4 across two attempts", requestCount)
+			if requestCount != 6 {
+				t.Fatalf("billing and inference requests = %d, want 6 across two attempts", requestCount)
 			}
 			if len(detail.Results) != 1 {
 				t.Fatalf("results = %#v", detail.Results)

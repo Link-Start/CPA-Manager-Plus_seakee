@@ -128,3 +128,50 @@ func TestNormalizeCodexInspectionSchedulePreservesTimeZone(t *testing.T) {
 		t.Fatalf("invalid TimeZone did not fall back, got %q", out.TimeZone)
 	}
 }
+
+func TestCodexInspectionTargetTypesSupportLegacyAndCombinedSelection(t *testing.T) {
+	fallback := DefaultCodexInspectionConfig()
+	legacy := NormalizeCodexInspectionConfig(
+		ManagerCodexInspectionConfig{TargetType: CodexInspectionTargetXAI},
+		fallback,
+	)
+	if got := legacy.TargetProviders(); len(got) != 1 || got[0] != CodexInspectionTargetXAI || legacy.TargetType != CodexInspectionTargetXAI {
+		t.Fatalf("legacy target type normalized to %#v / %q", got, legacy.TargetType)
+	}
+
+	combined := NormalizeCodexInspectionConfig(
+		ManagerCodexInspectionConfig{TargetTypes: []string{" XAI ", "codex", "xai"}},
+		fallback,
+	)
+	if got := combined.TargetProviders(); len(got) != 2 || got[0] != CodexInspectionTargetCodex || got[1] != CodexInspectionTargetXAI {
+		t.Fatalf("combined target types = %#v", got)
+	}
+	if combined.TargetType != CodexInspectionTargetCodex || !combined.HasTargetProvider(CodexInspectionTargetXAI) {
+		t.Fatalf("combined provider compatibility fields = %#v", combined)
+	}
+}
+
+func TestValidateCodexInspectionTargetTypes(t *testing.T) {
+	if err := ValidateCodexInspectionConfig(ManagerCodexInspectionConfig{TargetTypes: []string{}}); err == nil {
+		t.Fatal("expected empty target types to be rejected")
+	}
+	if err := ValidateCodexInspectionConfig(ManagerCodexInspectionConfig{TargetTypes: []string{"codex", "anthropic"}}); err == nil {
+		t.Fatal("expected unsupported target type to be rejected")
+	}
+}
+
+func TestCodexInspectionXAIInferenceDefaultsAndOverrides(t *testing.T) {
+	fallback := DefaultCodexInspectionConfig()
+	defaults := NormalizeCodexInspectionConfig(ManagerCodexInspectionConfig{}, fallback)
+	if defaults.XAIInferenceModel != DefaultXAIInspectionModel || defaults.XAIInferencePrompt != DefaultXAIInspectionPrompt {
+		t.Fatalf("xAI inference defaults = %q / %q", defaults.XAIInferenceModel, defaults.XAIInferencePrompt)
+	}
+
+	custom := NormalizeCodexInspectionConfig(ManagerCodexInspectionConfig{
+		XAIInferenceModel:  " grok-custom ",
+		XAIInferencePrompt: " Reply briefly. ",
+	}, fallback)
+	if custom.XAIInferenceModel != "grok-custom" || custom.XAIInferencePrompt != "Reply briefly." {
+		t.Fatalf("xAI inference overrides = %q / %q", custom.XAIInferenceModel, custom.XAIInferencePrompt)
+	}
+}
