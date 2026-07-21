@@ -2194,6 +2194,78 @@ const buildMonitoringAnalytics = (
     };
   });
 
+  const requestedAPIKeyTimelineHashes = new Set(
+    (request?.filters?.api_key_hashes ?? [])
+      .map((hash) => hash.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const apiKeyTimelineProfiles = [
+    {
+      apiKeyHash: 'hash_research_shared',
+      callShares: [0.36, 0.14, 0.29, 0.42, 0.19, 0.31, 0.12],
+      tokenShares: [0.39, 0.18, 0.33, 0.46, 0.22, 0.35, 0.15],
+      failureRate: 0.026,
+      averageLatencyMs: 1420,
+      missingBuckets: [],
+    },
+    {
+      apiKeyHash: 'hash_gemini_prod',
+      callShares: [0.16, 0.3, 0.11, 0.25, 0.37, 0.15, 0.28],
+      tokenShares: [0.21, 0.34, 0.14, 0.28, 0.41, 0.18, 0.31],
+      failureRate: 0.018,
+      averageLatencyMs: 1160,
+      missingBuckets: [],
+    },
+    {
+      apiKeyHash: 'hash_codex_team',
+      callShares: [0.22, 0.1, 0.34, 0.17, 0.27, 0.09, 0.23],
+      tokenShares: [0.19, 0.08, 0.29, 0.13, 0.24, 0.07, 0.2],
+      failureRate: 0.012,
+      averageLatencyMs: 1220,
+      missingBuckets: [3, 10],
+    },
+    {
+      apiKeyHash: 'hash_research_batch',
+      callShares: [0.08, 0.19, 0.27, 0.1, 0.16, 0.29, 0.07],
+      tokenShares: [0.11, 0.24, 0.35, 0.14, 0.21, 0.37, 0.09],
+      failureRate: 0.034,
+      averageLatencyMs: 1510,
+      missingBuckets: [],
+    },
+  ];
+  const apiKeyTimeline = timeline
+    .flatMap((point, bucketIndex) =>
+      apiKeyTimelineProfiles.flatMap((profile) => {
+        if (profile.missingBuckets.includes(bucketIndex)) return [];
+        const callShare = profile.callShares[bucketIndex % profile.callShares.length];
+        const tokenShare = profile.tokenShares[bucketIndex % profile.tokenShares.length];
+        const calls = Math.round(point.calls * callShare);
+        const failure = Math.min(calls, Math.round(calls * profile.failureRate));
+        const tokens = Math.round(point.tokens * tokenShare);
+        return [
+          {
+            api_key_hash: profile.apiKeyHash,
+            bucket_ms: point.bucket_ms,
+            bucket_label: point.label,
+            calls,
+            tokens,
+            success: calls - failure,
+            failure,
+            ...splitTokens(tokens),
+            cost: round2(point.cost * tokenShare),
+            average_latency_ms: profile.averageLatencyMs,
+            success_rate: safeRate(calls - failure, calls),
+            failure_rate: safeRate(failure, calls),
+          },
+        ];
+      })
+    )
+    .filter(
+      (point) =>
+        requestedAPIKeyTimelineHashes.size === 0 ||
+        requestedAPIKeyTimelineHashes.has(point.api_key_hash)
+    );
+
   const channelShare = accountStats.map((row) => ({
     auth_index: row.auth_indices?.[0] ?? row.id,
     source: row.sources?.[0],
@@ -2817,6 +2889,9 @@ const buildMonitoringAnalytics = (
     credential_stats: credentialStats,
     credential_timeline: credentialTimeline,
     api_key_stats: apiKeyStats,
+    ...(request?.include?.api_key_timeline && requestedAPIKeyTimelineHashes.size > 0
+      ? { api_key_timeline: apiKeyTimeline }
+      : {}),
     filter_options: {
       account_stats: accountStats,
       api_key_stats: apiKeyStats,

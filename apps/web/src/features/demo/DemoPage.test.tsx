@@ -170,6 +170,49 @@ describe('DemoPage', () => {
     );
   });
 
+  it('returns exact API key trend fixtures for selected client keys', () => {
+    const page = getDemoMonitoringAnalytics({
+      from_ms: 1,
+      to_ms: Date.now(),
+      filters: {
+        api_key_hashes: ['hash_research_shared', 'hash_codex_team'],
+      },
+      include: {
+        api_key_timeline: true,
+      },
+    });
+    const timeline = page.timeline;
+    const apiKeyTimeline = page.api_key_timeline;
+    if (!timeline || !apiKeyTimeline) throw new Error('missing demo API key timeline');
+    const firstBucket = timeline[0];
+    const missingCodexBucket = timeline[3];
+    if (!firstBucket || !missingCodexBucket) throw new Error('missing demo timeline buckets');
+
+    expect([...new Set(apiKeyTimeline.map((point) => point.api_key_hash))].sort()).toEqual([
+      'hash_codex_team',
+      'hash_research_shared',
+    ]);
+    expect(apiKeyTimeline).toHaveLength(timeline.length * 2 - 2);
+
+    const firstResearchPoint = apiKeyTimeline.find(
+      (point) =>
+        point.api_key_hash === 'hash_research_shared' && point.bucket_ms === firstBucket.bucket_ms
+    );
+    if (!firstResearchPoint) throw new Error('missing first research API key bucket');
+    expect(firstResearchPoint).toMatchObject({
+      calls: Math.round(firstBucket.calls * 0.36),
+      total_tokens: Math.round(firstBucket.tokens * 0.39),
+    });
+    expect(firstResearchPoint.success + firstResearchPoint.failure).toBe(firstResearchPoint.calls);
+    expect(
+      apiKeyTimeline.some(
+        (point) =>
+          point.api_key_hash === 'hash_codex_team' &&
+          point.bucket_ms === missingCodexBucket.bucket_ms
+      )
+    ).toBe(false);
+  });
+
   it('keeps visible demo dates relative to the current day', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-29T10:00:00+08:00'));

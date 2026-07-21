@@ -649,6 +649,7 @@ export interface MonitoringAnalyticsInclude {
   account_stats?: boolean;
   credential_stats?: boolean;
   credential_timeline?: boolean;
+  api_key_timeline?: boolean;
   api_key_stats?: boolean;
   filter_options?: boolean;
   filter_selectors?: boolean;
@@ -920,6 +921,27 @@ export interface MonitoringAnalyticsCredentialTimelinePoint {
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
   auth_project_id_snapshot?: string;
+  bucket_ms: number;
+  bucket_label?: string;
+  calls: number;
+  tokens: number;
+  success: number;
+  failure: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cached_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  reasoning_tokens?: number;
+  total_tokens?: number;
+  cost?: number;
+  average_latency_ms?: number | null;
+  success_rate?: number;
+  failure_rate?: number;
+}
+
+export interface MonitoringAnalyticsApiKeyTimelinePoint {
+  api_key_hash: string;
   bucket_ms: number;
   bucket_label?: string;
   calls: number;
@@ -1225,6 +1247,7 @@ export interface MonitoringAnalyticsResponse {
   account_stats?: MonitoringAnalyticsAccountStatRow[];
   credential_stats?: MonitoringAnalyticsCredentialStatRow[];
   credential_timeline?: MonitoringAnalyticsCredentialTimelinePoint[];
+  api_key_timeline?: MonitoringAnalyticsApiKeyTimelinePoint[];
   api_key_stats?: MonitoringAnalyticsApiKeyStatRow[];
   filter_options?: MonitoringAnalyticsFilterOptions;
   task_buckets?: MonitoringAnalyticsTaskBucketRow[];
