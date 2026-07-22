@@ -24,6 +24,15 @@ export const getDemoQuotaCooldowns = () => emptyArray;
 export const getDemoHeaderSnapshots = () => emptyObject;
 export const getDemoCodexInspectionRuns = () => ({ items: [] });
 export const getDemoCodexInspectionRun = () => ({ results: [] });
+export const getDemoCodexInspectionLocalRun = () => ({
+  settings: {},
+  files: [],
+  results: [],
+  summary: {},
+  startedAt: 0,
+  finishedAt: 0,
+});
+export const getDemoCodexInspectionLocalLogs = () => [];
 export const getDemoAccountActionCandidates = () => ({ items: [], pendingCount: 0 });
 export const getDemoApiKeyAliases = () => ({ items: [] });
 export const getDemoLogsResponse = () => ({

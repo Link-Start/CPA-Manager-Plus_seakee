@@ -2,6 +2,7 @@ import type {
   AccountActionCandidate,
   AccountProcessingPolicy,
   ApiKeyAlias,
+  CodexInspectionResult,
   CodexInspectionRunDetail,
   CodexInspectionRunsResponse,
   DashboardSummaryResponse,
@@ -15,6 +16,11 @@ import type {
   UsageServiceInfo,
   UsageServiceStatus,
 } from '@/services/api/usageService';
+import type {
+  CodexInspectionAction,
+  CodexInspectionRunResult,
+  CodexInspectionStoredLogEntry,
+} from '@/features/monitoring/codexInspection';
 import type { AuthFilesResponse } from '@/types/authFile';
 import type { PluginListResponse, PluginStoreResponse } from '@/types/plugin';
 import type { ModelInfo } from '@/utils/models';
@@ -157,13 +163,18 @@ const initialRawConfig: Record<string, unknown> = {
   clean: {
     base_url: DEMO_API_BASE,
     target_type: 'codex',
+    target_types: ['codex', 'xai'],
     workers: 6,
     delete_workers: 2,
     timeout: 30,
     retries: 2,
     user_agent: 'CPA-Manager-Plus Demo',
+    xai_inference_user_agent: 'xai-grok-workspace/0.2.101 Demo',
+    xai_inference_enabled: true,
+    xai_inference_model: 'grok-4.5',
+    xai_inference_prompt: 'Reply with exactly OK.',
     used_percent_threshold: 92,
-    sample_size: 24,
+    sample_size: 0,
   },
   'usage-statistics-enabled': true,
   'redis-usage-queue-retention-seconds': 1800,
@@ -265,9 +276,7 @@ const initialRawConfig: Record<string, unknown> = {
       // Named channel that already includes an ordinal (not multi-key disambiguation).
       name: 'anyrouter.top #1',
       'base-url': 'https://anyrouter.top/v1',
-      'api-key-entries': [
-        { 'api-key': 'sk-anyrouter-demo-key', 'auth-index': 'anyrouter-auth-1' },
-      ],
+      'api-key-entries': [{ 'api-key': 'sk-anyrouter-demo-key', 'auth-index': 'anyrouter-auth-1' }],
       models: [{ name: 'gpt-4.1-mini', alias: 'AnyRouter Mini' }],
       priority: 60,
     },
@@ -289,7 +298,7 @@ const initialRawConfig: Record<string, unknown> = {
 };
 
 const demoAuthFiles: AuthFilesResponse = {
-  total: 18,
+  total: 19,
   files: [
     {
       name: 'codex-team-01.json',
@@ -348,7 +357,7 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'codex',
       provider: 'codex',
       authIndex: 'codex-fallback-02',
-      disabled: false,
+      disabled: true,
       status: 'cooldown',
       statusMessage: 'Recovering from quota pressure',
       size: 4710,
@@ -456,6 +465,23 @@ const demoAuthFiles: AuthFilesResponse = {
       label: 'xai',
       success: 188,
       failed: 3,
+    },
+    {
+      name: 'xai-expired.json',
+      type: 'xai',
+      provider: 'xai',
+      authIndex: 'xai-expired-01',
+      disabled: false,
+      status: 'warning',
+      statusMessage: 'Authentication expired',
+      size: 2980,
+      modified: now() - 8 * hour,
+      account_snapshot: 'expired.demo@example.com',
+      email: 'expired.demo@example.com',
+      account: 'expired.demo@example.com',
+      label: 'xai',
+      success: 82,
+      failed: 12,
     },
     {
       name: 'openai-support-02.json',
@@ -721,14 +747,20 @@ const demoManagerConfig: ManagerConfigResponse = {
         timeZone: 'Asia/Shanghai',
       },
       targetType: 'codex',
+      targetTypes: ['codex', 'xai'],
       workers: 6,
       deleteWorkers: 2,
       timeout: 30,
       retries: 2,
       userAgent: 'CPA-Manager-Plus Demo',
+      xaiInferenceUserAgent: 'xai-grok-workspace/0.2.101 Demo',
+      xaiInferenceEnabled: true,
+      xaiInferenceModel: 'grok-4.5',
+      xaiInferencePrompt: 'Reply with exactly OK.',
       usedPercentThreshold: 92,
-      sampleSize: 24,
+      sampleSize: 0,
       autoActionMode: 'disable',
+      autoRecoverEnabled: true,
     },
     externalUsageService: {
       enabled: true,
@@ -2893,92 +2925,275 @@ const buildMonitoringAnalytics = (
   };
 };
 
-const demoInspectionRunDetail = (baseNow = now()): CodexInspectionRunDetail => ({
-  run: {
-    id: 1001,
-    triggerType: 'schedule',
-    triggerKey: 'interval:45m',
-    status: 'completed',
-    startedAtMs: baseNow - 42 * 60 * 1000,
-    finishedAtMs: baseNow - 39 * 60 * 1000,
-    totalFiles: 24,
-    probeSetCount: 24,
-    sampledCount: 18,
-    disabledCount: 2,
-    enabledCount: 16,
-    deleteCount: 0,
-    disableCount: 2,
-    enableCount: 1,
-    reauthCount: 1,
-    keepCount: 14,
-    createdAtMs: baseNow - 42 * 60 * 1000,
-    updatedAtMs: baseNow - 39 * 60 * 1000,
-    settings: demoManagerConfig.config.codexInspection,
+const buildDemoInspectionResults = (baseNow: number): CodexInspectionResult[] => [
+  {
+    id: 501,
+    runId: 1001,
+    accountKey: 'codex-team-01',
+    fileName: 'codex-team-01.json',
+    displayAccount: 'Platform Team',
+    authIndex: 'codex-team-01',
+    accountId: 'acct_codex_team',
+    provider: 'codex',
+    disabled: false,
+    status: 'ok',
+    state: 'active',
+    action: 'keep',
+    actionReason: 'monitoring.codex_inspection_reason_healthy',
+    actionStatus: 'none',
+    statusCode: 200,
+    usedPercent: 63,
+    isQuota: false,
+    planType: 'team',
+    quotaWindows: [
+      {
+        id: 'primary',
+        labelKey: 'codex_quota.primary_window',
+        usedPercent: 63,
+        resetLabel: '2h 18m',
+        limitWindowSeconds: 18000,
+      },
+      {
+        id: 'secondary',
+        labelKey: 'codex_quota.secondary_window',
+        usedPercent: 42,
+        resetLabel: '2d 20h',
+        limitWindowSeconds: 604800,
+      },
+    ],
+    createdAtMs: baseNow - 41 * minute,
   },
-  results: [
-    {
-      id: 501,
-      runId: 1001,
-      accountKey: 'codex-team-01',
-      fileName: 'codex-team-01.json',
-      displayAccount: 'Platform Team',
-      authIndex: 'codex-team-01',
-      accountId: 'acct_codex_team',
-      provider: 'codex',
-      disabled: false,
-      status: 'ok',
-      state: 'active',
-      action: 'keep',
-      actionReason: 'Healthy quota',
-      actionStatus: 'done',
-      usedPercent: 63,
-      isQuota: true,
-      planType: 'team',
-      quotaWindows: [
-        {
-          id: 'primary',
-          labelKey: 'codex_quota.primary_window',
-          usedPercent: 63,
-          resetLabel: '2h 18m',
-          limitWindowSeconds: 18000,
-        },
-      ],
-      createdAtMs: baseNow - 41 * 60 * 1000,
+  {
+    id: 502,
+    runId: 1001,
+    accountKey: 'codex-email-user-01',
+    fileName: 'codex-email-user.json',
+    displayAccount: 'fbcabcdef@vip.qq.com',
+    authIndex: 'codex-email-user-01',
+    accountId: 'acct_codex_email',
+    provider: 'codex',
+    disabled: false,
+    status: 'unauthorized',
+    state: 'active',
+    action: 'reauth',
+    actionReason: 'monitoring.codex_inspection_reason_reauth',
+    actionStatus: 'pending',
+    statusCode: 401,
+    isQuota: false,
+    planType: 'plus',
+    errorKind: 'auth_invalid',
+    errorDetail: 'Provided authentication token is expired',
+    createdAtMs: baseNow - 41 * minute,
+  },
+  {
+    id: 503,
+    runId: 1001,
+    accountKey: 'codex-pro-20x-01',
+    fileName: 'codex-pro-20x-01.json',
+    displayAccount: 'Pro 20x Workspace',
+    authIndex: 'codex-pro-20x-01',
+    accountId: 'acct_codex_pro_20x',
+    provider: 'codex',
+    disabled: false,
+    status: 'quota_warning',
+    state: 'active',
+    action: 'disable',
+    actionReason: 'monitoring.codex_inspection_reason_quota_threshold',
+    actionStatus: 'pending',
+    statusCode: 200,
+    usedPercent: 96,
+    isQuota: false,
+    planType: 'pro',
+    quotaWindows: [
+      {
+        id: 'primary',
+        labelKey: 'codex_quota.primary_window',
+        usedPercent: 84,
+        resetLabel: '1h 42m',
+        limitWindowSeconds: 18000,
+      },
+      {
+        id: 'secondary',
+        labelKey: 'codex_quota.secondary_window',
+        usedPercent: 96,
+        resetLabel: '2d 7h',
+        limitWindowSeconds: 604800,
+      },
+    ],
+    createdAtMs: baseNow - 40 * minute,
+  },
+  {
+    id: 504,
+    runId: 1001,
+    accountKey: 'codex-fallback-02',
+    fileName: 'codex-fallback-02.json',
+    displayAccount: 'Automation Pool',
+    authIndex: 'codex-fallback-02',
+    accountId: 'acct_codex_auto',
+    provider: 'codex',
+    disabled: true,
+    status: 'recovered',
+    state: 'disabled',
+    action: 'enable',
+    actionReason: 'monitoring.codex_inspection_reason_recovered',
+    actionStatus: 'pending',
+    statusCode: 200,
+    usedPercent: 24,
+    isQuota: false,
+    autoRecoverEligible: true,
+    planType: 'team',
+    quotaWindows: [
+      {
+        id: 'primary',
+        labelKey: 'codex_quota.primary_window',
+        usedPercent: 24,
+        resetLabel: '3h 36m',
+        limitWindowSeconds: 18000,
+      },
+    ],
+    createdAtMs: baseNow - 40 * minute,
+  },
+  {
+    id: 505,
+    runId: 1001,
+    accountKey: 'xai-ops-01',
+    fileName: 'xai-ops.json',
+    displayAccount: 'oc0demo01@yijihwjw.com',
+    authIndex: 'xai-ops-01',
+    provider: 'xai',
+    disabled: false,
+    status: 'ok',
+    state: 'active',
+    action: 'keep',
+    actionReason: 'monitoring.xai_inspection_reason_inference_healthy',
+    actionStatus: 'none',
+    statusCode: 200,
+    usedPercent: 22,
+    isQuota: false,
+    planType: null,
+    quotaWindows: [
+      {
+        id: 'xai-weekly',
+        labelKey: 'xai_quota.weekly_limit',
+        usedPercent: 3,
+        resetLabel: new Date(baseNow + 6 * day).toISOString(),
+        limitWindowSeconds: null,
+      },
+      {
+        id: 'xai-monthly',
+        labelKey: 'xai_quota.monthly_limit',
+        usedPercent: 22,
+        resetLabel: new Date(baseNow + 19 * day).toISOString(),
+        limitWindowSeconds: null,
+      },
+    ],
+    errorKind: 'inference_healthy',
+    createdAtMs: baseNow - 39 * minute,
+  },
+  {
+    id: 506,
+    runId: 1001,
+    accountKey: 'xai-email-user-01',
+    fileName: 'xai-email-user.json',
+    displayAccount: 'oc1demo02@yijihwjw.com',
+    authIndex: 'xai-email-user-01',
+    provider: 'xai',
+    disabled: false,
+    status: 'quota',
+    state: 'active',
+    action: 'disable',
+    actionReason: 'monitoring.xai_inspection_reason_spending_limit_disable',
+    actionStatus: 'pending',
+    statusCode: 402,
+    usedPercent: 100,
+    isQuota: true,
+    planType: null,
+    quotaWindows: [
+      {
+        id: 'xai-weekly',
+        labelKey: 'xai_quota.weekly_limit',
+        usedPercent: 100,
+        resetLabel: new Date(baseNow + 6 * day).toISOString(),
+        limitWindowSeconds: null,
+      },
+    ],
+    errorKind: 'spending_limit',
+    errorDetail:
+      'personal-team-blocked:spending-limit · You have run out of credits or need a Grok subscription.',
+    createdAtMs: baseNow - 39 * minute,
+  },
+  {
+    id: 507,
+    runId: 1001,
+    accountKey: 'xai-expired-01',
+    fileName: 'xai-expired.json',
+    displayAccount: 'expired.demo@example.com',
+    authIndex: 'xai-expired-01',
+    provider: 'xai',
+    disabled: false,
+    status: 'unauthorized',
+    state: 'active',
+    action: 'reauth',
+    actionReason: 'monitoring.xai_inspection_reason_auth_invalid',
+    actionStatus: 'pending',
+    statusCode: 401,
+    isQuota: false,
+    planType: null,
+    errorKind: 'auth_invalid',
+    errorDetail: 'invalid_token · The xAI OAuth credential has expired.',
+    createdAtMs: baseNow - 39 * minute,
+  },
+];
+
+const countDemoInspectionActions = (results: CodexInspectionResult[], action: string) =>
+  results.filter((item) => item.action === action).length;
+
+const demoInspectionRunDetail = (baseNow = now()): CodexInspectionRunDetail => {
+  const results = buildDemoInspectionResults(baseNow);
+  const targetFiles = demoAuthFiles.files.filter((file) =>
+    ['codex', 'xai'].includes(String(file.provider ?? file.type ?? '').toLowerCase())
+  );
+  return {
+    run: {
+      id: 1001,
+      triggerType: 'scheduled',
+      triggerKey: 'interval:45m',
+      status: 'completed',
+      startedAtMs: baseNow - 42 * minute,
+      finishedAtMs: baseNow - 39 * minute,
+      totalFiles: demoAuthFiles.total ?? demoAuthFiles.files.length,
+      probeSetCount: targetFiles.length,
+      sampledCount: results.length,
+      disabledCount: results.filter((item) => item.disabled).length,
+      enabledCount: results.filter((item) => !item.disabled).length,
+      deleteCount: countDemoInspectionActions(results, 'delete'),
+      disableCount: countDemoInspectionActions(results, 'disable'),
+      enableCount: countDemoInspectionActions(results, 'enable'),
+      reauthCount: countDemoInspectionActions(results, 'reauth'),
+      keepCount: countDemoInspectionActions(results, 'keep'),
+      createdAtMs: baseNow - 42 * minute,
+      updatedAtMs: baseNow - 39 * minute,
+      settings: demoManagerConfig.config.codexInspection,
     },
-    {
-      id: 502,
-      runId: 1001,
-      accountKey: 'codex-fallback-02',
-      fileName: 'codex-fallback-02.json',
-      displayAccount: 'Automation Pool',
-      authIndex: 'codex-fallback-02',
-      accountId: 'acct_codex_auto',
-      provider: 'codex',
-      disabled: true,
-      status: 'quota',
-      state: 'disabled',
-      action: 'disable',
-      actionReason: 'Quota above threshold',
-      actionStatus: 'done',
-      statusCode: 429,
-      usedPercent: 96,
-      isQuota: true,
-      planType: 'team',
-      errorKind: 'quota',
-      errorDetail: 'Primary quota window reached',
-      createdAtMs: baseNow - 40 * 60 * 1000,
-    },
-  ],
-  logs: [
-    {
-      id: 9001,
-      runId: 1001,
-      level: 'info',
-      message: 'Inspection completed for 24 auth files',
-      createdAtMs: baseNow - 39 * 60 * 1000,
-    },
-  ],
-});
+    results,
+    logs: [
+      {
+        id: 9001,
+        runId: 1001,
+        level: 'info',
+        message: `Inspection set prepared with ${targetFiles.length} Codex and xAI credentials`,
+        createdAtMs: baseNow - 42 * minute,
+      },
+      {
+        id: 9002,
+        runId: 1001,
+        level: 'success',
+        message: `Inspection completed with ${results.length} results`,
+        createdAtMs: baseNow - 39 * minute,
+      },
+    ],
+  };
+};
 
 const demoAccountCandidates: AccountActionCandidate[] = [
   {
@@ -3182,6 +3397,123 @@ export const getDemoCodexInspectionRuns = (): CodexInspectionRunsResponse => {
 
 export const getDemoCodexInspectionRun = () => clone(demoInspectionRunDetail());
 
+const getDemoLocalInspectionReason = (item: CodexInspectionResult): string => {
+  if (item.errorKind === 'inference_healthy') {
+    return 'monitoring.xai_inspection_reason_inference_healthy';
+  }
+  if (item.errorKind === 'spending_limit') {
+    return 'monitoring.xai_inspection_reason_spending_limit_disable';
+  }
+  if (item.errorKind === 'auth_invalid') {
+    return 'monitoring.xai_inspection_reason_auth_invalid';
+  }
+  return item.actionReason;
+};
+
+export const getDemoCodexInspectionLocalRun = (baseNow = now()): CodexInspectionRunResult => {
+  const detail = demoInspectionRunDetail(baseNow);
+  const filesByName = new Map(demoAuthFiles.files.map((file) => [file.name, file]));
+  const results = detail.results.map((item) => {
+    const raw =
+      filesByName.get(item.fileName) ??
+      ({
+        name: item.fileName,
+        type: item.provider,
+        provider: item.provider,
+        authIndex: item.authIndex,
+        disabled: item.disabled,
+      } as AuthFilesResponse['files'][number]);
+    return {
+      key: `${item.fileName}::${item.authIndex || '-'}`,
+      fileName: item.fileName,
+      displayAccount: item.displayAccount,
+      authIndex: item.authIndex ?? null,
+      accountId: item.accountId ?? null,
+      provider: item.provider,
+      disabled: item.disabled,
+      autoRecoverOwned: item.autoRecoverEligible === true,
+      status: item.status ?? '',
+      state: item.state ?? '',
+      raw,
+      action: item.action as CodexInspectionAction,
+      actionReason: getDemoLocalInspectionReason(item),
+      statusCode: item.statusCode ?? null,
+      usedPercent: item.usedPercent ?? null,
+      isQuota: item.isQuota,
+      autoRecoverEligible: item.autoRecoverEligible === true,
+      error: item.errorDetail ?? item.error ?? '',
+      planType: item.planType ?? null,
+      quotaWindows: (item.quotaWindows ?? []).map((window) => ({
+        id: window.id,
+        labelKey: window.labelKey,
+        labelParams: window.labelParams,
+        usedPercent: window.usedPercent ?? null,
+        resetLabel: window.resetLabel ?? '',
+        limitWindowSeconds: window.limitWindowSeconds ?? null,
+      })),
+      errorKind: item.errorKind,
+      errorDetail: item.errorDetail,
+    };
+  });
+  return {
+    settings: {
+      baseUrl: DEMO_API_BASE,
+      token: '',
+      targetTypes: ['codex', 'xai'],
+      targetType: 'codex',
+      workers: 6,
+      deleteWorkers: 2,
+      timeout: 30,
+      retries: 2,
+      userAgent: 'CPA-Manager-Plus Demo',
+      xaiInferenceUserAgent: 'xai-grok-workspace/0.2.101 Demo',
+      xaiInferenceEnabled: true,
+      xaiInferenceModel: 'grok-4.5',
+      xaiInferencePrompt: 'Reply with exactly OK.',
+      usedPercentThreshold: 92,
+      sampleSize: 0,
+    },
+    files: clone(demoAuthFiles.files),
+    results,
+    summary: {
+      totalFiles: detail.run.totalFiles,
+      probeSetCount: detail.run.probeSetCount,
+      sampledCount: detail.run.sampledCount,
+      disabledCount: detail.run.disabledCount,
+      enabledCount: detail.run.enabledCount,
+      deleteCount: detail.run.deleteCount,
+      disableCount: detail.run.disableCount,
+      enableCount: detail.run.enableCount,
+      reauthCount: detail.run.reauthCount,
+      keepCount: detail.run.keepCount,
+      usedPercentThreshold: 92,
+      sampled: false,
+      plannedActionPreview: results
+        .filter((item) => item.action !== 'keep')
+        .map((item) => `${item.displayAccount} -> ${item.action}`),
+    },
+    startedAt: detail.run.startedAtMs,
+    finishedAt: detail.run.finishedAtMs ?? detail.run.updatedAtMs,
+  };
+};
+
+export const getDemoCodexInspectionLocalLogs = (
+  baseNow = now()
+): CodexInspectionStoredLogEntry[] => [
+  {
+    id: 'demo-inspection-start',
+    level: 'info',
+    message: 'Loaded 7 Codex and xAI credentials for inspection',
+    timestamp: baseNow - 42 * minute,
+  },
+  {
+    id: 'demo-inspection-complete',
+    level: 'success',
+    message: 'Credential health inspection completed with 7 results',
+    timestamp: baseNow - 39 * minute,
+  },
+];
+
 export const getDemoAccountActionCandidates = () => ({
   items: clone(demoAccountCandidates),
   pendingCount: demoAccountCandidates.filter((item) => item.status === 'pending').length,
@@ -3251,45 +3583,70 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
   const requestUrl = String(payload.url || '');
   const authIndex = String(payload.authIndex || '');
   const isCodexPro20x = authIndex === 'codex-pro-20x-01';
+  const isCodexRecovered = authIndex === 'codex-fallback-02';
+  const isCodexExpired = authIndex === 'codex-email-user-01';
+  const isXaiSpendingLimited = authIndex === 'xai-email-user-01';
+  const isXaiExpired = authIndex === 'xai-expired-01';
+  let statusCode = 200;
   let body: unknown = { data: demoProviderModels.map((model) => ({ id: model.name })) };
 
   if (requestUrl.includes('/wham/usage')) {
-    body = {
-      user_id: isCodexPro20x ? 'demo-pro-user' : 'demo-user',
-      account_id: isCodexPro20x ? 'acct_codex_pro_20x' : 'acct_codex_team',
-      email: isCodexPro20x ? 'pro20x@example.com' : 'platform@example.com',
-      plan_type: isCodexPro20x ? 'pro' : 'team',
-      rate_limit: {
-        allowed: true,
-        primary_window: {
-          used_percent: isCodexPro20x ? 0.71 : 0.63,
-          limit_window_seconds: 18000,
-          reset_after_seconds: isCodexPro20x ? 6120 : 8280,
+    if (isCodexExpired) {
+      statusCode = 401;
+      body = {
+        error: {
+          code: 'token_expired',
+          message: 'Provided authentication token is expired',
         },
-        secondary_window: {
-          used_percent: isCodexPro20x ? 0.48 : 0.42,
-          limit_window_seconds: 604800,
-          reset_after_seconds: isCodexPro20x ? 198000 : 246000,
+      };
+    } else {
+      const primaryUsedPercent = isCodexPro20x ? 84 : isCodexRecovered ? 24 : 63;
+      const secondaryUsedPercent = isCodexPro20x ? 96 : isCodexRecovered ? 18 : 42;
+      body = {
+        user_id: isCodexPro20x ? 'demo-pro-user' : 'demo-user',
+        account_id: isCodexPro20x
+          ? 'acct_codex_pro_20x'
+          : isCodexRecovered
+            ? 'acct_codex_auto'
+            : 'acct_codex_team',
+        email: isCodexPro20x
+          ? 'pro20x@example.com'
+          : isCodexRecovered
+            ? 'automation@example.com'
+            : 'platform@example.com',
+        plan_type: isCodexPro20x ? 'pro' : 'team',
+        rate_limit: {
+          allowed: true,
+          primary_window: {
+            used_percent: primaryUsedPercent,
+            limit_window_seconds: 18000,
+            reset_after_seconds: isCodexPro20x ? 6120 : isCodexRecovered ? 12960 : 8280,
+          },
+          secondary_window: {
+            used_percent: secondaryUsedPercent,
+            limit_window_seconds: 604800,
+            reset_after_seconds: isCodexPro20x ? 198000 : 246000,
+          },
         },
-      },
-      code_review_rate_limit: {
-        allowed: true,
-        primary_window: {
-          used_percent: isCodexPro20x ? 0.29 : 0.38,
-          limit_window_seconds: 18000,
-          reset_after_seconds: 7200,
+        code_review_rate_limit: {
+          allowed: true,
+          primary_window: {
+            used_percent: isCodexPro20x ? 29 : 38,
+            limit_window_seconds: 18000,
+            reset_after_seconds: 7200,
+          },
         },
-      },
-      credits: {
-        has_credits: true,
-        unlimited: false,
-        balance: isCodexPro20x ? 42.6 : 18.4,
-      },
-      rate_limit_reset_credits: {
-        available_count: isCodexPro20x ? 3 : 2,
-      },
-      subscription_active_until: new Date(now() + 23 * day).toISOString(),
-    };
+        credits: {
+          has_credits: true,
+          unlimited: false,
+          balance: isCodexPro20x ? 42.6 : 18.4,
+        },
+        rate_limit_reset_credits: {
+          available_count: isCodexPro20x ? 3 : 2,
+        },
+        subscription_active_until: new Date(now() + 23 * day).toISOString(),
+      };
+    }
   } else if (requestUrl.includes('/rate-limit-reset-credits')) {
     body = {
       available_count: isCodexPro20x ? 3 : 2,
@@ -3406,13 +3763,77 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
         { model: 'kimi-k2', used: 62, total: 100, reset_time: new Date(now() + day).toISOString() },
       ],
     };
-  } else if (requestUrl.includes('grok.com')) {
+  } else if (requestUrl.includes('/responses') && requestUrl.includes('grok.com')) {
+    if (isXaiSpendingLimited) {
+      statusCode = 402;
+      body = {
+        code: 'personal-team-blocked:spending-limit',
+        error:
+          'You have run out of credits or need a Grok subscription. Add credits or upgrade at grok.com.',
+      };
+    } else if (isXaiExpired) {
+      statusCode = 401;
+      body = {
+        code: 'invalid_token',
+        error: 'The xAI OAuth credential has expired.',
+      };
+    } else {
+      body = {
+        id: `resp_demo_${authIndex || 'xai'}`,
+        object: 'response',
+        status: 'completed',
+        model: 'grok-4.5-build-free',
+        output: [
+          {
+            id: `msg_demo_${authIndex || 'xai'}`,
+            role: 'assistant',
+            type: 'message',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'OK', annotations: [], logprobs: [] }],
+          },
+        ],
+      };
+    }
+  } else if (requestUrl.includes('/billing?format=credits')) {
     body = {
-      billing: {
-        plan: 'pro',
-        usage: [{ name: 'requests', used: 320, total: 1000 }],
+      config: {
+        currentPeriod: {
+          type: 'USAGE_PERIOD_TYPE_WEEKLY',
+          start: new Date(now() - day).toISOString(),
+          end: new Date(now() + 6 * day).toISOString(),
+        },
+        creditUsagePercent: isXaiSpendingLimited ? 100 : isXaiExpired ? 12 : 3,
+        productUsage: [
+          {
+            product: 'Grok Build',
+            usagePercent: isXaiSpendingLimited ? 100 : isXaiExpired ? 12 : 3,
+          },
+        ],
       },
     };
+  } else if (requestUrl.includes('/billing') && requestUrl.includes('grok.com')) {
+    body = {
+      config: {
+        currentPeriod: {
+          type: 'USAGE_PERIOD_TYPE_MONTHLY',
+          start: new Date(now() - 11 * day).toISOString(),
+          end: new Date(now() + 19 * day).toISOString(),
+        },
+        monthlyLimit: { val: 10000 },
+        used: { val: isXaiSpendingLimited ? 10000 : isXaiExpired ? 1200 : 2200 },
+        onDemandCap: { val: 0 },
+        onDemandUsed: { val: 0 },
+        billingPeriodStart: new Date(now() - 11 * day).toISOString(),
+        billingPeriodEnd: new Date(now() + 19 * day).toISOString(),
+      },
+    };
+  } else if (requestUrl.includes('api.x.ai/v1/me')) {
+    if (isXaiExpired) {
+      statusCode = 401;
+      body = { code: 'invalid_token', error: 'The xAI OAuth credential has expired.' };
+    } else {
+      body = { id: `demo-${authIndex || 'xai'}`, active: true };
+    }
   } else if (requestUrl.includes('cloudcode-pa.googleapis.com')) {
     body = {
       groups: [
@@ -3439,7 +3860,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
   }
 
   return {
-    status_code: 200,
+    status_code: statusCode,
     has_status_code: true,
     header: {
       'content-type': ['application/json'],
