@@ -35,8 +35,9 @@ const (
 	CodexInspectionTargetCodex = "codex"
 	CodexInspectionTargetXAI   = "xai"
 
-	DefaultXAIInspectionModel  = "grok-4.5"
-	DefaultXAIInspectionPrompt = "Reply with exactly OK."
+	DefaultXAIInspectionModel    = "grok-4.5"
+	DefaultXAIInspectionPrompt   = "Reply with exactly OK."
+	DefaultXAIInferenceUserAgent = "xai-grok-workspace/0.2.101"
 )
 
 type ManagerCodexInspectionConfig struct {
@@ -44,19 +45,21 @@ type ManagerCodexInspectionConfig struct {
 	Schedule ManagerCodexInspectionScheduleConfig `json:"schedule"`
 	// TargetTypes is the canonical multi-provider selection. TargetType remains
 	// available for legacy callers and is always normalized to the first target.
-	TargetTypes          []string `json:"targetTypes,omitempty"`
-	TargetType           string   `json:"targetType,omitempty"`
-	Workers              int      `json:"workers,omitempty"`
-	DeleteWorkers        int      `json:"deleteWorkers,omitempty"`
-	Timeout              int      `json:"timeout,omitempty"`
-	Retries              int      `json:"retries,omitempty"`
-	UserAgent            string   `json:"userAgent,omitempty"`
-	XAIInferenceModel    string   `json:"xaiInferenceModel,omitempty"`
-	XAIInferencePrompt   string   `json:"xaiInferencePrompt,omitempty"`
-	UsedPercentThreshold float64  `json:"usedPercentThreshold,omitempty"`
-	SampleSize           int      `json:"sampleSize,omitempty"`
-	AutoActionMode       string   `json:"autoActionMode,omitempty"`
-	AutoRecoverEnabled   bool     `json:"autoRecoverEnabled,omitempty"`
+	TargetTypes           []string `json:"targetTypes,omitempty"`
+	TargetType            string   `json:"targetType,omitempty"`
+	Workers               int      `json:"workers,omitempty"`
+	DeleteWorkers         int      `json:"deleteWorkers,omitempty"`
+	Timeout               int      `json:"timeout,omitempty"`
+	Retries               int      `json:"retries,omitempty"`
+	UserAgent             string   `json:"userAgent,omitempty"`
+	XAIInferenceUserAgent string   `json:"xaiInferenceUserAgent,omitempty"`
+	XAIInferenceEnabled   bool     `json:"xaiInferenceEnabled,omitempty"`
+	XAIInferenceModel     string   `json:"xaiInferenceModel,omitempty"`
+	XAIInferencePrompt    string   `json:"xaiInferencePrompt,omitempty"`
+	UsedPercentThreshold  float64  `json:"usedPercentThreshold,omitempty"`
+	SampleSize            int      `json:"sampleSize,omitempty"`
+	AutoActionMode        string   `json:"autoActionMode,omitempty"`
+	AutoRecoverEnabled    bool     `json:"autoRecoverEnabled,omitempty"`
 }
 
 type ManagerCodexInspectionScheduleConfig struct {
@@ -155,18 +158,20 @@ func DefaultCodexInspectionConfig() ManagerCodexInspectionConfig {
 			Mode:            CodexInspectionScheduleModeInterval,
 			IntervalMinutes: 60,
 		},
-		TargetType:           CodexInspectionTargetCodex,
-		Workers:              4,
-		DeleteWorkers:        4,
-		Timeout:              15000,
-		Retries:              0,
-		UserAgent:            "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
-		XAIInferenceModel:    DefaultXAIInspectionModel,
-		XAIInferencePrompt:   DefaultXAIInspectionPrompt,
-		UsedPercentThreshold: 100,
-		SampleSize:           0,
-		AutoActionMode:       CodexInspectionAutoActionNone,
-		AutoRecoverEnabled:   false,
+		TargetType:            CodexInspectionTargetCodex,
+		Workers:               4,
+		DeleteWorkers:         4,
+		Timeout:               15000,
+		Retries:               0,
+		UserAgent:             "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+		XAIInferenceUserAgent: DefaultXAIInferenceUserAgent,
+		XAIInferenceEnabled:   false,
+		XAIInferenceModel:     DefaultXAIInspectionModel,
+		XAIInferencePrompt:    DefaultXAIInspectionPrompt,
+		UsedPercentThreshold:  100,
+		SampleSize:            0,
+		AutoActionMode:        CodexInspectionAutoActionNone,
+		AutoRecoverEnabled:    false,
 	}
 }
 
@@ -201,6 +206,8 @@ func NormalizeCodexInspectionConfig(input ManagerCodexInspectionConfig, fallback
 		next.Retries = input.Retries
 	}
 	next.UserAgent = valueOr(input.UserAgent, base.UserAgent)
+	next.XAIInferenceUserAgent = valueOr(input.XAIInferenceUserAgent, valueOr(base.XAIInferenceUserAgent, DefaultXAIInferenceUserAgent))
+	next.XAIInferenceEnabled = input.XAIInferenceEnabled
 	next.XAIInferenceModel = valueOr(input.XAIInferenceModel, valueOr(base.XAIInferenceModel, DefaultXAIInspectionModel))
 	next.XAIInferencePrompt = valueOr(input.XAIInferencePrompt, valueOr(base.XAIInferencePrompt, DefaultXAIInspectionPrompt))
 	next.UsedPercentThreshold = normalizePercent(input.UsedPercentThreshold, base.UsedPercentThreshold)

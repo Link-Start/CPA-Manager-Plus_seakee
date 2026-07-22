@@ -163,15 +163,23 @@ func TestValidateCodexInspectionTargetTypes(t *testing.T) {
 func TestCodexInspectionXAIInferenceDefaultsAndOverrides(t *testing.T) {
 	fallback := DefaultCodexInspectionConfig()
 	defaults := NormalizeCodexInspectionConfig(ManagerCodexInspectionConfig{}, fallback)
-	if defaults.XAIInferenceModel != DefaultXAIInspectionModel || defaults.XAIInferencePrompt != DefaultXAIInspectionPrompt {
-		t.Fatalf("xAI inference defaults = %q / %q", defaults.XAIInferenceModel, defaults.XAIInferencePrompt)
+	if defaults.XAIInferenceEnabled {
+		t.Fatal("xAI inference should be disabled by default")
+	}
+	if defaults.XAIInferenceUserAgent != DefaultXAIInferenceUserAgent || defaults.XAIInferenceModel != DefaultXAIInspectionModel || defaults.XAIInferencePrompt != DefaultXAIInspectionPrompt {
+		t.Fatalf("xAI inference defaults = %q / %q / %q", defaults.XAIInferenceUserAgent, defaults.XAIInferenceModel, defaults.XAIInferencePrompt)
 	}
 
 	custom := NormalizeCodexInspectionConfig(ManagerCodexInspectionConfig{
-		XAIInferenceModel:  " grok-custom ",
-		XAIInferencePrompt: " Reply briefly. ",
+		XAIInferenceEnabled:   true,
+		XAIInferenceUserAgent: " xai-custom-agent ",
+		XAIInferenceModel:     " grok-custom ",
+		XAIInferencePrompt:    " Reply briefly. ",
 	}, fallback)
-	if custom.XAIInferenceModel != "grok-custom" || custom.XAIInferencePrompt != "Reply briefly." {
-		t.Fatalf("xAI inference overrides = %q / %q", custom.XAIInferenceModel, custom.XAIInferencePrompt)
+	if !custom.XAIInferenceEnabled {
+		t.Fatal("xAI inference override was not enabled")
+	}
+	if custom.XAIInferenceUserAgent != "xai-custom-agent" || custom.XAIInferenceModel != "grok-custom" || custom.XAIInferencePrompt != "Reply briefly." {
+		t.Fatalf("xAI inference overrides = %q / %q / %q", custom.XAIInferenceUserAgent, custom.XAIInferenceModel, custom.XAIInferencePrompt)
 	}
 }

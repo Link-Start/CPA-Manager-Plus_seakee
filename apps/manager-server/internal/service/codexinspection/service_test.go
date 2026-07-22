@@ -22,6 +22,8 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/testutil"
 )
 
+const xaiCompletedInferenceAPICallResponse = `{"status_code":200,"body":{"object":"response","status":"completed","error":null,"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}}`
+
 func TestXAIClassificationMatchesSharedFixtures(t *testing.T) {
 	type fixtureCase struct {
 		Name       string `json:"name"`
@@ -121,9 +123,135 @@ func TestRunPersistsLogsResultsAndDetail(t *testing.T) {
 	}
 }
 
+func TestRunXAISkipsInferenceWhenDisabled(t *testing.T) {
+	requestedURLs := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"files":[{"name":"xai-auth.json","auth_index":"xai-1","provider":"xai","auth_kind":"oauth","account":"xai@example.com","user":{"id":"user-1"}}]}`))
+		case r.URL.Path == "/v0/management/api-call" && r.Method == http.MethodPost:
+			var payload struct {
+				Method string `json:"method"`
+				URL    string `json:"url"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode api-call payload: %v", err)
+			}
+			requestedURLs = append(requestedURLs, payload.URL)
+			if strings.HasSuffix(payload.URL, "/responses") {
+				t.Fatalf("disabled xAI inference requested %s", payload.URL)
+			}
+			if strings.Contains(payload.URL, "format=credits") {
+				_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"credit_usage_percent":25,"current_period":{"end":"2026-07-22T00:00:00Z"}}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"monthly_limit":10000,"used":4000,"billing_period_end":"2026-08-01T00:00:00Z"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	db := newCodexInspectionTestStore(t)
+	managerCfg := newCodexInspectionManagerConfig(upstream.URL)
+	managerCfg.CodexInspection.TargetType = "xai"
+	managerCfg.CodexInspection.XAIInferenceEnabled = false
+	managerCfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionNone
+	if err := db.SaveManagerConfig(context.Background(), managerCfg); err != nil {
+		t.Fatalf("save manager config: %v", err)
+	}
+
+	result, err := newCodexInspectionTestService(t, db).Run(context.Background(), RunRequest{TriggerType: "manual"})
+	if err != nil {
+		t.Fatalf("run xAI inspection: %v", err)
+	}
+	if len(requestedURLs) != 2 {
+		t.Fatalf("requested URLs = %#v, want weekly and monthly billing only", requestedURLs)
+	}
+	if len(result.Results) != 1 || result.Results[0].Action != "keep" || result.Results[0].ErrorKind != "billing_healthy" {
+		t.Fatalf("xAI billing-only result = %#v", result.Results)
+	}
+	if result.Results[0].StatusCode == nil || *result.Results[0].StatusCode != http.StatusOK {
+		t.Fatalf("xAI billing-only status code = %#v, want %d", result.Results[0].StatusCode, http.StatusOK)
+	}
+	if result.Results[0].AutoRecoverEligible {
+		t.Fatalf("billing-only inspection enabled auto recovery: %#v", result.Results[0])
+	}
+}
+
+func TestRunXAIBillingOnlyPrioritizesBlockingFailureOverPartialSummary(t *testing.T) {
+	requestedURLs := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"files":[{"name":"xai-auth.json","auth_index":"xai-1","provider":"xai","account":"xai@example.com"}]}`))
+		case r.URL.Path == "/v0/management/api-call" && r.Method == http.MethodPost:
+			var payload struct {
+				URL string `json:"url"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode api-call payload: %v", err)
+			}
+			requestedURLs = append(requestedURLs, payload.URL)
+			if strings.Contains(payload.URL, "format=credits") {
+				_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"credit_usage_percent":3,"current_period":{"end":"2026-07-29T00:00:00Z"}}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status_code":402,"body":{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	db := newCodexInspectionTestStore(t)
+	managerCfg := newCodexInspectionManagerConfig(upstream.URL)
+	managerCfg.CodexInspection.TargetType = "xai"
+	managerCfg.CodexInspection.XAIInferenceEnabled = false
+	managerCfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionNone
+	if err := db.SaveManagerConfig(context.Background(), managerCfg); err != nil {
+		t.Fatalf("save manager config: %v", err)
+	}
+
+	result, err := newCodexInspectionTestService(t, db).Run(context.Background(), RunRequest{TriggerType: "manual"})
+	if err != nil {
+		t.Fatalf("run xAI inspection: %v", err)
+	}
+	if len(requestedURLs) != 2 {
+		t.Fatalf("requested URLs = %#v, want weekly and monthly billing only", requestedURLs)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("xAI result = %#v", result.Results)
+	}
+	item := result.Results[0]
+	if item.Action != "disable" || item.ErrorKind != "spending_limit" || item.StatusCode == nil || *item.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("xAI partial blocking result = %#v", item)
+	}
+	if len(item.QuotaWindows) != 1 || item.QuotaWindows[0].ID != "xai-weekly" {
+		t.Fatalf("xAI partial blocking quota windows = %#v", item.QuotaWindows)
+	}
+}
+
+func TestResolveXAIBasicInspectionResultClassifiesNonBlockingPartialBilling(t *testing.T) {
+	usage := float64(25)
+	result := resolveXAIBasicInspectionResult(
+		model.CodexInspectionResult{},
+		xaiBillingProbe{
+			Summary:  &xaiBillingSummary{UsagePercent: &usage, HasWeeklyData: true},
+			Failures: []xaiProbeDecision{*xaiDecision(http.StatusServiceUnavailable, "upstream_error", "monthly billing unavailable")},
+			Partial:  true,
+			Healthy:  true,
+		},
+	)
+	if result.Action != "keep" || result.ErrorKind != "billing_partial" || result.ActionReason != "monitoring.xai_inspection_reason_billing_partial" {
+		t.Fatalf("xAI partial billing result = %#v", result)
+	}
+}
+
 func TestRunXAIUsesBillingAndInferenceEndpoints(t *testing.T) {
 	const customModel = "grok-custom"
 	const customPrompt = "Return a short health response."
+	const customUserAgent = "xai-custom-agent"
 	requestedURLs := make([]string, 0, 3)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -157,21 +285,23 @@ func TestRunXAIUsesBillingAndInferenceEndpoints(t *testing.T) {
 				if payload.Method != http.MethodPost {
 					t.Fatalf("xAI inference method = %q, want POST", payload.Method)
 				}
-				if payload.Header["User-Agent"] != xaiInferenceUserAgent {
-					t.Fatalf("xAI inference user agent = %q, want %q", payload.Header["User-Agent"], xaiInferenceUserAgent)
+				if payload.Header["Accept"] != "application/json" {
+					t.Fatalf("xAI inference accept = %q, want application/json", payload.Header["Accept"])
+				}
+				if payload.Header["User-Agent"] != customUserAgent {
+					t.Fatalf("xAI inference user agent = %q, want %q", payload.Header["User-Agent"], customUserAgent)
 				}
 				var requestData map[string]any
 				if err := json.Unmarshal([]byte(payload.Data), &requestData); err != nil {
 					t.Fatalf("decode xAI inference data: %v", err)
 				}
-				if requestData["model"] != customModel || requestData["stream"] != true {
+				if requestData["model"] != customModel || requestData["stream"] != false {
 					t.Fatalf("xAI inference data = %#v", requestData)
 				}
-				input, _ := requestData["input"].([]any)
-				if len(input) != 1 || !strings.Contains(fmt.Sprint(input[0]), customPrompt) {
+				if requestData["input"] != customPrompt {
 					t.Fatalf("xAI inference prompt = %#v", requestData["input"])
 				}
-				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+				_, _ = w.Write([]byte(xaiCompletedInferenceAPICallResponse))
 				return
 			}
 			if payload.Method != http.MethodGet {
@@ -187,6 +317,7 @@ func TestRunXAIUsesBillingAndInferenceEndpoints(t *testing.T) {
 	db := newCodexInspectionTestStore(t)
 	managerCfg := newCodexInspectionManagerConfig(upstream.URL)
 	managerCfg.CodexInspection.TargetType = "xai"
+	managerCfg.CodexInspection.XAIInferenceUserAgent = customUserAgent
 	managerCfg.CodexInspection.XAIInferenceModel = customModel
 	managerCfg.CodexInspection.XAIInferencePrompt = customPrompt
 	managerCfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionNone
@@ -207,17 +338,8 @@ func TestRunXAIUsesBillingAndInferenceEndpoints(t *testing.T) {
 	if result.Results[0].ErrorKind != "inference_healthy" || len(result.Results[0].QuotaWindows) != 2 {
 		t.Fatalf("xAI inference result = %#v", result.Results[0])
 	}
-}
-
-func TestXAIInferenceCompletionRequiresCompletedStatus(t *testing.T) {
-	if !hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{"status":"completed"}}`) {
-		t.Fatal("completed inference event was not accepted")
-	}
-	if hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{}}`) {
-		t.Fatal("completion event without completed status was accepted")
-	}
-	if hasXAIInferenceCompletion(`data: {"type":"response.completed","response":{"status":"failed"}}`) {
-		t.Fatal("failed inference event was accepted")
+	if result.Results[0].PlanType != "" {
+		t.Fatalf("xAI plan type = %q, want empty", result.Results[0].PlanType)
 	}
 }
 
@@ -228,6 +350,18 @@ func TestResolveXAIInferenceURLMatchesRuntimeUsingAPISemantics(t *testing.T) {
 		wantURL string
 		wantCLI bool
 	}{
+		{
+			name:    "missing auth metadata defaults to cli proxy",
+			file:    authFile{},
+			wantURL: xaiCLIChatProxyBaseURL + "/responses",
+			wantCLI: true,
+		},
+		{
+			name:    "missing auth metadata ignores official default base",
+			file:    authFile{"base_url": xaiOfficialAPIBaseURL},
+			wantURL: xaiCLIChatProxyBaseURL + "/responses",
+			wantCLI: true,
+		},
 		{
 			name:    "oauth defaults to cli proxy",
 			file:    authFile{"auth_kind": "oauth", "base_url": xaiOfficialAPIBaseURL},
@@ -281,7 +415,7 @@ func TestRunCombinedTargetsSamplesEachCredentialProvider(t *testing.T) {
 				_, _ = w.Write([]byte(`{"status_code":200,"body":{"rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":18000}}}}`))
 			case strings.HasSuffix(payload.URL, "/responses"):
 				requestedInference++
-				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+				_, _ = w.Write([]byte(xaiCompletedInferenceAPICallResponse))
 			case strings.Contains(payload.URL, "/billing"):
 				_, _ = w.Write([]byte(`{"status_code":200,"body":{"config":{"credit_usage_percent":20,"current_period":{"end":"2026-07-22T00:00:00Z"}}}}`))
 			default:
@@ -339,7 +473,7 @@ func TestRunXAIFallsBackToOfficialAPIIdentityHealth(t *testing.T) {
 				if payload.Method != http.MethodPost {
 					t.Fatalf("xAI inference method = %q, want POST", payload.Method)
 				}
-				_, _ = w.Write([]byte(`{"status_code":200,"body":"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"}`))
+				_, _ = w.Write([]byte(xaiCompletedInferenceAPICallResponse))
 				return
 			}
 			if payload.Method != http.MethodGet {
@@ -386,6 +520,92 @@ func TestRunXAIFallsBackToOfficialAPIIdentityHealth(t *testing.T) {
 	}
 	if item.UsedPercent != nil || len(item.QuotaWindows) != 0 || item.AutoRecoverEligible {
 		t.Fatalf("xAI official API synthesized quota or recovery = %#v", item)
+	}
+}
+
+func TestResolveXAIBasicInspectionResultUsesOfficialAPIHealthyKind(t *testing.T) {
+	result := resolveXAIBasicInspectionResult(
+		model.CodexInspectionResult{},
+		xaiBillingProbe{OfficialAPIHealthy: true},
+	)
+	if result.Action != "keep" || result.ErrorKind != "official_api_healthy" || result.ActionReason != "monitoring.xai_inspection_reason_official_api_healthy" {
+		t.Fatalf("official API health result = %#v", result)
+	}
+}
+
+func TestXAISummaryWindowsSkipsZeroOnDemandCapWithoutUsage(t *testing.T) {
+	zero := float64(0)
+	windows := xaiSummaryWindows(&xaiBillingSummary{OnDemandCapCents: &zero})
+	for _, window := range windows {
+		if window.ID == "xai-on-demand" {
+			t.Fatalf("zero on-demand cap produced quota window: %#v", windows)
+		}
+	}
+}
+
+func TestXAISummaryWindowsDoesNotCreateMonthlyWindowFromOnDemandOnlyData(t *testing.T) {
+	capCents := float64(5000)
+	usedPercent := float64(20)
+	windows := xaiSummaryWindows(&xaiBillingSummary{
+		OnDemandCapCents:    &capCents,
+		OnDemandUsedPercent: &usedPercent,
+		HasMonthlyData:      true,
+		BillingPeriodEnd:    "2026-08-01T00:00:00Z",
+	})
+	if len(windows) != 1 || windows[0].ID != "xai-on-demand" {
+		t.Fatalf("on-demand-only windows = %#v, want on-demand only", windows)
+	}
+}
+
+func TestParseXAIBillingSummaryDoesNotCreateMonthlyWindowFromWeeklyZeroOnDemandData(t *testing.T) {
+	summary := parseXAIBillingSummary(map[string]any{
+		"currentPeriod": map[string]any{
+			"type": "USAGE_PERIOD_TYPE_WEEKLY",
+			"end":  "2026-07-29T00:00:00+00:00",
+		},
+		"onDemandCap":      map[string]any{"val": 0},
+		"onDemandUsed":     map[string]any{"val": 0},
+		"billingPeriodEnd": "2026-07-29T00:00:00+00:00",
+	})
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	windows := xaiSummaryWindows(summary)
+	if len(windows) != 1 || windows[0].ID != "xai-weekly" {
+		t.Fatalf("weekly zero on-demand windows = %#v, want weekly only", windows)
+	}
+}
+
+func TestHasCompletedXAIInferenceOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		body any
+		want bool
+	}{
+		{
+			name: "completed output",
+			body: map[string]any{
+				"status": "completed",
+				"error":  nil,
+				"output": []any{map[string]any{
+					"type":    "message",
+					"content": []any{map[string]any{"type": "output_text", "text": "OK"}},
+				}},
+			},
+			want: true,
+		},
+		{name: "empty body", body: nil, want: false},
+		{name: "incomplete status", body: map[string]any{"status": "incomplete"}, want: false},
+		{name: "completed without output", body: map[string]any{"status": "completed", "output": []any{}}, want: false},
+		{name: "completed with error", body: map[string]any{"status": "completed", "error": map[string]any{"message": "failed"}}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := hasCompletedXAIInferenceOutput(tc.body, "")
+			if got != tc.want {
+				t.Fatalf("hasCompletedXAIInferenceOutput() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -514,7 +734,7 @@ func TestRunXAIFailedBillingNeverReportsHealthyAndRetriesTransientFailures(t *te
 	}{
 		{name: "rate limited", apiCallBody: `{"status_code":429,"body":{"error":"too many requests"}}`, classification: "rate_limited", statusCode: http.StatusTooManyRequests},
 		{name: "upstream error", apiCallBody: `{"status_code":503,"body":{"error":"service unavailable"}}`, classification: "upstream_error", statusCode: http.StatusServiceUnavailable},
-		{name: "empty payload", apiCallBody: `{"status_code":200,"body":{"config":{}}}`, classification: "protocol_changed"},
+		{name: "empty payload", apiCallBody: `{"status_code":200,"body":{"config":{}}}`, classification: "protocol_changed", statusCode: http.StatusOK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -544,8 +764,9 @@ func TestRunXAIFailedBillingNeverReportsHealthyAndRetriesTransientFailures(t *te
 			if err != nil {
 				t.Fatalf("run xAI inspection: %v", err)
 			}
-			if requestCount != 6 {
-				t.Fatalf("billing and inference requests = %d, want 6 across two attempts", requestCount)
+			wantRequestCount := 6
+			if requestCount != wantRequestCount {
+				t.Fatalf("billing and inference requests = %d, want %d", requestCount, wantRequestCount)
 			}
 			if len(detail.Results) != 1 {
 				t.Fatalf("results = %#v", detail.Results)
@@ -556,9 +777,6 @@ func TestRunXAIFailedBillingNeverReportsHealthyAndRetriesTransientFailures(t *te
 			}
 			if tc.statusCode > 0 && (result.StatusCode == nil || *result.StatusCode != tc.statusCode) {
 				t.Fatalf("status code = %#v, want %d", result.StatusCode, tc.statusCode)
-			}
-			if tc.classification == "protocol_changed" && (result.StatusCode == nil || *result.StatusCode != http.StatusOK) {
-				t.Fatalf("protocol status code = %#v, want 200", result.StatusCode)
 			}
 		})
 	}
@@ -2117,6 +2335,7 @@ func newCodexInspectionManagerConfig(upstreamURL string) store.ManagerConfig {
 	}
 	cfg.CodexInspection.Enabled = &enabled
 	cfg.CodexInspection.AutoActionMode = model.CodexInspectionAutoActionDelete
+	cfg.CodexInspection.XAIInferenceEnabled = true
 	cfg.CodexInspection.Workers = 1
 	cfg.CodexInspection.DeleteWorkers = 1
 	return cfg
