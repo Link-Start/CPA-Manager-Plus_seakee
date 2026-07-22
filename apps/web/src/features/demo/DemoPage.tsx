@@ -2,14 +2,13 @@ import { useLayoutEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { apiClient } from '@/services/api/client';
 import { normalizeConfigResponse } from '@/services/api/transformers';
-import {
-  useAuthStore,
-  useConfigStore,
-  useModelsStore,
-  useUsageServiceStore,
-} from '@/stores';
+import { useAuthStore, useConfigStore, useModelsStore, useUsageServiceStore } from '@/stores';
 import { DemoRouteAdapter } from './DemoRouteAdapter';
-import { getDemoProviderModels, getDemoRawConfig } from '@/features/demo/demoFixtures';
+import {
+  getDemoProviderModels,
+  getDemoRawConfig,
+  resetDemoCredentialRefresh,
+} from '@/features/demo/demoFixtures';
 import {
   DEMO_API_BASE,
   DEMO_MANAGEMENT_KEY,
@@ -82,6 +81,7 @@ export function DemoPage() {
     const demoModels = getDemoProviderModels();
     const restoreDemoPersistIsolation = enableDemoPersistIsolation();
 
+    resetDemoCredentialRefresh();
     setDemoMode(true);
     apiClient.setConfig({
       apiBase: DEMO_API_BASE,
@@ -126,6 +126,7 @@ export function DemoPage() {
     }));
 
     return () => {
+      resetDemoCredentialRefresh();
       setDemoMode(false);
       useAuthStore.setState(authSnapshot);
       useConfigStore.setState(configSnapshot);

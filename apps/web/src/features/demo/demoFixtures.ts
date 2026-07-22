@@ -265,9 +265,7 @@ const initialRawConfig: Record<string, unknown> = {
       // Named channel that already includes an ordinal (not multi-key disambiguation).
       name: 'anyrouter.top #1',
       'base-url': 'https://anyrouter.top/v1',
-      'api-key-entries': [
-        { 'api-key': 'sk-anyrouter-demo-key', 'auth-index': 'anyrouter-auth-1' },
-      ],
+      'api-key-entries': [{ 'api-key': 'sk-anyrouter-demo-key', 'auth-index': 'anyrouter-auth-1' }],
       models: [{ name: 'gpt-4.1-mini', alias: 'AnyRouter Mini' }],
       priority: 60,
     },
@@ -289,8 +287,27 @@ const initialRawConfig: Record<string, unknown> = {
 };
 
 const demoAuthFiles: AuthFilesResponse = {
-  total: 18,
+  total: 19,
   files: [
+    {
+      id: 'codex-upgrade-demo-runtime',
+      name: 'codex-upgrade-demo.json',
+      type: 'codex',
+      provider: 'codex',
+      authIndex: 'codex-upgrade-demo-01',
+      disabled: false,
+      status: 'healthy',
+      statusMessage: 'Ready',
+      size: 4612,
+      modified: now() - 4 * hour,
+      last_refresh: new Date(now() - 4 * hour).toISOString(),
+      account_snapshot: 'Upgrade Demo',
+      account_id: 'acct_codex_upgrade_demo',
+      plan_type: 'free',
+      id_token: { plan_type: 'free' },
+      success: 318,
+      failed: 2,
+    },
     {
       name: 'codex-team-01.json',
       type: 'codex',
@@ -555,6 +572,39 @@ const demoAuthFiles: AuthFilesResponse = {
       failed: 3,
     },
   ],
+};
+
+const DEMO_CODEX_UPGRADE_AUTH_ID = 'codex-upgrade-demo-runtime';
+const DEMO_CODEX_UPGRADE_FILE_NAME = 'codex-upgrade-demo.json';
+const DEMO_CODEX_UPGRADE_POLL_COUNT = 2;
+
+let demoCodexUpgradePollsRemaining = 0;
+let demoCodexUpgradeCompletedAt: string | null = null;
+
+export const requestDemoCredentialRefresh = (selector: string): boolean => {
+  const normalizedSelector = selector.trim();
+  if (
+    normalizedSelector !== DEMO_CODEX_UPGRADE_AUTH_ID &&
+    normalizedSelector !== DEMO_CODEX_UPGRADE_FILE_NAME
+  ) {
+    return false;
+  }
+
+  demoCodexUpgradePollsRemaining = DEMO_CODEX_UPGRADE_POLL_COUNT;
+  return true;
+};
+
+export const advanceDemoCredentialRefresh = (): void => {
+  if (demoCodexUpgradePollsRemaining <= 0) return;
+  demoCodexUpgradePollsRemaining -= 1;
+  if (demoCodexUpgradePollsRemaining === 0) {
+    demoCodexUpgradeCompletedAt = new Date(now()).toISOString();
+  }
+};
+
+export const resetDemoCredentialRefresh = (): void => {
+  demoCodexUpgradePollsRemaining = 0;
+  demoCodexUpgradeCompletedAt = null;
 };
 
 const demoPlugins: PluginListResponse = {
@@ -3235,7 +3285,20 @@ const demoAccountCandidates: AccountActionCandidate[] = [
 
 export const getDemoRawConfig = () => clone(initialRawConfig);
 export const getDemoProviderModels = () => clone(demoProviderModels);
-export const getDemoAuthFiles = () => clone(demoAuthFiles);
+export const getDemoAuthFiles = (): AuthFilesResponse => {
+  const response = clone(demoAuthFiles);
+  if (!demoCodexUpgradeCompletedAt) return response;
+
+  const target = response.files.find((file) => file.id === DEMO_CODEX_UPGRADE_AUTH_ID);
+  if (!target) return response;
+
+  target.plan_type = 'plus';
+  target.id_token = { plan_type: 'plus' };
+  target.last_refresh = demoCodexUpgradeCompletedAt;
+  target.modified = Date.parse(demoCodexUpgradeCompletedAt);
+  target.statusMessage = 'Ready';
+  return response;
+};
 export const getDemoPlugins = () => clone(demoPlugins);
 export const getDemoPluginStore = () => clone(demoPluginStore);
 export const getDemoManagerConfig = () => clone(demoManagerConfig);
