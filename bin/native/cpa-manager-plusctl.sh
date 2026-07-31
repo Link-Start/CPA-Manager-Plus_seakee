@@ -7,12 +7,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 default_run_dir="${script_dir}/run"
 default_log_dir="${script_dir}/logs"
 binary="${CPA_MANAGER_PLUS_BIN:-"${script_dir}/${app_name}"}"
+runtime_mode_file="${script_dir}/.cpamp-runtime-mode"
 run_dir="${CPA_MANAGER_PLUS_RUN_DIR:-"${default_run_dir}"}"
 log_dir="${CPA_MANAGER_PLUS_LOG_DIR:-"${default_log_dir}"}"
 pid_file="${CPA_MANAGER_PLUS_PID_FILE:-"${run_dir}/${app_name}.pid"}"
 log_file="${CPA_MANAGER_PLUS_LOG_FILE:-"${log_dir}/${app_name}.log"}"
 manage_run_dir="false"
 manage_log_dir="false"
+graceful_stop_timeout_seconds=45
 
 if [ -z "${CPA_MANAGER_PLUS_RUN_DIR:-}" ]; then
   manage_run_dir="true"
@@ -46,6 +48,9 @@ Environment overrides:
   CPA_MANAGER_PLUS_LOG_DIR   Log directory, default: ./logs
   CPA_MANAGER_PLUS_PID_FILE  PID file path
   CPA_MANAGER_PLUS_LOG_FILE  Log file path
+
+Packages containing .cpamp-runtime-mode start the managed runtime by default.
+Pass an explicit binary argument such as "serve" to override the package default.
 EOF
 }
 
@@ -168,6 +173,46 @@ process_command_line() {
   ps -ww -p "${pid}" -o command= 2>/dev/null | sed 's/^[[:space:]]*//'
 }
 
+managed_cpamp_component_root() {
+  local data_dir="${CPA_MANAGER_RUNTIME_DATA_DIR:-${USAGE_DATA_DIR:-${script_dir}/data}}"
+  local component_dir="${CPA_MANAGER_RUNTIME_COMPONENT_DIR:-}"
+
+  if [[ "${data_dir}" != /* ]]; then
+    data_dir="${script_dir}/${data_dir}"
+  fi
+  if [ -z "${component_dir}" ]; then
+    component_dir="${data_dir}/runtime/components"
+  elif [[ "${component_dir}" != /* ]]; then
+    component_dir="${script_dir}/${component_dir}"
+  fi
+  resolve_path "${component_dir}/cpamp"
+}
+
+is_managed_cpamp_component_binary() {
+  local candidate="$1"
+  local candidate_path managed_root
+
+  candidate_path="$(resolve_path "${candidate}")"
+  managed_root="$(managed_cpamp_component_root)"
+  [ -n "${candidate_path}" ] && [ -n "${managed_root}" ] || return 1
+  case "${candidate_path}" in
+    "${managed_root}"/*) return 0 ;;
+  esac
+  return 1
+}
+
+command_uses_managed_cpamp_component() {
+  local command_line="$1"
+  local managed_root
+
+  managed_root="$(managed_cpamp_component_root)"
+  [ -n "${managed_root}" ] || return 1
+  case "${command_line}" in
+    "${managed_root}"/*) return 0 ;;
+  esac
+  return 1
+}
+
 set_pid_record_state() {
   local current_binary current_command current_start
 
@@ -204,12 +249,22 @@ set_pid_record_state() {
       return
     fi
 
+    if is_managed_cpamp_component_binary "${current_binary}"; then
+      record_state="active"
+      return
+    fi
+
     record_state="conflict"
     return
   fi
 
   current_command="$(process_command_line "${record_pid}")"
   if [ -n "${current_command}" ] && [ -n "${record_command}" ] && [ "${current_command}" = "${record_command}" ]; then
+    record_state="active"
+    return
+  fi
+
+  if [ -n "${current_command}" ] && command_uses_managed_cpamp_component "${current_command}"; then
     record_state="active"
     return
   fi
@@ -409,6 +464,7 @@ write_pid_record() {
 
 start_app() {
   local launch_binary="${binary}"
+  local -a launch_args=("$@")
   if [[ "${launch_binary}" != /* ]]; then
     launch_binary="$(resolve_path "${launch_binary}")"
   fi
@@ -444,8 +500,29 @@ start_app() {
 
   rm -f "${pid_file}"
 
+  if [ "${#launch_args[@]}" -eq 0 ] && [ -f "${runtime_mode_file}" ]; then
+    local runtime_mode
+    runtime_mode="$(tr -d '[:space:]' <"${runtime_mode_file}")"
+    case "${runtime_mode}" in
+      integrated | slim)
+        if [ -z "${CPA_MANAGER_DEPLOYMENT_MODE:-}" ]; then
+          export CPA_MANAGER_DEPLOYMENT_MODE="${runtime_mode}"
+        fi
+        launch_args=(runtime)
+        ;;
+      *)
+        echo "Invalid package runtime mode: ${runtime_mode}" >&2
+        exit 1
+        ;;
+    esac
+  fi
+
   local pid
-  (cd "${script_dir}" && exec nohup "${launch_binary}" "$@") >>"${log_file}" 2>&1 &
+  if [ "${#launch_args[@]}" -eq 0 ]; then
+    (cd "${script_dir}" && exec nohup "${launch_binary}") >>"${log_file}" 2>&1 &
+  else
+    (cd "${script_dir}" && exec nohup "${launch_binary}" "${launch_args[@]}") >>"${log_file}" 2>&1 &
+  fi
   pid="$!"
 
   sleep 1
@@ -485,16 +562,24 @@ stop_app() {
   local pid="${record_pid}"
 
   kill "${pid}"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
+  local elapsed=0
+  while [ "${elapsed}" -lt "${graceful_stop_timeout_seconds}" ]; do
     if ! recorded_instance_running; then
       rm -f "${pid_file}"
       echo "${app_name} stopped"
       return 0
     fi
     sleep 1
+    elapsed=$((elapsed + 1))
   done
 
-  echo "${app_name} did not stop within 10 seconds. PID: ${pid}" >&2
+  if ! recorded_instance_running; then
+    rm -f "${pid_file}"
+    echo "${app_name} stopped"
+    return 0
+  fi
+
+  echo "${app_name} did not stop within ${graceful_stop_timeout_seconds} seconds. PID: ${pid}" >&2
   exit 1
 }
 

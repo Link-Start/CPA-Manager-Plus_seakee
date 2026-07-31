@@ -7,12 +7,15 @@ $DefaultLogDir = Join-Path $ScriptDir 'logs'
 $RunDirIsDefault = -not $env:CPA_MANAGER_PLUS_RUN_DIR
 $LogDirIsDefault = -not $env:CPA_MANAGER_PLUS_LOG_DIR
 $Binary = if ($env:CPA_MANAGER_PLUS_BIN) { $env:CPA_MANAGER_PLUS_BIN } else { Join-Path $ScriptDir "$AppName.exe" }
+$RuntimeModeFile = Join-Path $ScriptDir '.cpamp-runtime-mode'
 $RunDir = if ($env:CPA_MANAGER_PLUS_RUN_DIR) { $env:CPA_MANAGER_PLUS_RUN_DIR } else { $DefaultRunDir }
 $LogDir = if ($env:CPA_MANAGER_PLUS_LOG_DIR) { $env:CPA_MANAGER_PLUS_LOG_DIR } else { $DefaultLogDir }
 $PidFile = if ($env:CPA_MANAGER_PLUS_PID_FILE) { $env:CPA_MANAGER_PLUS_PID_FILE } else { Join-Path $RunDir "$AppName.pid" }
 $LogFile = if ($env:CPA_MANAGER_PLUS_LOG_FILE) { $env:CPA_MANAGER_PLUS_LOG_FILE } else { Join-Path $LogDir "$AppName.log" }
 $ErrLogFile = if ($env:CPA_MANAGER_PLUS_ERR_LOG_FILE) { $env:CPA_MANAGER_PLUS_ERR_LOG_FILE } else { Join-Path $LogDir "$AppName.err.log" }
 $CurrentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$GracefulStopTimeoutSeconds = 50
+$ForcedStopTimeoutSeconds = 5
 
 function Show-Usage {
   Write-Host @"
@@ -35,6 +38,8 @@ Environment overrides:
   CPA_MANAGER_PLUS_ERR_LOG_FILE stderr log file path
 
 Note:
+  Packages containing .cpamp-runtime-mode start the managed runtime by default.
+  Pass an explicit binary argument such as "serve" to override the package default.
   Prefer environment variables for runtime configuration. Windows argument
   forwarding follows Start-Process parsing and may be shell-dependent for
   complex values with spaces or quotes.
@@ -528,6 +533,23 @@ function Prepare-RuntimePaths {
   Prepare-PrivateFile -Path $ErrLogFile
 }
 
+function Resolve-AppArgs {
+  param([string[]]$AppArgs)
+
+  if ($AppArgs.Count -gt 0 -or -not (Test-Path -LiteralPath $RuntimeModeFile)) {
+    return @($AppArgs)
+  }
+
+  $runtimeMode = (Get-Content -LiteralPath $RuntimeModeFile -Raw).Trim().ToLowerInvariant()
+  if ($runtimeMode -notin @('integrated', 'slim')) {
+    throw "Invalid package runtime mode: $runtimeMode"
+  }
+  if (-not $env:CPA_MANAGER_DEPLOYMENT_MODE) {
+    $env:CPA_MANAGER_DEPLOYMENT_MODE = $runtimeMode
+  }
+  return @('runtime')
+}
+
 function Start-App {
   param([string[]]$AppArgs)
 
@@ -557,7 +579,8 @@ function Start-App {
   Clear-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 
-  $processId = Start-DetachedProcess -AppArgs $AppArgs
+  $effectiveArgs = @(Resolve-AppArgs -AppArgs $AppArgs)
+  $processId = Start-DetachedProcess -AppArgs $effectiveArgs
   Start-Sleep -Seconds 1
 
   if ((Write-PidRecord -ProcessId $processId) -and (Get-PidRecordState).State -eq 'active') {
@@ -567,9 +590,30 @@ function Start-App {
     return
   }
 
-  Stop-Process -Id $processId -ErrorAction SilentlyContinue
+  Stop-ProcessTree -ProcessId $processId -Force
   Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
   Write-Error "$AppName failed to start. Check logs: $LogFile and $ErrLogFile"
+}
+
+function Stop-ProcessTree {
+  param(
+    [int]$ProcessId,
+    [switch]$Force
+  )
+
+  $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+  if (Test-Path -LiteralPath $taskkill) {
+    $taskkillArgs = @('/PID', [string]$ProcessId, '/T')
+    if ($Force) {
+      $taskkillArgs += '/F'
+    }
+    & $taskkill @taskkillArgs | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      return
+    }
+  }
+
+  Stop-Process -Id $ProcessId -Force:$Force -ErrorAction SilentlyContinue
 }
 
 function Stop-App {
@@ -594,8 +638,8 @@ function Stop-App {
     }
   }
 
-  Stop-Process -Id $state.Snapshot.Pid
-  for ($i = 0; $i -lt 10; $i++) {
+  Stop-ProcessTree -ProcessId $state.Snapshot.Pid
+  for ($i = 0; $i -lt $GracefulStopTimeoutSeconds; $i++) {
     Start-Sleep -Seconds 1
     if ((Get-PidRecordState).State -ne 'active') {
       Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
@@ -604,7 +648,18 @@ function Stop-App {
     }
   }
 
-  throw "$AppName did not stop within 10 seconds. PID: $($state.Snapshot.Pid)"
+  Stop-ProcessTree -ProcessId $state.Snapshot.Pid -Force
+  for ($i = 0; $i -lt $ForcedStopTimeoutSeconds; $i++) {
+    Start-Sleep -Seconds 1
+    if ((Get-PidRecordState).State -ne 'active') {
+      Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+      Write-Host "$AppName stopped"
+      return
+    }
+  }
+
+  $totalStopTimeoutSeconds = $GracefulStopTimeoutSeconds + $ForcedStopTimeoutSeconds
+  throw "$AppName process tree did not stop within $totalStopTimeoutSeconds seconds. PID: $($state.Snapshot.Pid)"
 }
 
 function Show-Status {

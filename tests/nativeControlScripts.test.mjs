@@ -19,13 +19,35 @@ import { afterEach, describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const unixControlScript = path.join(repoRoot, 'bin/native/cpa-manager-plusctl.sh');
 const windowsControlScript = path.join(repoRoot, 'bin/native/cpa-manager-plusctl.ps1');
+const managedRuntimeSource = path.join(
+  repoRoot,
+  'apps/manager-server/internal/managedruntime/runtime.go'
+);
+const managedProcessSource = path.join(
+  repoRoot,
+  'apps/manager-server/internal/managedruntime/process.go'
+);
+const managedProcessWindowsSource = path.join(
+  repoRoot,
+  'apps/manager-server/internal/managedruntime/process_windows.go'
+);
+const replacementWindowsSource = path.join(
+  repoRoot,
+  'apps/manager-server/cmd/cpa-manager-plus/replacement_windows.go'
+);
 const tempDirs = [];
 
 const findExecutable = (candidates) => candidates.find((candidate) => existsSync(candidate));
 
 const windowsPowerShell = () => {
   if (process.env.SystemRoot) {
-    return path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    return path.join(
+      process.env.SystemRoot,
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
+    );
   }
   return 'powershell.exe';
 };
@@ -42,6 +64,48 @@ const runUnixControl = (script, env, args, options = {}) =>
 const runControl = (env, args, options = {}) =>
   runUnixControl(unixControlScript, env, args, options);
 
+const readUnixPidRecord = (pidFile) => {
+  const raw = readFileSync(pidFile, 'utf8').trim();
+  const metadataPid = raw.match(/^pid=([0-9]+)$/m)?.[1];
+  return Number.parseInt(metadataPid || raw, 10);
+};
+
+const writeExecutablePathFakes = (tempDir) => {
+  const fakeBin = path.join(tempDir, 'fake-bin');
+  const processPathFile = path.join(tempDir, 'process-path.txt');
+  const actualRealpath = findExecutable(['/usr/bin/realpath', '/bin/realpath']);
+  mkdirSync(fakeBin, { recursive: true });
+  writeFileSync(
+    path.join(fakeBin, 'realpath'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'case "${1:-}" in',
+      '  /proc/*/exe) cat "${CPA_MANAGER_PLUS_TEST_PROCESS_PATH_FILE}" ;;',
+      actualRealpath
+        ? `  *) exec ${JSON.stringify(actualRealpath)} "$@" ;;`
+        : '  *) printf "%s\\n" "${1:-}" ;;',
+      'esac',
+      '',
+    ].join('\n')
+  );
+  writeFileSync(
+    path.join(fakeBin, 'lsof'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'case "$*" in',
+      '  *"-d txt"*) printf "n%s\\n" "$(cat "${CPA_MANAGER_PLUS_TEST_PROCESS_PATH_FILE}")" ;;',
+      '  *) exit 1 ;;',
+      'esac',
+      '',
+    ].join('\n')
+  );
+  chmodSync(path.join(fakeBin, 'realpath'), 0o755);
+  chmodSync(path.join(fakeBin, 'lsof'), 0o755);
+  return { fakeBin, processPathFile };
+};
+
 const runPowerShell = (args, options = {}) =>
   execFileSync(windowsPowerShell(), ['-NoProfile', '-ExecutionPolicy', 'Bypass', ...args], {
     encoding: 'utf8',
@@ -50,11 +114,15 @@ const runPowerShell = (args, options = {}) =>
 
 const runPowerShellControl = (env, args, options = {}) => {
   try {
-    return execFileSync(windowsPowerShell(), ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', windowsControlScript, ...args], {
-      env,
-      encoding: 'utf8',
-      ...options,
-    });
+    return execFileSync(
+      windowsPowerShell(),
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', windowsControlScript, ...args],
+      {
+        env,
+        encoding: 'utf8',
+        ...options,
+      }
+    );
   } catch (error) {
     throw new Error(
       [
@@ -65,7 +133,7 @@ const runPowerShellControl = (env, args, options = {}) => {
         error.message,
       ]
         .filter(Boolean)
-        .join('\n\n'),
+        .join('\n\n')
     );
   }
 };
@@ -77,7 +145,7 @@ const spawnPowerShellControl = (env, args) => {
     {
       env,
       encoding: 'utf8',
-    },
+    }
   );
   if (result.status !== 0) {
     throw new Error(
@@ -88,7 +156,7 @@ const spawnPowerShellControl = (env, args) => {
         result.stderr ? `stderr:\n${result.stderr}` : '',
       ]
         .filter(Boolean)
-        .join('\n\n'),
+        .join('\n\n')
     );
   }
 };
@@ -128,7 +196,7 @@ describe('native control scripts', () => {
         'printf "%s\\n" "${USAGE_DATA_DIR:-}" >"${CPA_MANAGER_PLUS_TEST_DATA_FILE}"',
         'sleep 30',
         '',
-      ].join('\n'),
+      ].join('\n')
     );
     chmodSync(fakeBinary, 0o755);
 
@@ -144,10 +212,152 @@ describe('native control scripts', () => {
 
       expect(readFileSync(cwdFile, 'utf8').trim()).toBe(packageDir);
       expect(readFileSync(dataEnvFile, 'utf8').trim()).toBe('./data');
-      expect(runUnixControl(controlScript, env, ['status'], { cwd: callerDir })).toContain('is running with PID');
+      expect(runUnixControl(controlScript, env, ['status'], { cwd: callerDir })).toContain(
+        'is running with PID'
+      );
       expect(runUnixControl(controlScript, env, ['stop'], { cwd: callerDir })).toContain('stopped');
     } finally {
       spawnSync('bash', [controlScript, 'stop'], { cwd: callerDir, env, encoding: 'utf8' });
+    }
+  });
+
+  it('uses the packaged runtime mode only when no explicit Unix binary arguments are supplied', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'cpamp-native-runtime-mode-'));
+    tempDirs.push(tempDir);
+
+    const packageDir = path.join(tempDir, 'package');
+    mkdirSync(packageDir, { recursive: true });
+    const controlScript = path.join(packageDir, 'cpa-manager-plusctl');
+    const fakeBinary = path.join(packageDir, 'cpa-manager-plus');
+    const argsFile = path.join(tempDir, 'args.txt');
+    const modeFile = path.join(tempDir, 'mode.txt');
+    copyFileSync(unixControlScript, controlScript);
+    chmodSync(controlScript, 0o755);
+    writeFileSync(path.join(packageDir, '.cpamp-runtime-mode'), 'integrated\n');
+    writeFileSync(
+      fakeBinary,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'printf "%s\\n" "$*" >"${CPA_MANAGER_PLUS_TEST_ARGS_FILE}"',
+        'printf "%s\\n" "${CPA_MANAGER_DEPLOYMENT_MODE:-}" >"${CPA_MANAGER_PLUS_TEST_MODE_FILE}"',
+        'sleep 30',
+        '',
+      ].join('\n')
+    );
+    chmodSync(fakeBinary, 0o755);
+
+    const env = {
+      ...process.env,
+      CPA_MANAGER_PLUS_TEST_ARGS_FILE: argsFile,
+      CPA_MANAGER_PLUS_TEST_MODE_FILE: modeFile,
+    };
+
+    try {
+      runUnixControl(controlScript, env, ['start']);
+      expect(readFileSync(argsFile, 'utf8').trim()).toBe('runtime');
+      expect(readFileSync(modeFile, 'utf8').trim()).toBe('integrated');
+      runUnixControl(controlScript, env, ['stop']);
+
+      runUnixControl(controlScript, env, ['start', 'serve']);
+      expect(readFileSync(argsFile, 'utf8').trim()).toBe('serve');
+      expect(readFileSync(modeFile, 'utf8').trim()).toBe('');
+      expect(runUnixControl(controlScript, env, ['stop'])).toContain('stopped');
+    } finally {
+      spawnSync('bash', [controlScript, 'stop'], { env, encoding: 'utf8' });
+    }
+  });
+
+  it('keeps controlling a Unix runtime after same-PID handoff into the managed CPAMP component root', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const sleepBinary = findExecutable(['/bin/sleep', '/usr/bin/sleep']);
+    if (!sleepBinary) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'cpamp-native-handoff-'));
+    tempDirs.push(tempDir);
+    const { fakeBin, processPathFile } = writeExecutablePathFakes(tempDir);
+    const componentRoot = path.join(tempDir, 'data/runtime/components');
+    const componentBinary = path.join(componentRoot, 'cpamp/v2.0.0/cpa-manager-plus');
+    const pidFile = path.join(tempDir, 'run/cpa-manager-plus.pid');
+    const logFile = path.join(tempDir, 'logs/cpa-manager-plus.log');
+    mkdirSync(path.dirname(componentBinary), { recursive: true });
+    writeFileSync(componentBinary, 'managed-component');
+    writeFileSync(processPathFile, `${sleepBinary}\n`);
+    const env = {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
+      CPA_MANAGER_PLUS_BIN: sleepBinary,
+      CPA_MANAGER_PLUS_PID_FILE: pidFile,
+      CPA_MANAGER_PLUS_LOG_FILE: logFile,
+      CPA_MANAGER_RUNTIME_COMPONENT_DIR: componentRoot,
+      CPA_MANAGER_PLUS_TEST_PROCESS_PATH_FILE: processPathFile,
+    };
+
+    try {
+      runControl(env, ['start', '30']);
+      writeFileSync(processPathFile, `${componentBinary}\n`);
+      expect(runControl(env, ['status'])).toContain('is running with PID');
+      expect(runControl(env, ['stop'])).toContain('stopped');
+    } finally {
+      spawnSync('bash', [unixControlScript, 'stop'], { env, encoding: 'utf8' });
+    }
+  });
+
+  it('rejects same-PID Unix handoff outside the managed CPAMP component root', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const sleepBinary = findExecutable(['/bin/sleep', '/usr/bin/sleep']);
+    if (!sleepBinary) {
+      return;
+    }
+
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'cpamp-native-handoff-reject-'));
+    tempDirs.push(tempDir);
+    const { fakeBin, processPathFile } = writeExecutablePathFakes(tempDir);
+    const componentRoot = path.join(tempDir, 'data/runtime/components');
+    const outsideBinary = path.join(componentRoot, 'cpa/v2.0.0/cpa-manager-plus');
+    const pidFile = path.join(tempDir, 'run/cpa-manager-plus.pid');
+    const logFile = path.join(tempDir, 'logs/cpa-manager-plus.log');
+    mkdirSync(path.dirname(outsideBinary), { recursive: true });
+    writeFileSync(outsideBinary, 'outside-component');
+    writeFileSync(processPathFile, `${sleepBinary}\n`);
+    const env = {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}`,
+      CPA_MANAGER_PLUS_BIN: sleepBinary,
+      CPA_MANAGER_PLUS_PID_FILE: pidFile,
+      CPA_MANAGER_PLUS_LOG_FILE: logFile,
+      CPA_MANAGER_RUNTIME_COMPONENT_DIR: componentRoot,
+      CPA_MANAGER_PLUS_TEST_PROCESS_PATH_FILE: processPathFile,
+    };
+    let pid = 0;
+
+    try {
+      runControl(env, ['start', '30']);
+      pid = readUnixPidRecord(pidFile);
+      writeFileSync(processPathFile, `${outsideBinary}\n`);
+      const status = spawnSync('bash', [unixControlScript, 'status'], { env, encoding: 'utf8' });
+      expect(status.status).not.toBe(0);
+      expect(status.stdout).toContain('status is unknown');
+      const stop = spawnSync('bash', [unixControlScript, 'stop'], { env, encoding: 'utf8' });
+      expect(stop.status).not.toBe(0);
+      expect(stop.stderr).toContain('Refusing to stop');
+      expect(spawnSync('kill', ['-0', String(pid)]).status).toBe(0);
+    } finally {
+      if (pid > 0) {
+        spawnSync('kill', ['-TERM', String(pid)]);
+      }
     }
   });
 
@@ -457,6 +667,54 @@ describe('native control scripts', () => {
     ]);
   });
 
+  it('terminates the complete Windows runtime process tree', () => {
+    const source = readFileSync(windowsControlScript, 'utf8');
+
+    expect(source).toContain('function Stop-ProcessTree');
+    expect(source).toContain("@('/PID', [string]$ProcessId, '/T')");
+    expect(source).toContain("$taskkillArgs += '/F'");
+    expect(source).toContain('Stop-ProcessTree -ProcessId $state.Snapshot.Pid');
+  });
+
+  it('allows native managed runtimes to finish their graceful shutdown budget', () => {
+    const runtimeSource = readFileSync(managedRuntimeSource, 'utf8');
+    const processSource = readFileSync(managedProcessSource, 'utf8');
+    const replacementSource = readFileSync(replacementWindowsSource, 'utf8');
+    const unixSource = readFileSync(unixControlScript, 'utf8');
+    const windowsSource = readFileSync(windowsControlScript, 'utf8');
+
+    const runtimeTimeout = Number(
+      runtimeSource.match(/runtimeShutdownTimeout\s*=\s*(\d+) \* time\.Second/)?.[1]
+    );
+    const processTimeout = Number(
+      processSource.match(/managedProcessGracefulStopTimeout = (\d+) \* time\.Second/)?.[1]
+    );
+    const replacementTimeout = Number(
+      replacementSource.match(/replacementRuntimeGracefulStopTimeout = (\d+) \* time\.Second/)?.[1]
+    );
+    const unixTimeout = Number(unixSource.match(/graceful_stop_timeout_seconds=(\d+)/)?.[1]);
+    const windowsTimeout = Number(windowsSource.match(/\$GracefulStopTimeoutSeconds = (\d+)/)?.[1]);
+
+    expect(processTimeout).toBeGreaterThan(30);
+    expect(runtimeTimeout).toBeGreaterThan(processTimeout);
+    expect(replacementTimeout).toBeGreaterThan(runtimeTimeout);
+    expect(unixTimeout).toBeGreaterThan(runtimeTimeout);
+    expect(windowsTimeout).toBeGreaterThan(replacementTimeout);
+    expect(unixSource).toContain('while [ "${elapsed}" -lt "${graceful_stop_timeout_seconds}" ]');
+    expect(windowsSource).toContain('for ($i = 0; $i -lt $GracefulStopTimeoutSeconds; $i++)');
+  });
+
+  it('uses Windows process groups and control-break for managed child shutdown', () => {
+    const source = readFileSync(managedProcessWindowsSource, 'utf8');
+    const replacementSource = readFileSync(replacementWindowsSource, 'utf8');
+
+    for (const windowsSource of [source, replacementSource]) {
+      expect(windowsSource).toContain('windows.CREATE_NEW_PROCESS_GROUP');
+      expect(windowsSource).toContain('windows.GenerateConsoleCtrlEvent');
+      expect(windowsSource).toContain('windows.CTRL_BREAK_EVENT');
+    }
+  });
+
   it('starts Windows processes with custom paths, private files, logs, and stop', () => {
     if (process.platform !== 'win32') {
       return;
@@ -510,17 +768,21 @@ describe('native control scripts', () => {
         {
           env,
           encoding: 'utf8',
-        },
+        }
       );
       expect(invalidLogsResult.status).not.toBe(0);
       expect(invalidLogsResult.stderr).toContain('Invalid log line count');
       expect(runPowerShellControl(env, ['stop'])).toContain('stopped');
       expect(existsSync(pidFile)).toBe(false);
     } finally {
-      spawnSync(windowsPowerShell(), ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', windowsControlScript, 'stop'], {
-        env,
-        encoding: 'utf8',
-      });
+      spawnSync(
+        windowsPowerShell(),
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', windowsControlScript, 'stop'],
+        {
+          env,
+          encoding: 'utf8',
+        }
+      );
     }
   }, 30000);
 
@@ -570,7 +832,7 @@ describe('native control scripts', () => {
           CPA_MANAGER_PLUS_PID_FILE: path.join(unsafeDir, 'manager.pid'),
         },
         encoding: 'utf8',
-      },
+      }
     );
 
     expect(result.status).not.toBe(0);
@@ -605,7 +867,7 @@ describe('native control scripts', () => {
         {
           env,
           encoding: 'utf8',
-        },
+        }
       );
 
       expect(result.status).not.toBe(0);
@@ -651,7 +913,7 @@ describe('native control scripts', () => {
         {
           env,
           encoding: 'utf8',
-        },
+        }
       );
 
       expect(result.status).not.toBe(0);
