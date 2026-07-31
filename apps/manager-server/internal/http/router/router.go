@@ -17,10 +17,13 @@ import (
 	panelcontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/panel"
 	proxycontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/proxy"
 	quotacooldowncontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/quotacooldown"
+	runtimecontrolcontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/runtimecontrol"
 	setupcontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/setup"
 	systemcontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/system"
 	usagecontroller "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/controller/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/middleware"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/response"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
 	proxysvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/proxy"
 )
 
@@ -40,6 +43,7 @@ func New(appCtx *app.Context) http.Handler {
 	monitoringHandler := &monitoringcontroller.Handler{App: appCtx}
 	proxyHandler := &proxycontroller.Handler{App: appCtx}
 	panelHandler := &panelcontroller.Handler{App: appCtx}
+	runtimeControlHandler := &runtimecontrolcontroller.Handler{App: appCtx}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", middleware.WithCORS(appCtx.Config, healthHandler.Health))
@@ -49,8 +53,10 @@ func New(appCtx *app.Context) http.Handler {
 	mux.HandleFunc("/usage-service/account-processing-policy", middleware.WithCORS(appCtx.Config, automationHandler.Handle))
 	mux.HandleFunc("/usage-service/quota-cooldowns", middleware.WithCORS(appCtx.Config, quotaCooldownHandler.Handle))
 	mux.HandleFunc("/setup", middleware.WithCORS(appCtx.Config, setupHandler.Setup))
-	mux.HandleFunc("/management.html", panelHandler.ManagementHTML)
-	mux.HandleFunc("/", rootHandler(appCtx, usageHandler, modelPriceHandler, apiKeyAliasHandler, accountActionHandler, codexInspectionHandler, dashboardHandler, monitoringHandler, proxyHandler))
+	mux.HandleFunc("/setup/cpa-source", middleware.WithCORS(appCtx.Config, setupHandler.CPASource))
+	mux.HandleFunc("/setup/admin-key", middleware.WithCORS(appCtx.Config, setupHandler.AdminKey))
+	mux.HandleFunc("/setup/admin-key/generate", middleware.WithCORS(appCtx.Config, setupHandler.GenerateAdminKey))
+	mux.HandleFunc("/", rootHandler(appCtx, usageHandler, modelPriceHandler, apiKeyAliasHandler, accountActionHandler, codexInspectionHandler, dashboardHandler, monitoringHandler, proxyHandler, runtimeControlHandler, panelHandler))
 
 	return middleware.Recovery(middleware.RequestLogger(mux))
 }
@@ -65,11 +71,20 @@ func rootHandler(
 	dashboardHandler *dashboardcontroller.Handler,
 	monitoringHandler *monitoringcontroller.Handler,
 	proxyHandler *proxycontroller.Handler,
+	runtimeControlHandler *runtimecontrolcontroller.Handler,
+	panelHandler *panelcontroller.Handler,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			middleware.WriteCORS(appCtx.Config, w, r)
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if handlePanelRoute(appCtx, panelHandler, w, r) {
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v0/management/runtime") {
+			middleware.WithCORS(appCtx.Config, runtimeControlHandler.Handle)(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/v0/management/model-prices") {
@@ -114,10 +129,45 @@ func rootHandler(
 			middleware.WithCORS(appCtx.Config, proxyHandler.CPAResource)(w, r)
 			return
 		}
-		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/management.html", http.StatusTemporaryRedirect)
-			return
-		}
 		http.NotFound(w, r)
 	}
+}
+
+func handlePanelRoute(appCtx *app.Context, panelHandler *panelcontroller.Handler, w http.ResponseWriter, r *http.Request) bool {
+	deployment, ok, err := appCtx.Store.LoadDeploymentState(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, err)
+		return true
+	}
+	if !ok {
+		basePath, normalizeErr := model.NormalizePanelBasePath(appCtx.Config.PanelBasePath)
+		if normalizeErr != nil {
+			response.Error(w, http.StatusInternalServerError, normalizeErr)
+			return true
+		}
+		deployment = model.DefaultDeploymentState(model.NormalizeDeploymentMode(appCtx.Config.DeploymentMode), basePath, "default")
+	}
+	requestPath := r.URL.Path
+	if requestPath != "/" {
+		requestPath = strings.TrimSuffix(requestPath, "/")
+	}
+	if requestPath == deployment.PanelBasePath {
+		panelHandler.ManagementHTML(w, r)
+		return true
+	}
+	for _, retired := range deployment.RetiredPanelPaths {
+		if requestPath == retired {
+			http.NotFound(w, r)
+			return true
+		}
+	}
+	if requestPath == "/management.html" && deployment.PanelBasePath != "/management.html" {
+		http.NotFound(w, r)
+		return true
+	}
+	if r.URL.Path == "/" && deployment.PanelBasePath == "/management.html" {
+		http.Redirect(w, r, deployment.PanelBasePath, http.StatusTemporaryRedirect)
+		return true
+	}
+	return false
 }

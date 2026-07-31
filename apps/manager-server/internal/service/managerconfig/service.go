@@ -111,7 +111,7 @@ func (s *Service) Update(ctx context.Context, submitted store.ManagerConfig) (Re
 		if err := s.store.SaveManagerConfig(ctx, next); err != nil {
 			return Response{}, err
 		}
-		_ = s.collector.Stop(context.Background())
+		s.collector.Stop(context.Background())
 		return Response{
 			Config: next,
 			Source: string(SourceDB),
@@ -125,9 +125,9 @@ func (s *Service) Update(ctx context.Context, submitted store.ManagerConfig) (Re
 		return Response{}, err
 	}
 	if ManagerCollectorEnabled(next) {
-		_ = s.collector.Start(context.Background(), next)
+		s.collector.Start(context.Background(), next)
 	} else {
-		_ = s.collector.Stop(context.Background())
+		s.collector.Stop(context.Background())
 	}
 	return Response{
 		Config: next,

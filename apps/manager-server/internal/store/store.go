@@ -28,6 +28,8 @@ type Setup = model.Setup
 type ManagerConfig = model.ManagerConfig
 type AdminCredential = model.AdminCredential
 type BootstrapState = model.BootstrapState
+type BootstrapCredential = model.BootstrapCredential
+type DeploymentState = model.DeploymentState
 type ManagerCPAConnectionConfig = model.ManagerCPAConnectionConfig
 type ManagerCollectorConfig = model.ManagerCollectorConfig
 type ManagerCodexInspectionConfig = model.ManagerCodexInspectionConfig
@@ -173,6 +175,30 @@ func (s *Store) SaveBootstrapState(ctx context.Context, state BootstrapState) er
 
 func (s *Store) LoadBootstrapState(ctx context.Context) (BootstrapState, bool, error) {
 	return s.Settings.LoadBootstrapState(ctx)
+}
+
+func (s *Store) SaveBootstrapCredential(ctx context.Context, credential BootstrapCredential) error {
+	return s.Settings.SaveBootstrapCredential(ctx, credential)
+}
+
+func (s *Store) LoadBootstrapCredential(ctx context.Context) (BootstrapCredential, bool, error) {
+	return s.Settings.LoadBootstrapCredential(ctx)
+}
+
+func (s *Store) SaveSetupInitialization(ctx context.Context, setup Setup, cfg ManagerConfig, state BootstrapState) error {
+	return s.Settings.SaveSetupInitialization(ctx, setup, cfg, state)
+}
+
+func (s *Store) InitializeAdmin(ctx context.Context, credential AdminCredential, state BootstrapState) (bool, error) {
+	return s.Settings.InitializeAdmin(ctx, credential, state)
+}
+
+func (s *Store) SaveDeploymentState(ctx context.Context, state DeploymentState) error {
+	return s.Settings.SaveDeploymentState(ctx, state)
+}
+
+func (s *Store) LoadDeploymentState(ctx context.Context) (DeploymentState, bool, error) {
+	return s.Settings.LoadDeploymentState(ctx)
 }
 
 func (s *Store) HasHistoricalData(ctx context.Context) (bool, error) {

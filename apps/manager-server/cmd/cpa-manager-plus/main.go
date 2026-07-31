@@ -19,6 +19,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/command/adminreset"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/config"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/httpapi"
+	managedruntime "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/managedruntime"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/security"
 	bootstrapservice "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/bootstrap"
 	collectorservice "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/collector"
@@ -29,6 +30,15 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "runtime":
+			runManagedRuntime()
+			return
+		case "serve":
+			runServer()
+			return
+		case "version", "--version", "-version":
+			fmt.Println(managedruntime.BuildVersion)
+			return
 		case "reset-admin-key", "reset-admin-password":
 			if err := adminreset.Run(context.Background(), os.Args[2:], os.Stdout, os.Stderr); err != nil {
 				log.Printf("reset admin key: %v", err)
@@ -38,6 +48,107 @@ func main() {
 		}
 	}
 	runServer()
+}
+
+func runManagedRuntime() {
+	cfg, err := managedruntime.LoadConfig()
+	if err != nil {
+		log.Fatalf("load runtime config: %v", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	target, prepareErr := managedruntime.CurrentRuntimeTarget(cfg)
+	if prepareErr != nil {
+		log.Fatalf("prepare managed runtime state: %v", prepareErr)
+	}
+	for {
+		if target.Binary != "" {
+			if err := runReplacementRuntime(ctx, cfg, target.Binary, target.OperationID); err != nil {
+				recovered, recoveryErr := managedruntime.RecoverPendingHandoff(
+					cfg,
+					target.OperationID,
+					err,
+				)
+				if recoveryErr != nil {
+					log.Fatalf("recover failed runtime handoff: %v", errors.Join(err, recoveryErr))
+				}
+				if !recovered {
+					log.Fatalf("replace managed runtime: %v", err)
+				}
+				log.Printf("runtime handoff failed; restored the previous managed runtime: %v", err)
+				target = managedruntime.RuntimeTarget{}
+				continue
+			}
+			return
+		}
+
+		err := managedruntime.Run(ctx, cfg)
+		if err == nil {
+			return
+		}
+		var handoff *managedruntime.HandoffError
+		if errors.As(err, &handoff) {
+			target = managedruntime.RuntimeTarget{
+				Binary:      handoff.Binary,
+				OperationID: handoff.OperationID,
+			}
+			continue
+		}
+		handoffOperationID := strings.TrimSpace(os.Getenv(managedruntime.RuntimeHandoffOperationEnv))
+		if handoffOperationID != "" {
+			_, recoveryErr := managedruntime.RecoverPendingHandoff(cfg, handoffOperationID, err)
+			if recoveryErr != nil {
+				log.Fatalf("recover failed runtime handoff: %v", errors.Join(err, recoveryErr))
+			}
+			fallback, fallbackErr := managedruntime.HandoffFallbackTarget(cfg, handoffOperationID)
+			if fallbackErr != nil {
+				log.Fatalf("resolve previous runtime after failed handoff: %v", errors.Join(err, fallbackErr))
+			}
+			if fallback.Binary != "" {
+				log.Printf("replacement runtime failed; resuming the previous managed runtime: %v", err)
+				target = fallback
+				continue
+			}
+		}
+		log.Fatalf("run managed runtime: %v", err)
+	}
+}
+
+func replacementRuntimeEnvironment(cfg managedruntime.Config, operationID string) []string {
+	return mergeReplacementRuntimeEnvironment(os.Environ(), cfg, operationID)
+}
+
+func mergeReplacementRuntimeEnvironment(
+	base []string,
+	cfg managedruntime.Config,
+	operationID string,
+) []string {
+	overrides := []struct {
+		name  string
+		value string
+	}{
+		{name: "CPA_MANAGER_RUNTIME_DELEGATED", value: "1"},
+		{name: managedruntime.RuntimeHandoffOperationEnv, value: strings.TrimSpace(operationID)},
+		{name: "CPA_MANAGER_RUNTIME_CPA_BINARY", value: strings.TrimSpace(cfg.CPABinary)},
+		{name: "CPA_MANAGER_CPA_VERSION", value: strings.TrimSpace(cfg.CPAVersion)},
+	}
+	replaced := make(map[string]struct{}, len(overrides))
+	for _, override := range overrides {
+		replaced[override.name] = struct{}{}
+	}
+	environment := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, ok := replaced[name]; !ok {
+			environment = append(environment, entry)
+		}
+	}
+	for _, override := range overrides {
+		if override.value != "" {
+			environment = append(environment, override.name+"="+override.value)
+		}
+	}
+	return environment
 }
 
 func runServer() {
@@ -67,10 +178,13 @@ func runServer() {
 	if err != nil {
 		log.Fatalf("bootstrap manager server: %v", err)
 	}
-	if bootstrapResult.GeneratedAdminKey != "" {
-		log.Printf("CPA Manager Plus admin key generated: %s", bootstrapResult.GeneratedAdminKey)
-	} else {
+	if bootstrapResult.State.AdminReady {
 		log.Printf("CPA Manager Plus admin credential initialized")
+	} else {
+		log.Printf("CPA Manager Plus admin credential requires UI setup")
+	}
+	if bootstrapResult.GeneratedBootstrapToken != "" {
+		log.Printf("CPA Manager Plus one-time bootstrap token: %s", bootstrapResult.GeneratedBootstrapToken)
 	}
 	if bootstrapResult.DataKeyCreated {
 		log.Printf("CPA Manager Plus data key created at %s", cfg.DataKeyPath)
@@ -86,6 +200,13 @@ func runServer() {
 	defer stop()
 
 	serverApp := httpapi.New(cfg, db, manager)
+	runtimeRecoveryCtx, cancelRuntimeRecovery := context.WithTimeout(context.Background(), 15*time.Second)
+	if recovered, err := serverApp.AppContext().RuntimeControlService.ReconcileSlimProvision(runtimeRecoveryCtx); err != nil {
+		log.Printf("reconcile interrupted Slim runtime transition: %v", err)
+	} else if recovered {
+		log.Printf("reconciled interrupted Slim runtime transition")
+	}
+	cancelRuntimeRecovery()
 	recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := serverApp.AppContext().CodexInspectionService.Recover(recoveryCtx); err != nil {
 		log.Printf("recover codex inspection runs: %v", err)

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/protocol"
 )
 
 type UsageConfig struct {
@@ -22,12 +24,37 @@ type ManagementConfig struct {
 	ProxyURL string `json:"proxyUrl,omitempty"`
 }
 
+type HTTPStatusError struct {
+	Operation  string
+	StatusCode int
+	Status     string
+}
+
+var ErrUsageQueueRetentionInvalid = errors.New("CPA redis-usage-queue-retention-seconds must be greater than 0")
+
+type PollIntervalExceedsRetentionError struct {
+	PollIntervalMS   int
+	RetentionSeconds int
+}
+
+func (e *PollIntervalExceedsRetentionError) Error() string {
+	return fmt.Sprintf(
+		"pollIntervalMs must be less than or equal to CPA redis-usage-queue-retention-seconds (%d seconds)",
+		e.RetentionSeconds,
+	)
+}
+
+func (e *HTTPStatusError) Error() string {
+	return e.Operation + " failed: " + e.Status
+}
+
 func ValidateManagementAPI(ctx context.Context, baseURL string, key string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeBaseURL(baseURL)+"/v0/management/config", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set(protocol.DirectCPARequestHeader, "1")
 	client := &http.Client{Timeout: 30 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
@@ -37,7 +64,11 @@ func ValidateManagementAPI(ctx context.Context, baseURL string, key string) erro
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return nil
 	}
-	return errors.New("management API validation failed: " + res.Status)
+	return &HTTPStatusError{
+		Operation:  "management API validation",
+		StatusCode: res.StatusCode,
+		Status:     res.Status,
+	}
 }
 
 func FetchUsageConfig(ctx context.Context, baseURL string, key string) (UsageConfig, error) {
@@ -54,6 +85,7 @@ func FetchManagementConfig(ctx context.Context, baseURL string, key string) (Man
 		return ManagementConfig{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set(protocol.DirectCPARequestHeader, "1")
 	client := &http.Client{Timeout: 30 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
@@ -61,7 +93,11 @@ func FetchManagementConfig(ctx context.Context, baseURL string, key string) (Man
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return ManagementConfig{}, errors.New("management API config request failed: " + res.Status)
+		return ManagementConfig{}, &HTTPStatusError{
+			Operation:  "management API config request",
+			StatusCode: res.StatusCode,
+			Status:     res.Status,
+		}
 	}
 
 	var raw map[string]any
@@ -100,6 +136,7 @@ func SetUsageStatisticsEnabled(ctx context.Context, baseURL string, key string, 
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(protocol.DirectCPARequestHeader, "1")
 	client := &http.Client{Timeout: 30 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
@@ -109,7 +146,11 @@ func SetUsageStatisticsEnabled(ctx context.Context, baseURL string, key string, 
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return nil
 	}
-	return errors.New("enable CPA usage statistics failed: " + res.Status)
+	return &HTTPStatusError{
+		Operation:  "enable CPA usage statistics",
+		StatusCode: res.StatusCode,
+		Status:     res.Status,
+	}
 }
 
 func ValidateCollectorConfig(ctx context.Context, baseURL string, key string, pollIntervalMS int) error {
@@ -119,13 +160,13 @@ func ValidateCollectorConfig(ctx context.Context, baseURL string, key string, po
 	}
 	retentionMS := usageCfg.RedisUsageQueueRetentionSeconds * 1000
 	if retentionMS <= 0 {
-		return errors.New("CPA redis-usage-queue-retention-seconds must be greater than 0")
+		return ErrUsageQueueRetentionInvalid
 	}
 	if pollIntervalMS > retentionMS {
-		return fmt.Errorf(
-			"pollIntervalMs must be less than or equal to CPA redis-usage-queue-retention-seconds (%d seconds)",
-			usageCfg.RedisUsageQueueRetentionSeconds,
-		)
+		return &PollIntervalExceedsRetentionError{
+			PollIntervalMS:   pollIntervalMS,
+			RetentionSeconds: usageCfg.RedisUsageQueueRetentionSeconds,
+		}
 	}
 	return nil
 }

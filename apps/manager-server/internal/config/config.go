@@ -29,6 +29,9 @@ type Config struct {
 	HTTPAddr                     string
 	DataDir                      string
 	DBPath                       string
+	DeploymentMode               string
+	RuntimeControlURL            string
+	RuntimeKey                   string
 	CPAUpstreamURL               string
 	ManagementKey                string
 	AdminKey                     string
@@ -42,6 +45,9 @@ type Config struct {
 	QueryLimit                   int
 	PprofAddr                    string
 	PanelPath                    string
+	PanelBasePath                string
+	PanelBasePathSource          string
+	BootstrapTokenTTL            time.Duration
 	CORSOrigins                  []string
 	TLSSkipVerify                bool
 	QuotaCooldownEnabled         bool
@@ -55,6 +61,7 @@ type Config struct {
 	QuotaCooldownEnvSet          bool
 	AccountActionsEnvSet         bool
 	AccountActionsAutoEnvSet     bool
+	PanelBasePathEnvSet          bool
 }
 
 type LoadOptions struct {
@@ -65,6 +72,8 @@ type fileConfig struct {
 	HTTPAddr                  string   `json:"httpAddr,omitempty"`
 	DataDir                   string   `json:"dataDir,omitempty"`
 	DBPath                    string   `json:"dbPath,omitempty"`
+	DeploymentMode            string   `json:"deploymentMode,omitempty"`
+	RuntimeControlURL         string   `json:"runtimeControlUrl,omitempty"`
 	CPAUpstreamURL            string   `json:"cpaUpstreamUrl,omitempty"`
 	ManagementKeyFile         string   `json:"managementKeyFile,omitempty"`
 	AdminKeyFile              string   `json:"adminKeyFile,omitempty"`
@@ -78,6 +87,8 @@ type fileConfig struct {
 	QueryLimit                int      `json:"queryLimit,omitempty"`
 	PprofAddr                 string   `json:"pprofAddr,omitempty"`
 	PanelPath                 string   `json:"panelPath,omitempty"`
+	PanelBasePath             string   `json:"panelBasePath,omitempty"`
+	BootstrapTokenTTLMinutes  int      `json:"bootstrapTokenTTLMinutes,omitempty"`
 	CORSOrigins               []string `json:"corsOrigins,omitempty"`
 	TLSSkipVerify             bool     `json:"tlsSkipVerify,omitempty"`
 	QuotaCooldownEnabled      bool     `json:"quotaCooldownEnabled,omitempty"`
@@ -134,24 +145,42 @@ func LoadWithOptions(options LoadOptions) (Config, error) {
 	if dataKeyPath == "" {
 		dataKeyPath = filepath.Join(dataDir, "data.key")
 	}
+	panelBasePathSource := "default"
+	if hasEnv("CPA_MANAGER_PANEL_BASE_PATH") {
+		panelBasePathSource = "environment"
+	}
+	panelBasePathSource = env("CPA_MANAGER_PANEL_BASE_PATH_SOURCE", panelBasePathSource)
 
 	return Config{
-		HTTPAddr:                     env("HTTP_ADDR", stringFallback(cfgFile.HTTPAddr, "0.0.0.0:18317")),
-		DataDir:                      dataDir,
-		DBPath:                       env("USAGE_DB_PATH", dbPathFallback),
-		CPAUpstreamURL:               env("CPA_UPSTREAM_URL", cfgFile.CPAUpstreamURL),
-		ManagementKey:                readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile),
-		AdminKey:                     readSecret("CPA_MANAGER_ADMIN_KEY", "CPA_MANAGER_ADMIN_KEY_FILE", adminKeyFile),
-		DataKey:                      readSecret("CPA_MANAGER_DATA_KEY", "CPA_MANAGER_DATA_KEY_FILE", dataKeyFile),
-		DataKeyPath:                  env("CPA_MANAGER_DATA_KEY_PATH", dataKeyPath),
-		CollectorMode:                normalizeCollectorMode(env("USAGE_COLLECTOR_MODE", stringFallback(cfgFile.CollectorMode, "auto"))),
-		Queue:                        env("USAGE_RESP_QUEUE", stringFallback(cfgFile.Queue, "usage")),
-		PopSide:                      env("USAGE_RESP_POP_SIDE", stringFallback(cfgFile.PopSide, "right")),
-		BatchSize:                    envInt("USAGE_BATCH_SIZE", intFallback(cfgFile.BatchSize, 100)),
-		PollInterval:                 time.Duration(envInt("USAGE_POLL_INTERVAL_MS", intFallback(cfgFile.PollIntervalMS, 500))) * time.Millisecond,
-		QueryLimit:                   envInt("USAGE_QUERY_LIMIT", intFallback(cfgFile.QueryLimit, 50000)),
-		PprofAddr:                    env("CPA_MANAGER_PPROF_ADDR", cfgFile.PprofAddr),
-		PanelPath:                    env("PANEL_PATH", resolveConfigPath(cfgFile.PanelPath, cfgDir)),
+		HTTPAddr:          env("HTTP_ADDR", stringFallback(cfgFile.HTTPAddr, "0.0.0.0:18317")),
+		DataDir:           dataDir,
+		DBPath:            env("USAGE_DB_PATH", dbPathFallback),
+		DeploymentMode:    env("CPA_MANAGER_DEPLOYMENT_MODE", stringFallback(cfgFile.DeploymentMode, "external")),
+		RuntimeControlURL: env("CPA_MANAGER_RUNTIME_CONTROL_URL", stringFallback(cfgFile.RuntimeControlURL, "http://127.0.0.1:18319")),
+		RuntimeKey: readSecret(
+			"CPA_MANAGER_RUNTIME_KEY",
+			"CPA_MANAGER_RUNTIME_KEY_FILE",
+			filepath.Join(dataDir, "runtime", "control.key"),
+		),
+		CPAUpstreamURL:      env("CPA_UPSTREAM_URL", cfgFile.CPAUpstreamURL),
+		ManagementKey:       readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile),
+		AdminKey:            readSecret("CPA_MANAGER_ADMIN_KEY", "CPA_MANAGER_ADMIN_KEY_FILE", adminKeyFile),
+		DataKey:             readSecret("CPA_MANAGER_DATA_KEY", "CPA_MANAGER_DATA_KEY_FILE", dataKeyFile),
+		DataKeyPath:         env("CPA_MANAGER_DATA_KEY_PATH", dataKeyPath),
+		CollectorMode:       normalizeCollectorMode(env("USAGE_COLLECTOR_MODE", stringFallback(cfgFile.CollectorMode, "auto"))),
+		Queue:               env("USAGE_RESP_QUEUE", stringFallback(cfgFile.Queue, "usage")),
+		PopSide:             env("USAGE_RESP_POP_SIDE", stringFallback(cfgFile.PopSide, "right")),
+		BatchSize:           envInt("USAGE_BATCH_SIZE", intFallback(cfgFile.BatchSize, 100)),
+		PollInterval:        time.Duration(envInt("USAGE_POLL_INTERVAL_MS", intFallback(cfgFile.PollIntervalMS, 500))) * time.Millisecond,
+		QueryLimit:          envInt("USAGE_QUERY_LIMIT", intFallback(cfgFile.QueryLimit, 50000)),
+		PprofAddr:           env("CPA_MANAGER_PPROF_ADDR", cfgFile.PprofAddr),
+		PanelPath:           env("PANEL_PATH", resolveConfigPath(cfgFile.PanelPath, cfgDir)),
+		PanelBasePath:       env("CPA_MANAGER_PANEL_BASE_PATH", stringFallback(cfgFile.PanelBasePath, "/management.html")),
+		PanelBasePathSource: panelBasePathSource,
+		BootstrapTokenTTL: time.Duration(envInt(
+			"CPA_MANAGER_BOOTSTRAP_TOKEN_TTL_MINUTES",
+			intFallback(cfgFile.BootstrapTokenTTLMinutes, 24*60),
+		)) * time.Minute,
 		CORSOrigins:                  splitCSV(env("USAGE_CORS_ORIGINS", strings.Join(sliceFallback(cfgFile.CORSOrigins, []string{"*"}), ","))),
 		TLSSkipVerify:                envBool("USAGE_RESP_TLS_SKIP_VERIFY", cfgFile.TLSSkipVerify),
 		QuotaCooldownEnabled:         envBool("USAGE_QUOTA_COOLDOWN_ENABLED", cfgFile.QuotaCooldownEnabled),
@@ -177,6 +206,7 @@ func LoadWithOptions(options LoadOptions) (Config, error) {
 		QuotaCooldownEnvSet:      hasEnv("USAGE_QUOTA_COOLDOWN_ENABLED"),
 		AccountActionsEnvSet:     hasEnv("USAGE_ACCOUNT_ACTIONS_ENABLED"),
 		AccountActionsAutoEnvSet: hasEnv("USAGE_ACCOUNT_ACTIONS_AUTO_DISABLE"),
+		PanelBasePathEnvSet:      hasEnv("CPA_MANAGER_PANEL_BASE_PATH") && panelBasePathSource != "runtime",
 	}, nil
 }
 

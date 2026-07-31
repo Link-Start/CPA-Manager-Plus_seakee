@@ -79,7 +79,7 @@ func TestCollectorWorkerStartsFromEnvironmentConfig(t *testing.T) {
 	manager := collectorpkg.NewManager(cfg, db)
 	collectorService := collectorservice.New(manager)
 	t.Cleanup(func() {
-		_ = collectorService.Stop(context.Background())
+		collectorService.Stop(context.Background())
 	})
 
 	NewCollectorWorker(cfg, db, collectorService).Start(context.Background())
@@ -118,22 +118,16 @@ func TestCollectorServiceRestartAndStop(t *testing.T) {
 		},
 	}
 
-	if err := collectorService.Start(context.Background(), managerCfg); err != nil {
-		t.Fatalf("start collector: %v", err)
-	}
+	collectorService.Start(context.Background(), managerCfg)
 	if status := collectorService.Status(); status.Collector != "starting" {
 		t.Fatalf("collector status after start = %#v", status)
 	}
 	managerCfg.Collector.PollIntervalMS = int((2 * time.Hour) / time.Millisecond)
-	if err := collectorService.Restart(context.Background(), managerCfg); err != nil {
-		t.Fatalf("restart collector: %v", err)
-	}
+	collectorService.Restart(context.Background(), managerCfg)
 	if status := collectorService.Status(); status.Collector != "starting" {
 		t.Fatalf("collector status after restart = %#v", status)
 	}
-	if err := collectorService.Stop(context.Background()); err != nil {
-		t.Fatalf("stop collector: %v", err)
-	}
+	collectorService.Stop(context.Background())
 	if status := collectorService.Status(); status.Collector != "stopped" {
 		t.Fatalf("collector status after stop = %#v", status)
 	}

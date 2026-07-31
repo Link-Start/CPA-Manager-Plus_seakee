@@ -17,27 +17,22 @@ func New(manager *collectorpkg.Manager) *Service {
 	return &Service{manager: manager}
 }
 
-func (s *Service) Start(ctx context.Context, cfg store.ManagerConfig) error {
+func (s *Service) Start(ctx context.Context, cfg store.ManagerConfig) {
 	s.manager.Start(ctx, RuntimeConfigFromManagerConfig(cfg))
-	return nil
 }
 
-func (s *Service) StartRuntime(ctx context.Context, cfg collectorpkg.RuntimeConfig) error {
+func (s *Service) StartRuntime(ctx context.Context, cfg collectorpkg.RuntimeConfig) {
 	s.manager.Start(ctx, cfg)
-	return nil
 }
 
-func (s *Service) Stop(ctx context.Context) error {
+func (s *Service) Stop(ctx context.Context) {
 	_ = ctx
 	s.manager.Stop()
-	return nil
 }
 
-func (s *Service) Restart(ctx context.Context, cfg store.ManagerConfig) error {
-	if err := s.Stop(ctx); err != nil {
-		return err
-	}
-	return s.Start(ctx, cfg)
+func (s *Service) Restart(ctx context.Context, cfg store.ManagerConfig) {
+	s.Stop(ctx)
+	s.Start(ctx, cfg)
 }
 
 func (s *Service) Status() collectorpkg.Status {
