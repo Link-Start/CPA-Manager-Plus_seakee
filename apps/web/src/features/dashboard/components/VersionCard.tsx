@@ -15,12 +15,28 @@ import {
   IconSettings,
   IconTimer,
 } from '@/components/ui/icons';
-import { useConfigStore, useNotificationStore } from '@/stores';
+import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import { configApi, versionApi } from '@/services/api';
-import type { UsageServiceStatus } from '@/services/api/usageService';
+import {
+  usageServiceApi,
+  type RuntimeUpdateCheckResult,
+  type UsageServiceStatus,
+} from '@/services/api/usageService';
+import {
+  clearRuntimeUpdateCheckCache,
+  loadRuntimeUpdateCheck,
+  readRuntimeUpdateCheckCache,
+  runtimeUpdateCheckScope,
+} from '@/services/runtimeUpdateCheckCache';
 import type { ConnectionStatus } from '@/types';
 import { compareVersions, type VersionComparison } from '@/utils/version';
-import { readApiLatestVersion, readManagerLatestTag } from '@/features/system/versionChecks';
+import {
+  canManageRuntimeUpdates,
+  readApiLatestVersion,
+  readManagerLatestTag,
+  resolveVersionBadgeCheck,
+  shouldShowRuntimeUpdateLink,
+} from '@/features/system/versionChecks';
 import styles from './VersionCard.module.scss';
 
 interface VersionCardProps {
@@ -92,6 +108,9 @@ export function VersionCard({
 }: VersionCardProps) {
   const { t, i18n } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
+  const sessionMode = useAuthStore((state) => state.sessionMode);
+  const apiBase = useAuthStore((state) => state.apiBase);
+  const managementKey = useAuthStore((state) => state.managementKey);
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const clearCache = useConfigStore((state) => state.clearCache);
@@ -103,8 +122,17 @@ export function VersionCard({
   const [requestLogDraft, setRequestLogDraft] = useState(false);
   const [requestLogTouched, setRequestLogTouched] = useState(false);
   const [requestLogSaving, setRequestLogSaving] = useState(false);
+  const [runtimeUpdatesManaged, setRuntimeUpdatesManaged] = useState(false);
+  const [runtimeUpdateAvailable, setRuntimeUpdateAvailable] = useState(false);
+  const [runtimeUpdateCheck, setRuntimeUpdateCheck] = useState<RuntimeUpdateCheckResult | null>(
+    null
+  );
   const versionTapCount = useRef(0);
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runtimeCheckScope = useMemo(
+    () => runtimeUpdateCheckScope(apiBase, managementKey),
+    [apiBase, managementKey]
+  );
 
   const requestLogEnabled = config?.requestLog ?? false;
   const requestLogDirty = requestLogDraft !== requestLogEnabled;
@@ -146,6 +174,66 @@ export function VersionCard({
     };
   }, [connectionStatus, refreshSignal]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setRuntimeUpdatesManaged(false);
+    setRuntimeUpdateAvailable(false);
+    setRuntimeUpdateCheck(null);
+    if (sessionMode !== 'manager_embedded' || !apiBase || !managementKey) {
+      return;
+    }
+
+    const loadRuntimeUpdateAvailability = async () => {
+      try {
+        const result = await usageServiceApi.getRuntimeStatus(apiBase, managementKey);
+        if (cancelled) return;
+        const managed = canManageRuntimeUpdates(result);
+        setRuntimeUpdatesManaged(managed);
+        if (!managed) return;
+      } catch {
+        if (!cancelled) {
+          setRuntimeUpdatesManaged(false);
+          setRuntimeUpdateAvailable(false);
+        }
+        return;
+      }
+
+      try {
+        const updateCheck = await loadRuntimeUpdateCheck(
+          runtimeCheckScope,
+          () => usageServiceApi.checkRuntimeUpdates(apiBase, managementKey),
+          Boolean(refreshSignal)
+        );
+        if (cancelled) return;
+        setRuntimeUpdateCheck(updateCheck);
+        setRuntimeUpdateAvailable(
+          Object.values(updateCheck.components).some((component) => component.updateAvailable)
+        );
+      } catch {
+        if (cancelled) return;
+        if (refreshSignal) {
+          clearRuntimeUpdateCheckCache();
+          setRuntimeUpdateCheck(null);
+          setRuntimeUpdateAvailable(false);
+          return;
+        }
+        const cached = readRuntimeUpdateCheckCache(runtimeCheckScope);
+        setRuntimeUpdateCheck(cached);
+        setRuntimeUpdateAvailable(
+          Boolean(
+            cached &&
+            Object.values(cached.components).some((component) => component.updateAvailable)
+          )
+        );
+      }
+    };
+    void loadRuntimeUpdateAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, managementKey, refreshSignal, runtimeCheckScope, sessionMode]);
+
   const openRequestLogModal = useCallback(() => {
     setRequestLogTouched(false);
     setRequestLogDraft(requestLogEnabled);
@@ -153,7 +241,8 @@ export function VersionCard({
 
     if (!config && connectionStatus === 'connected') {
       fetchConfig().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+        const message =
+          error instanceof Error ? error.message : typeof error === 'string' ? error : '';
         showNotification(
           `${t('notification.update_failed')}${message ? `: ${message}` : ''}`,
           'error'
@@ -203,7 +292,8 @@ export function VersionCard({
       showNotification(t('notification.request_log_updated'), 'success');
       setRequestLogModalOpen(false);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       updateConfigValue('request-log', previous);
       showNotification(
         `${t('notification.update_failed')}${message ? `: ${message}` : ''}`,
@@ -241,7 +331,8 @@ export function VersionCard({
         showNotification(t('system_info.manager_version_is_latest'), 'success');
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       const suffix = message ? `: ${message}` : '';
       showNotification(`${t('system_info.manager_version_check_error')}${suffix}`, 'error');
     } finally {
@@ -268,12 +359,16 @@ export function VersionCard({
       }
 
       if (comparison > 0) {
-        showNotification(t('system_info.version_update_available', { version: latestApi }), 'warning');
+        showNotification(
+          t('system_info.version_update_available', { version: latestApi }),
+          'warning'
+        );
       } else {
         showNotification(t('system_info.version_is_latest'), 'success');
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       const suffix = message ? `: ${message}` : '';
       showNotification(`${t('system_info.version_check_error')}${suffix}`, 'error');
     } finally {
@@ -295,13 +390,36 @@ export function VersionCard({
     };
   }, []);
 
-  const appBadge = useMemo(
-    () => renderBadge(compareVersions(latest.latestApp, appVersion), latest.latestApp, t),
-    [appVersion, latest.latestApp, t]
+  const appComparison = useMemo(
+    () => compareVersions(latest.latestApp, appVersion),
+    [appVersion, latest.latestApp]
   );
-  const apiBadge = useMemo(
-    () => renderBadge(compareVersions(latest.latestApi, apiVersion), latest.latestApi, t),
-    [apiVersion, latest.latestApi, t]
+  const apiComparison = useMemo(
+    () => compareVersions(latest.latestApi, apiVersion),
+    [apiVersion, latest.latestApi]
+  );
+  const appBadgeCheck = resolveVersionBadgeCheck(
+    runtimeUpdatesManaged,
+    runtimeUpdateCheck?.components.cpamp,
+    appComparison,
+    latest.latestApp
+  );
+  const apiBadgeCheck = resolveVersionBadgeCheck(
+    runtimeUpdatesManaged,
+    runtimeUpdateCheck?.components.cpa,
+    apiComparison,
+    latest.latestApi
+  );
+  const appBadge = appBadgeCheck
+    ? renderBadge(appBadgeCheck.comparison, appBadgeCheck.latest, t)
+    : null;
+  const apiBadge = apiBadgeCheck
+    ? renderBadge(apiBadgeCheck.comparison, apiBadgeCheck.latest, t)
+    : null;
+  const showRuntimeUpdateLink = shouldShowRuntimeUpdateLink(
+    sessionMode,
+    runtimeUpdatesManaged,
+    runtimeUpdateAvailable
   );
 
   const buildTimeDisplay = serverBuildDate
@@ -354,7 +472,8 @@ export function VersionCard({
           }
         : {
             label: t('dashboard.collector_status_title'),
-            value: collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal'),
+            value:
+              collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal'),
             tone: collectorLoading && !collectorStatus ? 'muted' : 'ok',
             icon: <IconCheck size={16} />,
           };
@@ -375,7 +494,9 @@ export function VersionCard({
         }
       : {
           label: t('dashboard.health_queue_status'),
-          value: collector?.queue || (collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal')),
+          value:
+            collector?.queue ||
+            (collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal')),
           tone: collectorLoading && !collectorStatus ? 'muted' : 'ok',
           icon: <IconCheck size={16} />,
         };
@@ -397,7 +518,15 @@ export function VersionCard({
   return (
     <div className={styles.container}>
       <section className={styles.section}>
-        <h2 className={styles.heading}>{t('dashboard.system_overview')}</h2>
+        <div className={styles.headingRow}>
+          <h2 className={styles.heading}>{t('dashboard.system_overview')}</h2>
+          {showRuntimeUpdateLink && (
+            <Link to="/system" className={styles.updateLink}>
+              {t('system_info.runtime_view_updates')}
+              <IconExternalLink size={13} />
+            </Link>
+          )}
+        </div>
         <div className={`${styles.grid} ${styles.systemGrid}`}>
           <div
             className={`${styles.item} ${styles.tapItem}`}
@@ -411,63 +540,77 @@ export function VersionCard({
               }
             }}
           >
-            <div className={styles.icon}><IconSettings size={18} /></div>
+            <div className={styles.icon}>
+              <IconSettings size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.versionHeader}>
                 <div className={styles.label}>{t('dashboard.app_version')}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  iconOnly
-                  className={styles.versionAction}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void handleAppVersionCheck();
-                  }}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  loading={checkingAppVersion}
-                  title={t('system_info.version_check_button')}
-                  aria-label={t('system_info.version_check_button')}
-                >
-                  {!checkingAppVersion && <IconRefreshCw size={14} />}
-                </Button>
+                {!runtimeUpdatesManaged && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    iconOnly
+                    className={styles.versionAction}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleAppVersionCheck();
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    loading={checkingAppVersion}
+                    title={t('system_info.version_check_button')}
+                    aria-label={t('system_info.version_check_button')}
+                  >
+                    {!checkingAppVersion && <IconRefreshCw size={14} />}
+                  </Button>
+                )}
               </div>
               <div className={styles.valueWrap}>
                 <span className={styles.value}>{appVersion || t('dashboard.version_unknown')}</span>
-                {appBadge && <span className={`${styles.badge} ${appBadge.className}`}>{appBadge.label}</span>}
+                {appBadge && (
+                  <span className={`${styles.badge} ${appBadge.className}`}>{appBadge.label}</span>
+                )}
               </div>
             </div>
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconSatellite size={18} /></div>
+            <div className={styles.icon}>
+              <IconSatellite size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.versionHeader}>
                 <div className={styles.label}>{t('dashboard.api_version')}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  iconOnly
-                  className={styles.versionAction}
-                  onClick={() => void handleApiVersionCheck()}
-                  loading={checkingApiVersion}
-                  title={t('system_info.version_check_button')}
-                  aria-label={t('system_info.version_check_button')}
-                >
-                  {!checkingApiVersion && <IconRefreshCw size={14} />}
-                </Button>
+                {!runtimeUpdatesManaged && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    iconOnly
+                    className={styles.versionAction}
+                    onClick={() => void handleApiVersionCheck()}
+                    loading={checkingApiVersion}
+                    title={t('system_info.version_check_button')}
+                    aria-label={t('system_info.version_check_button')}
+                  >
+                    {!checkingApiVersion && <IconRefreshCw size={14} />}
+                  </Button>
+                )}
               </div>
               <div className={styles.valueWrap}>
                 <span className={styles.value}>{apiVersion || t('dashboard.version_unknown')}</span>
-                {apiBadge && <span className={`${styles.badge} ${apiBadge.className}`}>{apiBadge.label}</span>}
+                {apiBadge && (
+                  <span className={`${styles.badge} ${apiBadge.className}`}>{apiBadge.label}</span>
+                )}
               </div>
             </div>
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconTimer size={18} /></div>
+            <div className={styles.icon}>
+              <IconTimer size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.label}>{t('dashboard.build_time')}</div>
               <div className={styles.value}>{buildTimeDisplay}</div>
@@ -475,7 +618,9 @@ export function VersionCard({
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconExternalLink size={18} /></div>
+            <div className={styles.icon}>
+              <IconExternalLink size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.label}>{t('dashboard.cpa_base')}</div>
               <div className={styles.value}>{cpaBase || '-'}</div>
@@ -493,13 +638,19 @@ export function VersionCard({
                 <div className={`${styles.healthIcon} ${styles[item.tone]}`}>{item.icon}</div>
                 <div className={styles.content}>
                   <div className={styles.label}>{item.label}</div>
-                  <div className={`${styles.value} ${styles[`${item.tone}Text`]}`}>{item.value}</div>
+                  <div className={`${styles.value} ${styles[`${item.tone}Text`]}`}>
+                    {item.value}
+                  </div>
                 </div>
               </>
             );
 
             return item.to ? (
-              <Link key={item.label} to={item.to} className={`${styles.healthItem} ${styles.healthLink}`}>
+              <Link
+                key={item.label}
+                to={item.to}
+                className={`${styles.healthItem} ${styles.healthLink}`}
+              >
                 {content}
               </Link>
             ) : (

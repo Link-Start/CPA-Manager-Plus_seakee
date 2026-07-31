@@ -17,6 +17,7 @@ import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { obfuscatedStorage } from '@/services/storage/secureStorage';
 import { apiClient } from '@/services/api/client';
 import { usageServiceApi } from '@/services/api/usageService';
+import { clearRuntimeUpdateCheckCache } from '@/services/runtimeUpdateCheckCache';
 import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { useQuotaStore } from './useQuotaStore';
@@ -113,6 +114,7 @@ export const useAuthStore = create<AuthStoreState>()(
             })
           ) {
             const fallbackBase = normalizeApiBase(options?.expectedPanelBase || detectApiBaseFromLocation());
+            clearRuntimeUpdateCheckCache();
             set({
               apiBase: fallbackBase,
               managementKey: '',
@@ -165,6 +167,7 @@ export const useAuthStore = create<AuthStoreState>()(
         const sessionMode = credentials.sessionMode ?? get().sessionMode;
         const sessionPanelBase = normalizeApiBase(credentials.sessionPanelBase || get().sessionPanelBase);
         const quotaCacheScope = sha256Hex(`${apiBase}\u0000${managementKey}`);
+        clearRuntimeUpdateCheckCache();
 
         const markAuthenticated = (result: LoginResult = {}) => {
           useQuotaStore.getState().activateQuotaCacheScope(quotaCacheScope);
@@ -244,6 +247,7 @@ export const useAuthStore = create<AuthStoreState>()(
         useModelsStore.getState().clearCache();
         useQuotaStore.getState().clearQuotaCache();
         useUsageServiceStore.getState().clearUsageServiceConfig();
+        clearRuntimeUpdateCheckCache();
         apiClient.setConfig({ apiBase: '', managementKey: '' });
         set({
           isAuthenticated: false,

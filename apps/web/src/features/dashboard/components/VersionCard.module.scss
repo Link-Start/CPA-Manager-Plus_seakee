@@ -16,12 +16,41 @@
   padding: 16px;
   min-width: 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
 
-  .heading {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 14px;
-    color: var(--text-primary);
+.headingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.updateLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-border);
+    outline-offset: 3px;
+    border-radius: 2px;
   }
 }
 
@@ -38,7 +67,8 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.item, .healthItem {
+.item,
+.healthItem {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -137,6 +167,10 @@
     padding: 12px;
   }
 
+  .headingRow {
+    align-items: flex-start;
+  }
+
   .item,
   .healthItem {
     padding: 8px;
@@ -218,10 +252,18 @@
     }
   }
 
-  .okText { color: #10b981; }
-  .warnText { color: #f59e0b; }
-  .errorText { color: #ef4444; }
-  .mutedText { color: var(--text-tertiary); }
+  .okText {
+    color: #10b981;
+  }
+  .warnText {
+    color: #f59e0b;
+  }
+  .errorText {
+    color: #ef4444;
+  }
+  .mutedText {
+    color: var(--text-tertiary);
+  }
 }
 
 .badge {

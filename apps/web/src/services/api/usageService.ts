@@ -23,6 +23,7 @@ import type { ModelPrice } from '@/utils/usage';
 const USAGE_SERVICE_ERROR_CODES = new Set([
   'request_failed',
   'connection_env_managed',
+  'cpa_connection_already_bound',
   'cpa_connection_required',
   'cpa_connection_required_for_monitoring',
   'management_api_validation_failed',
@@ -33,6 +34,27 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'enable_cpa_usage_statistics_failed',
   'setup_env_managed',
   'invalid_existing_management_key',
+  'setup_cpa_connection_required',
+  'setup_cpa_management_key_invalid',
+  'setup_cpa_unreachable',
+  'setup_admin_key_too_short',
+  'setup_admin_key_policy',
+  'setup_admin_already_initialized',
+  'admin_verification_busy',
+  'setup_bootstrap_token_unavailable',
+  'setup_bootstrap_token_expired',
+  'setup_bootstrap_token_invalid',
+  'panel_base_path_env_managed',
+  'panel_base_path_invalid',
+  'runtime_control_unavailable',
+  'slim_cpa_provision_unavailable',
+  'slim_cpa_provision_failed',
+  'slim_cpa_source_invalid',
+  'slim_transition_recovery_pending',
+  'runtime_update_not_managed',
+  'runtime_update_check_failed',
+  'runtime_update_start_failed',
+  'runtime_operation_not_found',
   'invalid_admin_key',
   'invalid_management_key',
   'usage_service_not_configured',
@@ -56,6 +78,7 @@ export interface UsageServiceApiError extends Error {
   code?: string;
   details?: unknown;
   data?: unknown;
+  docsUrl?: string;
 }
 
 export interface UsageServiceInfo {
@@ -69,6 +92,12 @@ export interface UsageServiceInfo {
   migrationStatus?: string;
   dataKeyReady?: boolean;
   hasHistoricalData?: boolean;
+  deploymentMode?: 'external' | 'installer-managed' | 'integrated' | 'slim' | string;
+  setupStep?: 'cpa_connection' | 'admin_key' | 'complete' | string;
+  bootstrapRequired?: boolean;
+  bootstrapTokenHeader?: string;
+  panelBasePath?: string;
+  panelBasePathManaged?: boolean;
 }
 
 export interface UsageServiceCollectorStatus {
@@ -147,6 +176,148 @@ export interface UsageServiceSetupRequest {
   tlsSkipVerify?: boolean;
   ensureUsageStatisticsEnabled?: boolean;
   requestMonitoringEnabled?: boolean;
+}
+
+export interface UsageServiceSetupAuth {
+  adminKey?: string;
+  bootstrapToken?: string;
+}
+
+export interface UsageServiceSetupResult {
+  ok: boolean;
+  upstream: string;
+  nextStep: string;
+}
+
+export interface UsageServiceAdminKeyResult {
+  ok: boolean;
+  nextStep: string;
+}
+
+export interface UsageServiceGeneratedAdminKeyResult {
+  adminKey: string;
+}
+
+export type UsageServiceSlimCPAAction = 'download_latest' | 'use_existing';
+
+export interface UsageServiceSlimCPAResult {
+  ok: boolean;
+  action: UsageServiceSlimCPAAction;
+  nextStep: string;
+  installed?: {
+    name: string;
+    version: string;
+    binaryPath?: string;
+    releaseUrl?: string;
+    releaseNotes?: string;
+  };
+  deployment?: Record<string, unknown>;
+}
+
+export interface RuntimeDeploymentState {
+  schemaVersion: number;
+  mode: string;
+  panelBasePath: string;
+  panelBasePathSource?: string;
+  runtimeManaged: boolean;
+  cpampUpdatesManaged: boolean;
+  cpaUpdatesManaged: boolean;
+  migrationVersion?: number;
+  migrationCheckpoints?: string[];
+  retiredPanelPaths?: string[];
+  updatedAtMs?: number;
+}
+
+export interface RuntimeComponentState {
+  name: string;
+  status: string;
+  pid?: number;
+  version?: string;
+  binaryPath?: string;
+  restarts?: number;
+  lastError?: string;
+  startedAtMs?: number;
+  updatedAtMs?: number;
+}
+
+export interface RuntimeComponentUpdateResult {
+  name: string;
+  fromVersion?: string;
+  toVersion?: string;
+  status: string;
+  error?: string;
+  rollbackVersion?: string;
+}
+
+export interface RuntimeUpdateOperation {
+  id: string;
+  kind: 'cpamp' | 'cpa' | 'all' | string;
+  status: string;
+  progress: number;
+  message?: string;
+  components: string[];
+  currentVersions?: Record<string, string>;
+  targetVersions?: Record<string, string>;
+  releaseUrls?: Record<string, string>;
+  releaseNotes?: Record<string, string>;
+  results?: Record<string, RuntimeComponentUpdateResult>;
+  error?: string;
+  rollbackAttempted?: boolean;
+  rollbackSuccessful?: boolean;
+  startedAtMs: number;
+  updatedAtMs: number;
+  completedAtMs?: number;
+}
+
+export interface RuntimeState {
+  schemaVersion: number;
+  deployment: RuntimeDeploymentState;
+  cpaUpstreamUrl?: string;
+  components: Record<string, RuntimeComponentState>;
+  operations?: Record<string, RuntimeUpdateOperation>;
+  latestOperationId?: string;
+  updatedAtMs: number;
+}
+
+export interface RuntimeStatusResult {
+  deployment: RuntimeDeploymentState;
+  runtimeAvailable: boolean;
+  runtimeUnavailableReason?: string;
+  runtime?: RuntimeState;
+  updateCapabilities: {
+    cpamp: boolean;
+    cpa: boolean;
+    all: boolean;
+  };
+}
+
+export interface RuntimePanelBasePathResult {
+  ok: boolean;
+  panelPath: string;
+  deployment: RuntimeDeploymentState;
+}
+
+export interface RuntimeUpdateCheckComponent {
+  name: string;
+  currentVersion?: string;
+  availableVersion?: string;
+  updateAvailable: boolean;
+  releaseUrl?: string;
+  releaseNotes?: string;
+  minCpampVersion?: string;
+  standaloneUpdateAllowed?: boolean;
+  combinedUpdateAllowed?: boolean;
+}
+
+export interface RuntimeUpdateCheckResult {
+  checkedAtMs: number;
+  deployment: RuntimeDeploymentState;
+  components: Record<string, RuntimeUpdateCheckComponent>;
+}
+
+export interface RuntimeStartUpdateResult {
+  operation: RuntimeUpdateOperation;
+  operationToken: string;
 }
 
 export interface ManagerCPAConnectionConfig {
@@ -1404,6 +1575,7 @@ export interface MonitoringAnalyticsResponse {
 
 const USAGE_SERVICE_TIMEOUT_MS = 30 * 1000;
 const USAGE_SERVICE_TRANSFER_TIMEOUT_MS = 60 * 1000;
+const USAGE_SERVICE_RUNTIME_OPERATION_TIMEOUT_MS = 10 * 60 * 1000;
 const USAGE_IMPORT_CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
 const CODEX_INSPECTION_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 export const USAGE_SERVICE_ID = 'cpa-manager-plus';
@@ -1430,6 +1602,13 @@ const buildUrl = (base: string, path: string): string => {
 
 const authHeaders = (managementKey?: string) =>
   managementKey ? { Authorization: `Bearer ${managementKey}` } : undefined;
+
+const setupAuthHeaders = (auth?: UsageServiceSetupAuth) => {
+  if (auth?.bootstrapToken) {
+    return { 'X-CPAMP-Bootstrap-Token': auth.bootstrapToken };
+  }
+  return authHeaders(auth?.adminKey);
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object';
@@ -1484,6 +1663,8 @@ const toUsageServiceApiError = (error: unknown): UsageServiceApiError => {
     apiError.code = getUsageServiceErrorCode(error) || error.code;
     apiError.details = data;
     apiError.data = data;
+    apiError.docsUrl =
+      isRecord(data) && typeof data.docsUrl === 'string' ? data.docsUrl : undefined;
     return apiError;
   }
 
@@ -1921,19 +2102,175 @@ export const usageServiceApi = {
   setup: async (
     base: string,
     payload: UsageServiceSetupRequest,
-    adminKey?: string
-  ): Promise<void> => {
+    auth?: UsageServiceSetupAuth
+  ): Promise<UsageServiceSetupResult> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return;
+      return { ok: true, upstream: payload.cpaBaseUrl, nextStep: 'admin_key' };
     }
 
-    await withUsageServiceError(async () => {
-      await axios.post(buildUrl(base, '/setup'), payload, {
-        timeout: USAGE_SERVICE_TIMEOUT_MS,
-        headers: authHeaders(adminKey),
-      });
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageServiceSetupResult>(
+        buildUrl(base, '/setup'),
+        payload,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: setupAuthHeaders(auth),
+        }
+      );
+      return response.data;
     });
   },
+
+  selectSlimCPA: async (
+    base: string,
+    action: UsageServiceSlimCPAAction,
+    auth?: UsageServiceSetupAuth
+  ): Promise<UsageServiceSlimCPAResult> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return {
+        ok: true,
+        action,
+        nextStep: action === 'download_latest' ? 'admin_key' : 'cpa_connection',
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageServiceSlimCPAResult>(
+        buildUrl(base, '/setup/cpa-source'),
+        { action },
+        {
+          timeout: USAGE_SERVICE_RUNTIME_OPERATION_TIMEOUT_MS,
+          headers: setupAuthHeaders(auth),
+        }
+      );
+      return response.data;
+    });
+  },
+
+  generateAdminKey: async (
+    base: string,
+    auth?: UsageServiceSetupAuth
+  ): Promise<UsageServiceGeneratedAdminKeyResult> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return { adminKey: 'cpamp_DemoAdminKey1234567890' };
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageServiceGeneratedAdminKeyResult>(
+        buildUrl(base, '/setup/admin-key/generate'),
+        undefined,
+        { timeout: USAGE_SERVICE_TIMEOUT_MS, headers: setupAuthHeaders(auth) }
+      );
+      return response.data;
+    });
+  },
+
+  initializeAdminKey: async (
+    base: string,
+    adminKey: string,
+    auth?: UsageServiceSetupAuth
+  ): Promise<UsageServiceAdminKeyResult> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return { ok: true, nextStep: 'complete' };
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageServiceAdminKeyResult>(
+        buildUrl(base, '/setup/admin-key'),
+        { adminKey },
+        { timeout: USAGE_SERVICE_TIMEOUT_MS, headers: setupAuthHeaders(auth) }
+      );
+      return response.data;
+    });
+  },
+
+  getRuntimeStatus: async (base: string, adminKey: string): Promise<RuntimeStatusResult> =>
+    withUsageServiceError(async () => {
+      const response = await axios.get<RuntimeStatusResult>(
+        buildUrl(base, '/v0/management/runtime'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(adminKey),
+        }
+      );
+      return response.data;
+    }),
+
+  updateRuntimePanelBasePath: async (
+    base: string,
+    adminKey: string,
+    basePath: string
+  ): Promise<RuntimePanelBasePathResult> =>
+    withUsageServiceError(async () => {
+      const response = await axios.put<RuntimePanelBasePathResult>(
+        buildUrl(base, '/v0/management/runtime/panel-base-path'),
+        { basePath },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(adminKey),
+        }
+      );
+      return response.data;
+    }),
+
+  checkRuntimeUpdates: async (base: string, adminKey: string): Promise<RuntimeUpdateCheckResult> =>
+    withUsageServiceError(async () => {
+      const response = await axios.get<RuntimeUpdateCheckResult>(
+        buildUrl(base, '/v0/management/runtime/updates'),
+        {
+          timeout: USAGE_SERVICE_RUNTIME_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(adminKey),
+        }
+      );
+      return response.data;
+    }),
+
+  startRuntimeUpdate: async (
+    base: string,
+    adminKey: string,
+    target: 'cpamp' | 'cpa' | 'all'
+  ): Promise<RuntimeStartUpdateResult> =>
+    withUsageServiceError(async () => {
+      const response = await axios.post<RuntimeStartUpdateResult>(
+        buildUrl(base, '/v0/management/runtime/updates'),
+        { target },
+        {
+          timeout: USAGE_SERVICE_RUNTIME_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(adminKey),
+        }
+      );
+      return response.data;
+    }),
+
+  getRuntimeOperation: async (
+    base: string,
+    adminKey: string,
+    operationId: string
+  ): Promise<RuntimeUpdateOperation> =>
+    withUsageServiceError(async () => {
+      const response = await axios.get<RuntimeUpdateOperation>(
+        buildUrl(base, `/v0/management/runtime/operations/${encodeURIComponent(operationId)}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(adminKey),
+        }
+      );
+      return response.data;
+    }),
+
+  getRuntimeOperationDirect: async (
+    base: string,
+    operationId: string,
+    operationToken: string
+  ): Promise<RuntimeUpdateOperation> =>
+    withUsageServiceError(async () => {
+      const response = await axios.get<RuntimeUpdateOperation>(
+        buildUrl(base, `/v0/runtime/operations/${encodeURIComponent(operationId)}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: { 'X-CPAMP-Operation-Token': operationToken },
+        }
+      );
+      return response.data;
+    }),
 
   getManagerConfig: async (
     base: string,

@@ -26,6 +26,7 @@ import iconGrokDark from '@/assets/icons/grok-dark.svg';
 import iconDeepseek from '@/assets/icons/deepseek.svg';
 import iconMinimax from '@/assets/icons/minimax.svg';
 import styles from './SystemPage.module.scss';
+import { RuntimeUpdatePanel } from './RuntimeUpdatePanel';
 
 const MODEL_CATEGORY_ICONS: Record<string, string | { light: string; dark: string }> = {
   gpt: { light: iconOpenaiLight, dark: iconOpenaiDark },
@@ -195,6 +196,8 @@ export function SystemPage() {
   return (
     <div className={styles.container}>
       <div className={styles.content}>
+        <RuntimeUpdatePanel />
+
         <Card title={t('system_info.quick_links_title')}>
           <p className={styles.sectionDescription}>{t('system_info.quick_links_desc')}</p>
           <div className={styles.quickLinks}>

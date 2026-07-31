@@ -1,0 +1,241 @@
+.description {
+  margin: 0 0 $spacing-lg;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  padding: $spacing-lg;
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-lg;
+  background: var(--surface-subtle);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-md;
+
+  h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 16px;
+  }
+
+  p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+.versionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-md;
+}
+
+.versionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: $spacing-md;
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-md;
+  background: var(--bg-primary);
+}
+
+.versionName {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.versionValue {
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.updateBadge,
+.currentBadge {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: $radius-full;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.updateBadge {
+  color: var(--warning-color);
+  background: color-mix(in srgb, var(--warning-color) 12%, transparent);
+}
+
+.currentBadge {
+  color: var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 12%, transparent);
+}
+
+.updateActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: $spacing-sm;
+}
+
+.notice {
+  padding: 10px 12px;
+  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.operationBox {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-md;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 25%, var(--border-subtle));
+  border-radius: $radius-md;
+  background: var(--bg-primary);
+}
+
+.operationHeader,
+.operationResults > div {
+  display: flex;
+  justify-content: space-between;
+  gap: $spacing-md;
+}
+
+.operationHeader span,
+.operationMessage {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.progressTrack {
+  height: 7px;
+  overflow: hidden;
+  border-radius: $radius-full;
+  background: var(--border-subtle);
+}
+
+.progressBar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-color);
+  transition: width 0.25s ease;
+}
+
+.operationResults {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.basePathRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: $spacing-md;
+}
+
+.confirmContent {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+
+  > p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+}
+
+.confirmComponents {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.confirmComponent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: $spacing-md;
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-md;
+  background: var(--surface-subtle);
+
+  > div {
+    display: flex;
+    justify-content: space-between;
+    gap: $spacing-md;
+  }
+
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+}
+
+.releaseNotes {
+  white-space: pre-wrap;
+}
+
+.confirmNotice {
+  padding: $spacing-md;
+  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--warning-color) 9%, transparent);
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+}
+
+@media (max-width: 720px) {
+  .sectionHeader,
+  .basePathRow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .versionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .updateActions > * {
+    flex: 1 1 100%;
+  }
+}

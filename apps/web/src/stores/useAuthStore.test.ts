@@ -28,6 +28,7 @@ const fetchConfigMock = vi.fn();
 const clearConfigCacheMock = vi.fn();
 const clearModelsCacheMock = vi.fn();
 const usageServiceGetManagerConfigMock = vi.fn();
+const clearRuntimeUpdateCheckCacheMock = vi.fn();
 
 vi.mock('@/services/api/client', () => ({
   apiClient: {
@@ -65,6 +66,10 @@ vi.mock('@/services/api/usageService', async () => {
   };
 });
 
+vi.mock('@/services/runtimeUpdateCheckCache', () => ({
+  clearRuntimeUpdateCheckCache: clearRuntimeUpdateCheckCacheMock,
+}));
+
 describe('useAuthStore logout', () => {
   let storage: StorageLike;
 
@@ -75,6 +80,7 @@ describe('useAuthStore logout', () => {
     clearConfigCacheMock.mockClear();
     clearModelsCacheMock.mockClear();
     usageServiceGetManagerConfigMock.mockReset();
+    clearRuntimeUpdateCheckCacheMock.mockClear();
     storage = createMemoryStorage();
     vi.stubGlobal('localStorage', storage);
   });
@@ -115,6 +121,7 @@ describe('useAuthStore logout', () => {
       panelHostMode: '',
     });
     expect(apiClientSetConfig).toHaveBeenCalledWith({ apiBase: '', managementKey: '' });
+    expect(clearRuntimeUpdateCheckCacheMock).toHaveBeenCalledTimes(1);
     expect(useAuthStore.getState()).toMatchObject({
       isAuthenticated: false,
       apiBase: '',

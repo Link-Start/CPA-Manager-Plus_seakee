@@ -9,12 +9,10 @@ import {
   IconEye,
   IconEyeOff,
   IconInfo,
-  IconKey,
   IconLanguages,
   IconMoon,
   IconShield,
   IconSun,
-  IconTimer,
 } from '@/components/ui/icons';
 import {
   useAuthStore,
@@ -28,6 +26,7 @@ import {
   USAGE_SERVICE_LAST_CPA_BASE_KEY,
   getUsageServiceErrorCode,
   usageServiceApi,
+  type UsageServiceInfo,
 } from '@/services/api/usageService';
 import {
   detectApiBaseFromLocation,
@@ -39,11 +38,33 @@ import { isSupportedLanguage } from '@/utils/language';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { resolveUsageServiceLoginMode } from './loginMode';
+import { localizeSetupDocsUrl } from './setupDocs';
 import styles from './LoginPage.module.scss';
 
 type RedirectState = { from?: { pathname?: string } };
-type UsageSetupStep = 'admin' | 'connection' | 'cpaKey' | 'monitoring' | 'polling' | 'review';
+type UsageSetupStep = 'slim' | 'connection' | 'admin' | 'complete';
 const CONFIG_TAB_STORAGE_KEY = 'config-management:tab';
+const SETUP_STATE_STORAGE_KEY = 'cpa-manager-plus:setup-state-changed';
+
+const readLocalStorage = (key: string): string => {
+  try {
+    return localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+};
+
+const writeLocalStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Setup already succeeded server-side; unavailable browser storage must not roll it back in the UI.
+  }
+};
+
+const publishSetupStateChanged = () => {
+  writeLocalStorage(SETUP_STATE_STORAGE_KEY, `${Date.now()}:${Math.random()}`);
+};
 
 function getLocalizedErrorMessage(
   error: unknown,
@@ -118,6 +139,10 @@ export function LoginPage() {
   const storedRememberPassword = useAuthStore((state) => state.rememberPassword);
   const setUsageServiceConfig = useUsageServiceStore((state) => state.setUsageServiceConfig);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(true);
+  const actionInFlightRef = useRef(false);
+  const refreshGenerationRef = useRef(0);
+  const autoLoginTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [apiBase, setApiBase] = useState('');
   const [adminKey, setAdminKey] = useState('');
@@ -126,8 +151,14 @@ export function LoginPage() {
   const [showAdminKey, setShowAdminKey] = useState(false);
   const [showCPAManagementKey, setShowCPAManagementKey] = useState(false);
   const [rememberCredential, setRememberCredential] = useState(false);
-  const [requestMonitoringEnabled, setRequestMonitoringEnabled] = useState(true);
-  const [pollIntervalMs, setPollIntervalMs] = useState('500');
+  const [bootstrapToken, setBootstrapToken] = useState(
+    () => new URLSearchParams(location.search).get('bootstrap')?.trim() || ''
+  );
+  const [deploymentMode, setDeploymentMode] = useState('external');
+  const [bootstrapRequired, setBootstrapRequired] = useState(false);
+  const [adminReady, setAdminReady] = useState(false);
+  const [setupIncludesCPA, setSetupIncludesCPA] = useState(true);
+  const [errorDocsUrl, setErrorDocsUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(true);
   const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
@@ -137,7 +168,7 @@ export function LoginPage() {
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [hasHistoricalData, setHasHistoricalData] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState('');
-  const [usageSetupStep, setUsageSetupStep] = useState<UsageSetupStep>('admin');
+  const [usageSetupStep, setUsageSetupStep] = useState<UsageSetupStep>('connection');
 
   const detectedBase = useMemo(() => detectApiBaseFromLocation(), []);
   const isManagerServerMode = hostedByUsageService;
@@ -152,34 +183,81 @@ export function LoginPage() {
     ? t('login.admin_key_hint')
     : t('login.cpa_management_key_hint');
 
-  const usageSetupSteps = useMemo<UsageSetupStep[]>(
-    () => [
-      'admin',
-      'connection',
-      'cpaKey',
-      'monitoring',
-      ...(requestMonitoringEnabled ? (['polling'] as UsageSetupStep[]) : []),
-      'review',
-    ],
-    [requestMonitoringEnabled]
-  );
+  const usageSetupSteps = useMemo<UsageSetupStep[]>(() => {
+    const steps: UsageSetupStep[] = [];
+    if (deploymentMode === 'slim' && setupIncludesCPA) steps.push('slim');
+    if (setupIncludesCPA) steps.push('connection');
+    if (!adminReady) steps.push('admin');
+    steps.push('complete');
+    return steps;
+  }, [adminReady, deploymentMode, setupIncludesCPA]);
   const usageSetupStepIndex = Math.max(0, usageSetupSteps.indexOf(usageSetupStep));
   const usageSetupIsFirstStep = usageSetupStepIndex <= 0;
-  const usageSetupIsLastStep = usageSetupStep === 'review';
+  const usageSetupIsLastStep = usageSetupStep === 'complete';
   const usageSetupStepLabels = useMemo<Record<UsageSetupStep, string>>(
     () => ({
+      slim: t('login.step_cpa_source'),
       admin: t('login.step_admin_key'),
       connection: t('login.step_connection'),
-      cpaKey: t('login.step_cpa_key'),
-      monitoring: t('login.step_monitoring'),
-      polling: t('login.step_polling'),
-      review: t('login.step_review'),
+      complete: t('login.step_complete'),
     }),
     [t]
   );
   const toggleLanguageMenu = useCallback(() => {
     setLanguageMenuOpen((prev) => !prev);
   }, []);
+
+  const beginAction = useCallback(() => {
+    if (!mountedRef.current || actionInFlightRef.current) return false;
+    actionInFlightRef.current = true;
+    refreshGenerationRef.current += 1;
+    if (mountedRef.current) setLoading(true);
+    return true;
+  }, []);
+
+  const finishAction = useCallback(() => {
+    actionInFlightRef.current = false;
+    if (mountedRef.current) setLoading(false);
+  }, []);
+
+  const applyUsageServiceInfo = useCallback(
+    (info: UsageServiceInfo, options: { preserveLocalStep?: boolean } = {}) => {
+      const mode = resolveUsageServiceLoginMode(info);
+      const infoAdminReady = Boolean(info.adminReady);
+      const infoProjectInitialized = Boolean(info.projectInitialized ?? info.configured);
+      const infoDeploymentMode = info.deploymentMode || 'external';
+      const includesCPA = !infoProjectInitialized;
+
+      setHostedByUsageService(mode.hostedByUsageService);
+      setUsageServiceNeedsSetup(mode.usageServiceNeedsSetup);
+      setHasHistoricalData(Boolean(info.hasHistoricalData));
+      setMigrationStatus(info.migrationStatus || '');
+      setDeploymentMode(infoDeploymentMode);
+      setBootstrapRequired(Boolean(info.bootstrapRequired));
+      setAdminReady(infoAdminReady);
+      setSetupIncludesCPA(includesCPA);
+
+      if (!options.preserveLocalStep || !mode.usageServiceNeedsSetup || infoProjectInitialized) {
+        if (infoDeploymentMode === 'slim' && includesCPA) {
+          setUsageSetupStep('slim');
+        } else if (includesCPA) {
+          setUsageSetupStep('connection');
+        } else if (!infoAdminReady) {
+          setUsageSetupStep('admin');
+        } else {
+          setUsageSetupStep('complete');
+        }
+      }
+
+      return {
+        hostedByUsageService: mode.hostedByUsageService,
+        usageServiceNeedsSetup: mode.usageServiceNeedsSetup,
+        configured: mode.hostedByUsageService && !mode.usageServiceNeedsSetup,
+        setupIncludesCPA: includesCPA,
+      };
+    },
+    []
+  );
 
   const handleLanguageSelect = useCallback(
     (selectedLanguage: string) => {
@@ -192,6 +270,17 @@ export function LoginPage() {
     },
     [setLanguage]
   );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (autoLoginTimeoutRef.current !== null) {
+        clearTimeout(autoLoginTimeoutRef.current);
+        autoLoginTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!languageMenuOpen) {
@@ -220,26 +309,49 @@ export function LoginPage() {
   }, [languageMenuOpen]);
 
   useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    if (!searchParams.has('bootstrap')) return;
+    searchParams.delete('bootstrap');
+    const remainingSearch = searchParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: remainingSearch ? `?${remainingSearch}` : '',
+        hash: location.hash,
+      },
+      { replace: true, state: location.state }
+    );
+    // The token remains only in component memory and is removed from browser history.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const init = async () => {
       try {
         let detectedUsageService = false;
         let detectedUsageServiceConfigured = false;
+        let detectedSetupIncludesCPA = false;
         try {
           const info = await usageServiceApi.getInfo(detectedBase);
-          const mode = resolveUsageServiceLoginMode(info);
-          detectedUsageService = mode.hostedByUsageService;
-          detectedUsageServiceConfigured = detectedUsageService && !mode.usageServiceNeedsSetup;
-          setHostedByUsageService(mode.hostedByUsageService);
-          setUsageServiceNeedsSetup(mode.usageServiceNeedsSetup);
-          setHasHistoricalData(Boolean(info.hasHistoricalData));
-          setMigrationStatus(info.migrationStatus || '');
+          if (cancelled || !mountedRef.current) return;
+          const detection = applyUsageServiceInfo(info);
+          detectedUsageService = detection.hostedByUsageService;
+          detectedUsageServiceConfigured = detection.configured;
+          detectedSetupIncludesCPA = detection.setupIncludesCPA;
         } catch {
+          if (cancelled || !mountedRef.current) return;
           detectedUsageService = false;
           detectedUsageServiceConfigured = false;
           setHostedByUsageService(false);
           setUsageServiceNeedsSetup(false);
           setHasHistoricalData(false);
           setMigrationStatus('');
+          setDeploymentMode('external');
+          setBootstrapRequired(false);
+          setAdminReady(false);
+          setSetupIncludesCPA(true);
+          detectedSetupIncludesCPA = true;
         }
 
         const hostedManagementPage =
@@ -250,6 +362,7 @@ export function LoginPage() {
           expectedMode: detectedUsageService ? 'manager_embedded' : 'external_panel',
           expectedPanelBase: autoLoginExpectedPanelBase,
         });
+        if (cancelled || !mountedRef.current) return;
         if (detectedUsageService) {
           setUsageServiceConfig(
             { enabled: true, serviceBase: detectedBase },
@@ -258,13 +371,14 @@ export function LoginPage() {
         }
         if (autoLoggedIn) {
           setAutoLoginSuccess(true);
-          setTimeout(() => {
+          autoLoginTimeoutRef.current = setTimeout(() => {
+            if (!mountedRef.current) return;
             const redirect =
               autoLoggedIn.recoveryMode === 'manager_config'
                 ? '/config'
                 : (location.state as RedirectState | null)?.from?.pathname || '/';
             if (autoLoggedIn.recoveryMode === 'manager_config') {
-              localStorage.setItem(CONFIG_TAB_STORAGE_KEY, 'manager');
+              writeLocalStorage(CONFIG_TAB_STORAGE_KEY, 'manager');
             }
             navigate(redirect, { replace: true });
           }, 1500);
@@ -272,9 +386,8 @@ export function LoginPage() {
         }
 
         const lastCPAForUsageService =
-          localStorage.getItem(USAGE_SERVICE_LAST_CPA_BASE_KEY) ||
-          localStorage.getItem(LEGACY_USAGE_SERVICE_LAST_CPA_BASE_KEY) ||
-          '';
+          readLocalStorage(USAGE_SERVICE_LAST_CPA_BASE_KEY) ||
+          readLocalStorage(LEGACY_USAGE_SERVICE_LAST_CPA_BASE_KEY);
         const defaultCPAConnectionBase = resolveDefaultCPAConnectionBase({
           hostedByUsageService: detectedUsageService,
           currentBase: detectedBase,
@@ -286,7 +399,9 @@ export function LoginPage() {
               : lastCPAForUsageService || defaultCPAConnectionBase
             : storedBase || detectedBase
         );
-        setShowCustomBase(detectedUsageService && !detectedUsageServiceConfigured);
+        setShowCustomBase(
+          detectedUsageService && !detectedUsageServiceConfigured && detectedSetupIncludesCPA
+        );
         if (detectedUsageService) {
           setAdminKey(storedKey || '');
           setCPAManagementKey('');
@@ -296,62 +411,272 @@ export function LoginPage() {
         }
         setRememberCredential(storedRememberPassword || Boolean(storedKey));
       } finally {
-        if (!autoLoginSuccess) {
-          setAutoLoading(false);
-        }
+        if (!cancelled && mountedRef.current) setAutoLoading(false);
       }
     };
 
     init();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refreshUsageServiceInfo = useCallback(async () => {
+    if (autoLoading || actionInFlightRef.current) return;
+    const generation = refreshGenerationRef.current + 1;
+    refreshGenerationRef.current = generation;
+    try {
+      const info = await usageServiceApi.getInfo(detectedBase);
+      if (
+        !mountedRef.current ||
+        actionInFlightRef.current ||
+        refreshGenerationRef.current !== generation
+      ) {
+        return;
+      }
+      const detection = applyUsageServiceInfo(info, { preserveLocalStep: true });
+      if (detection.hostedByUsageService) {
+        setUsageServiceConfig(
+          { enabled: true, serviceBase: detectedBase },
+          { panelBase: detectedBase, panelHostMode: 'manager_embedded' }
+        );
+      }
+      if (!detection.usageServiceNeedsSetup) {
+        setApiBase(detectedBase);
+        setShowCustomBase(false);
+      }
+    } catch {
+      // Focus/storage synchronization is best-effort; the visible flow keeps its current state.
+    }
+  }, [applyUsageServiceInfo, autoLoading, detectedBase, setUsageServiceConfig]);
+
+  useEffect(() => {
+    const handleFocus = () => void refreshUsageServiceInfo();
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === SETUP_STATE_STORAGE_KEY) handleFocus();
+    };
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') handleFocus();
+    };
+
+    window.addEventListener?.('focus', handleFocus);
+    window.addEventListener?.('storage', handleStorage);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    return () => {
+      window.removeEventListener?.('focus', handleFocus);
+      window.removeEventListener?.('storage', handleStorage);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [refreshUsageServiceInfo]);
+
   useEffect(() => {
     if (!usageSetupSteps.includes(usageSetupStep)) {
-      setUsageSetupStep('review');
+      setUsageSetupStep(usageSetupSteps[0] || 'complete');
     }
   }, [usageSetupStep, usageSetupSteps]);
 
   const validateUsageSetupStep = useCallback(
     (step: UsageSetupStep) => {
-      if (step === 'admin' && !adminKey.trim()) {
+      setErrorDocsUrl('');
+      if (bootstrapRequired && step !== 'complete' && !bootstrapToken.trim()) {
+        setError(t('login.bootstrap_token_required'));
+        return false;
+      }
+      if ((step === 'slim' || step === 'connection') && adminReady && !adminKey.trim()) {
         setError(t('login.admin_key_required'));
         return false;
       }
-      if (step === 'connection' && !apiBase.trim()) {
-        setError(t('login.cpa_address_required'));
-        return false;
+      if (step === 'connection') {
+        if (!apiBase.trim()) {
+          setError(t('login.cpa_address_required'));
+          return false;
+        }
+        if (!cpaManagementKey.trim()) {
+          setError(t('login.cpa_management_key_required'));
+          return false;
+        }
       }
-      if (step === 'cpaKey' && !cpaManagementKey.trim()) {
-        setError(t('login.cpa_management_key_required'));
-        return false;
-      }
-      if (step === 'polling') {
-        const parsedPollIntervalMs = Number(pollIntervalMs);
-        if (
-          !/^\d+$/.test(pollIntervalMs.trim()) ||
-          !Number.isFinite(parsedPollIntervalMs) ||
-          parsedPollIntervalMs <= 0
-        ) {
-          setError(t('login.poll_interval_invalid'));
+      if (step === 'admin') {
+        const value = adminKey.trim();
+        if (!value) {
+          setError(t('login.admin_key_required'));
+          return false;
+        }
+        const classes = [
+          /[A-Z]/.test(value),
+          /[a-z]/.test(value),
+          /[0-9]/.test(value),
+          /[^A-Za-z0-9]/.test(value),
+        ].filter(Boolean).length;
+        if (Array.from(value).length < 16 || classes < 3) {
+          setError(t('login.admin_key_policy'));
           return false;
         }
       }
       setError('');
       return true;
     },
-    [adminKey, apiBase, cpaManagementKey, pollIntervalMs, t]
+    [adminKey, adminReady, apiBase, bootstrapRequired, bootstrapToken, cpaManagementKey, t]
   );
 
-  const handleUsageSetupNext = useCallback(() => {
+  const setupAuth = useMemo(
+    () =>
+      bootstrapRequired ? { bootstrapToken: bootstrapToken.trim() } : { adminKey: adminKey.trim() },
+    [adminKey, bootstrapRequired, bootstrapToken]
+  );
+
+  const handleSetupError = useCallback(
+    (err: unknown) => {
+      if (!mountedRef.current) return;
+      const message = getLocalizedErrorMessage(err, t);
+      const docsUrl =
+        typeof (err as { docsUrl?: unknown })?.docsUrl === 'string'
+          ? ((err as { docsUrl: string }).docsUrl ?? '')
+          : '';
+      setError(message);
+      setErrorDocsUrl(localizeSetupDocsUrl(docsUrl, language));
+      showNotification(`${t('login.initialization_failed')}: ${message}`, 'error');
+    },
+    [language, showNotification, t]
+  );
+
+  const handleGenerateAdminKey = useCallback(async () => {
+    if (bootstrapRequired && !bootstrapToken.trim()) {
+      setError(t('login.bootstrap_token_required'));
+      return;
+    }
+    if (!beginAction()) return;
+    setError('');
+    setErrorDocsUrl('');
+    try {
+      const result = await usageServiceApi.generateAdminKey(detectedBase, setupAuth);
+      if (!mountedRef.current) return;
+      setAdminKey(result.adminKey);
+      setShowAdminKey(true);
+    } catch (err) {
+      handleSetupError(err);
+    } finally {
+      finishAction();
+    }
+  }, [
+    beginAction,
+    bootstrapRequired,
+    bootstrapToken,
+    detectedBase,
+    finishAction,
+    handleSetupError,
+    setupAuth,
+    t,
+  ]);
+
+  const handleSlimCPAChoice = useCallback(
+    async (action: 'download_latest' | 'use_existing') => {
+      if (!validateUsageSetupStep('slim')) return;
+      if (!beginAction()) return;
+      setError('');
+      setErrorDocsUrl('');
+      try {
+        const result = await usageServiceApi.selectSlimCPA(detectedBase, action, setupAuth);
+        publishSetupStateChanged();
+        if (!mountedRef.current) return;
+        if (action === 'download_latest') {
+          setDeploymentMode('integrated');
+          setSetupIncludesCPA(false);
+          setUsageSetupStep(adminReady ? 'complete' : 'admin');
+          showNotification(
+            result.installed?.version
+              ? t('login.slim_download_complete_version', {
+                  version: result.installed.version,
+                })
+              : t('login.slim_download_complete'),
+            'success'
+          );
+          return;
+        }
+        setUsageSetupStep('connection');
+      } catch (err) {
+        handleSetupError(err);
+      } finally {
+        finishAction();
+      }
+    },
+    [
+      adminReady,
+      beginAction,
+      detectedBase,
+      finishAction,
+      handleSetupError,
+      setupAuth,
+      showNotification,
+      t,
+      validateUsageSetupStep,
+    ]
+  );
+
+  const handleUsageSetupNext = useCallback(async () => {
     if (!validateUsageSetupStep(usageSetupStep)) return;
-    const currentIndex = usageSetupSteps.indexOf(usageSetupStep);
-    const nextStep = usageSetupSteps[Math.min(currentIndex + 1, usageSetupSteps.length - 1)];
-    setUsageSetupStep(nextStep);
-  }, [usageSetupStep, usageSetupSteps, validateUsageSetupStep]);
+    if (!beginAction()) return;
+    setError('');
+    setErrorDocsUrl('');
+    try {
+      if (usageSetupStep === 'slim') {
+        return;
+      }
+      if (usageSetupStep === 'connection') {
+        const baseToUse = normalizeApiBase(apiBase);
+        await usageServiceApi.setup(
+          detectedBase,
+          {
+            cpaBaseUrl: baseToUse,
+            cpaManagementKey: cpaManagementKey.trim(),
+            requestMonitoringEnabled: true,
+            ensureUsageStatisticsEnabled: true,
+          },
+          setupAuth
+        );
+        writeLocalStorage(USAGE_SERVICE_LAST_CPA_BASE_KEY, baseToUse);
+        publishSetupStateChanged();
+        if (!mountedRef.current) return;
+        setUsageSetupStep(adminReady ? 'complete' : 'admin');
+        return;
+      }
+      if (usageSetupStep === 'admin') {
+        await usageServiceApi.initializeAdminKey(detectedBase, adminKey.trim(), setupAuth);
+        publishSetupStateChanged();
+        if (!mountedRef.current) return;
+        setAdminReady(true);
+        setBootstrapRequired(false);
+        setBootstrapToken('');
+        setUsageSetupStep('complete');
+      }
+    } catch (err) {
+      handleSetupError(err);
+    } finally {
+      finishAction();
+    }
+  }, [
+    adminKey,
+    adminReady,
+    apiBase,
+    beginAction,
+    cpaManagementKey,
+    detectedBase,
+    finishAction,
+    handleSetupError,
+    setupAuth,
+    usageSetupStep,
+    validateUsageSetupStep,
+  ]);
 
   const handleUsageSetupBack = useCallback(() => {
+    if (actionInFlightRef.current) return;
     setError('');
+    setErrorDocsUrl('');
     const currentIndex = usageSetupSteps.indexOf(usageSetupStep);
     const previousStep = usageSetupSteps[Math.max(currentIndex - 1, 0)];
     setUsageSetupStep(previousStep);
@@ -359,7 +684,7 @@ export function LoginPage() {
 
   const handleSubmit = useCallback(async () => {
     if (usageServiceNeedsSetup && !usageSetupIsLastStep) {
-      handleUsageSetupNext();
+      await handleUsageSetupNext();
       return;
     }
 
@@ -367,20 +692,7 @@ export function LoginPage() {
     const trimmedCPAKey = cpaManagementKey.trim();
     const baseToUse = apiBase ? normalizeApiBase(apiBase) : detectedBase;
 
-    if (usageServiceNeedsSetup) {
-      if (!trimmedAdminKey) {
-        setError(t('login.admin_key_required'));
-        return;
-      }
-      if (!apiBase.trim()) {
-        setError(t('login.cpa_address_required'));
-        return;
-      }
-      if (!trimmedCPAKey) {
-        setError(t('login.cpa_management_key_required'));
-        return;
-      }
-    } else if (isManagerServerMode) {
+    if (usageServiceNeedsSetup || isManagerServerMode) {
       if (!trimmedAdminKey) {
         setError(t('login.admin_key_required'));
         return;
@@ -390,38 +702,15 @@ export function LoginPage() {
       return;
     }
 
-    const parsedPollIntervalMs = Number(pollIntervalMs);
-    if (
-      usageServiceNeedsSetup &&
-      requestMonitoringEnabled &&
-      (!/^\d+$/.test(pollIntervalMs.trim()) ||
-        !Number.isFinite(parsedPollIntervalMs) ||
-        parsedPollIntervalMs <= 0)
-    ) {
-      setError(t('login.poll_interval_invalid'));
-      return;
-    }
-
-    setLoading(true);
+    if (!beginAction()) return;
     setError('');
+    setErrorDocsUrl('');
     try {
       if (usageServiceNeedsSetup) {
-        await usageServiceApi.setup(
-          detectedBase,
-          {
-            cpaBaseUrl: baseToUse,
-            cpaManagementKey: trimmedCPAKey,
-            pollIntervalMs: requestMonitoringEnabled ? parsedPollIntervalMs : undefined,
-            ensureUsageStatisticsEnabled: requestMonitoringEnabled,
-            requestMonitoringEnabled,
-          },
-          trimmedAdminKey
-        );
         setUsageServiceConfig(
           { enabled: true, serviceBase: detectedBase },
           { panelBase: detectedBase, panelHostMode: 'manager_embedded' }
         );
-        localStorage.setItem(USAGE_SERVICE_LAST_CPA_BASE_KEY, baseToUse);
       } else if (isManagerServerMode) {
         setUsageServiceConfig(
           { enabled: true, serviceBase: detectedBase },
@@ -436,32 +725,40 @@ export function LoginPage() {
         sessionMode: isManagerServerMode ? 'manager_embedded' : 'external_panel',
         sessionPanelBase: detectedBase,
       });
+      if (!mountedRef.current) return;
       showNotification(t('common.connected_status'), 'success');
       if (loginResult.recoveryMode === 'manager_config') {
-        localStorage.setItem(CONFIG_TAB_STORAGE_KEY, 'manager');
+        writeLocalStorage(CONFIG_TAB_STORAGE_KEY, 'manager');
         navigate('/config', { replace: true });
       } else {
         navigate('/', { replace: true });
       }
     } catch (err: unknown) {
+      if (!mountedRef.current) return;
       const message = getLocalizedErrorMessage(err, t);
       setError(message);
+      setErrorDocsUrl(
+        typeof (err as { docsUrl?: unknown })?.docsUrl === 'string'
+          ? localizeSetupDocsUrl((err as { docsUrl: string }).docsUrl ?? '', language)
+          : ''
+      );
       showNotification(`${t('notification.login_failed')}: ${message}`, 'error');
     } finally {
-      setLoading(false);
+      finishAction();
     }
   }, [
     adminKey,
     apiBase,
+    beginAction,
     cpaManagementKey,
     detectedBase,
+    finishAction,
     handleUsageSetupNext,
     isManagerServerMode,
+    language,
     login,
     navigate,
-    pollIntervalMs,
     rememberCredential,
-    requestMonitoringEnabled,
     setUsageServiceConfig,
     showNotification,
     t,
@@ -523,11 +820,7 @@ export function LoginPage() {
             <IconLanguages size={17} />
           </button>
           {languageMenuOpen && (
-            <div
-              className={styles.languagePopover}
-              role="menu"
-              aria-label={t('language.switch')}
-            >
+            <div className={styles.languagePopover} role="menu" aria-label={t('language.switch')}>
               {LANGUAGE_ORDER.map((lang) => (
                 <button
                   key={lang}
@@ -563,7 +856,9 @@ export function LoginPage() {
               usageServiceNeedsSetup ? styles.setupFormContent : ''
             }`}
           >
-            <div className={`${styles.loginCard} ${usageServiceNeedsSetup ? styles.setupCard : ''}`}>
+            <div
+              className={`${styles.loginCard} ${usageServiceNeedsSetup ? styles.setupCard : ''}`}
+            >
               <div className={styles.cardBranding}>
                 <img src={INLINE_LOGO_JPEG} alt="CPA Manager Plus" className={styles.logo} />
                 <h1>CPA Manager Plus</h1>
@@ -578,7 +873,7 @@ export function LoginPage() {
 
               {usageServiceNeedsSetup && (
                 <div className={styles.setupFlow}>
-                  <div className={styles.stepper} aria-label={t('login.setup_steps')}>
+                  <div className={styles.stepper} role="list" aria-label={t('login.setup_steps')}>
                     {usageSetupSteps.map((step, index) => {
                       const isActive = index === usageSetupStepIndex;
                       const isDone = index < usageSetupStepIndex;
@@ -588,6 +883,7 @@ export function LoginPage() {
                           className={`${styles.stepItem} ${isActive ? styles.stepItemActive : ''} ${
                             isDone ? styles.stepItemDone : ''
                           }`}
+                          role="listitem"
                           aria-current={isActive ? 'step' : undefined}
                         >
                           <span className={styles.stepIndex}>
@@ -609,6 +905,106 @@ export function LoginPage() {
                       </span>
                       <h2>{usageSetupStepLabels[usageSetupStep]}</h2>
                     </div>
+
+                    {bootstrapRequired && usageSetupStep !== 'complete' && (
+                      <div className={styles.stepFields}>
+                        <Input
+                          label={t('login.bootstrap_token_label')}
+                          placeholder={t('login.bootstrap_token_placeholder')}
+                          type="password"
+                          value={bootstrapToken}
+                          onChange={(event) => setBootstrapToken(event.target.value)}
+                          hint={t('login.bootstrap_token_hint')}
+                        />
+                      </div>
+                    )}
+
+                    {usageSetupStep === 'slim' && (
+                      <div className={styles.stepFields}>
+                        {adminReady && (
+                          <Input
+                            autoFocus
+                            label={t('login.admin_key_label')}
+                            placeholder={t('login.admin_key_placeholder')}
+                            type={showAdminKey ? 'text' : 'password'}
+                            value={adminKey}
+                            onChange={(event) => setAdminKey(event.target.value)}
+                            hint={t('login.existing_admin_key_hint')}
+                            rightElement={renderKeyToggle(showAdminKey, () =>
+                              setShowAdminKey((prev) => !prev)
+                            )}
+                          />
+                        )}
+                        <div className={styles.connectionBox}>
+                          <div className={styles.connectionIcon}>
+                            <IconInfo size={18} />
+                          </div>
+                          <div className={styles.connectionCopy}>
+                            <div className={styles.label}>{t('login.slim_choice_title')}</div>
+                            <div className={styles.hint}>{t('login.slim_choice_hint')}</div>
+                          </div>
+                        </div>
+                        <Button
+                          fullWidth
+                          onClick={() => void handleSlimCPAChoice('download_latest')}
+                          loading={loading}
+                        >
+                          {loading
+                            ? t('login.slim_downloading_latest')
+                            : t('login.slim_download_latest')}
+                        </Button>
+                        <Button
+                          fullWidth
+                          variant="secondary"
+                          onClick={() => void handleSlimCPAChoice('use_existing')}
+                          disabled={loading}
+                        >
+                          {t('login.slim_use_existing')}
+                        </Button>
+                        <p className={styles.slimSecurityHint}>
+                          {t('login.slim_download_security_hint')}
+                        </p>
+                      </div>
+                    )}
+
+                    {usageSetupStep === 'connection' && (
+                      <div className={styles.stepFields}>
+                        {adminReady && (
+                          <Input
+                            label={t('login.admin_key_label')}
+                            placeholder={t('login.admin_key_placeholder')}
+                            type={showAdminKey ? 'text' : 'password'}
+                            value={adminKey}
+                            onChange={(event) => setAdminKey(event.target.value)}
+                            hint={t('login.existing_admin_key_hint')}
+                            rightElement={renderKeyToggle(showAdminKey, () =>
+                              setShowAdminKey((prev) => !prev)
+                            )}
+                          />
+                        )}
+                        <Input
+                          autoFocus={!adminReady}
+                          label={t('login.cpa_connection_label')}
+                          placeholder={t('login.cpa_connection_placeholder')}
+                          value={apiBase}
+                          onChange={(event) => setApiBase(event.target.value)}
+                          onKeyDown={handleSubmitKeyDown}
+                          hint={t('login.cpa_connection_hint')}
+                        />
+                        <Input
+                          label={t('login.cpa_management_key_label')}
+                          placeholder={t('login.cpa_management_key_placeholder')}
+                          type={showCPAManagementKey ? 'text' : 'password'}
+                          value={cpaManagementKey}
+                          onChange={(event) => setCPAManagementKey(event.target.value)}
+                          onKeyDown={handleSubmitKeyDown}
+                          hint={t('login.cpa_management_key_hint')}
+                          rightElement={renderKeyToggle(showCPAManagementKey, () =>
+                            setShowCPAManagementKey((prev) => !prev)
+                          )}
+                        />
+                      </div>
+                    )}
 
                     {usageSetupStep === 'admin' && (
                       <div className={styles.stepFields}>
@@ -634,83 +1030,32 @@ export function LoginPage() {
                           value={adminKey}
                           onChange={(event) => setAdminKey(event.target.value)}
                           onKeyDown={handleSubmitKeyDown}
-                          hint={t('login.admin_key_hint')}
+                          hint={t('login.admin_key_policy')}
                           rightElement={renderKeyToggle(showAdminKey, () =>
                             setShowAdminKey((prev) => !prev)
                           )}
                         />
+                        <Button
+                          variant="secondary"
+                          onClick={handleGenerateAdminKey}
+                          disabled={loading}
+                        >
+                          {t('login.generate_admin_key')}
+                        </Button>
                       </div>
                     )}
 
-                    {usageSetupStep === 'connection' && (
+                    {usageSetupStep === 'complete' && (
                       <div className={styles.stepFields}>
-                        <Input
-                          autoFocus
-                          label={t('login.cpa_connection_label')}
-                          placeholder={t('login.cpa_connection_placeholder')}
-                          value={apiBase}
-                          onChange={(event) => setApiBase(event.target.value)}
-                          onKeyDown={handleSubmitKeyDown}
-                          hint={t('login.cpa_connection_hint')}
-                        />
-                      </div>
-                    )}
-
-                    {usageSetupStep === 'cpaKey' && (
-                      <div className={styles.stepFields}>
-                        <Input
-                          autoFocus
-                          label={t('login.cpa_management_key_label')}
-                          placeholder={t('login.cpa_management_key_placeholder')}
-                          type={showCPAManagementKey ? 'text' : 'password'}
-                          value={cpaManagementKey}
-                          onChange={(event) => setCPAManagementKey(event.target.value)}
-                          onKeyDown={handleSubmitKeyDown}
-                          hint={t('login.cpa_management_key_hint')}
-                          rightElement={renderKeyToggle(showCPAManagementKey, () =>
-                            setShowCPAManagementKey((prev) => !prev)
-                          )}
-                        />
-                      </div>
-                    )}
-
-                    {usageSetupStep === 'monitoring' && (
-                      <div className={styles.stepFields}>
-                        <div className={styles.optionBox}>
-                          <SelectionCheckbox
-                            checked={requestMonitoringEnabled}
-                            onChange={setRequestMonitoringEnabled}
-                            ariaLabel={t('login.request_monitoring_enabled')}
-                            label={t('login.request_monitoring_enabled')}
-                            labelClassName={styles.toggleLabel}
-                          />
-                          <p>
-                            {requestMonitoringEnabled
-                              ? t('login.request_monitoring_enabled_hint')
-                              : t('login.request_monitoring_disabled_hint')}
-                          </p>
+                        <div className={styles.connectionBox}>
+                          <div className={styles.connectionIcon}>
+                            <IconCheck size={18} />
+                          </div>
+                          <div className={styles.connectionCopy}>
+                            <div className={styles.label}>{t('login.setup_complete_title')}</div>
+                            <div className={styles.hint}>{t('login.setup_complete_hint')}</div>
+                          </div>
                         </div>
-                      </div>
-                    )}
-
-                    {usageSetupStep === 'polling' && (
-                      <div className={styles.stepFields}>
-                        <Input
-                          autoFocus
-                          label={t('login.poll_interval_label')}
-                          type="number"
-                          min="1"
-                          placeholder="500"
-                          value={pollIntervalMs}
-                          onChange={(event) => setPollIntervalMs(event.target.value)}
-                          onKeyDown={handleSubmitKeyDown}
-                          hint={t('login.poll_interval_hint')}
-                        />
-                      </div>
-                    )}
-
-                    {usageSetupStep === 'review' && (
-                      <div className={styles.stepFields}>
                         <div className={styles.optionBox}>
                           <SelectionCheckbox
                             checked={rememberCredential}
@@ -720,63 +1065,20 @@ export function LoginPage() {
                             labelClassName={styles.toggleLabel}
                           />
                         </div>
-                        <div className={styles.reviewGrid}>
-                          <div>
-                            <span className={styles.reviewIcon}>
-                              <IconShield size={18} />
-                            </span>
-                            <span>{t('login.admin_key_label')}</span>
-                            <strong>{adminKey ? '************' : '-'}</strong>
-                          </div>
-                          <div>
-                            <span className={styles.reviewIcon}>
-                              <IconKey size={18} />
-                            </span>
-                            <span>{t('login.remember_credential_label')}</span>
-                            <strong>
-                              {rememberCredential ? t('common.enabled') : t('common.disabled')}
-                            </strong>
-                          </div>
-                          <div>
-                            <span className={styles.reviewIcon}>
-                              <IconInfo size={18} />
-                            </span>
-                            <span>{t('login.cpa_connection_label')}</span>
-                            <strong>{apiBase || '-'}</strong>
-                          </div>
-                          <div>
-                            <span className={styles.reviewIcon}>
-                              <IconKey size={18} />
-                            </span>
-                            <span>{t('login.cpa_management_key_label')}</span>
-                            <strong>{cpaManagementKey ? '************' : '-'}</strong>
-                          </div>
-                          <div>
-                            <span className={styles.reviewIcon}>
-                              <IconEye size={18} />
-                            </span>
-                            <span>{t('login.request_monitoring_enabled')}</span>
-                            <strong>
-                              {requestMonitoringEnabled
-                                ? t('common.enabled')
-                                : t('common.disabled')}
-                            </strong>
-                          </div>
-                          {requestMonitoringEnabled && (
-                            <div>
-                              <span className={styles.reviewIcon}>
-                                <IconTimer size={18} />
-                              </span>
-                              <span>{t('login.poll_interval_label')}</span>
-                              <strong>{pollIntervalMs}</strong>
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )}
                   </div>
 
-                  {error && <div className={styles.errorBox}>{error}</div>}
+                  {error && (
+                    <div className={styles.errorBox} role="alert">
+                      <div>{error}</div>
+                      {errorDocsUrl && (
+                        <a href={errorDocsUrl} target="_blank" rel="noreferrer">
+                          {t('login.open_solution_docs')}
+                        </a>
+                      )}
+                    </div>
+                  )}
 
                   <div className={styles.stepActions}>
                     <Button
@@ -787,13 +1089,13 @@ export function LoginPage() {
                     >
                       {t('common.previous')}
                     </Button>
-                    {usageSetupIsLastStep ? (
+                    {usageSetupStep === 'slim' ? null : usageSetupIsLastStep ? (
                       <Button
                         className={styles.setupNextButton}
                         onClick={handleSubmit}
                         loading={loading}
                       >
-                        {loading ? t('login.initializing') : t('login.initialize_button')}
+                        {loading ? t('login.initializing') : t('login.enter_management')}
                       </Button>
                     ) : (
                       <Button
@@ -849,7 +1151,9 @@ export function LoginPage() {
                     label={loginCredentialLabel}
                     placeholder={loginCredentialPlaceholder}
                     type={
-                      (isManagerServerMode ? showAdminKey : showCPAManagementKey) ? 'text' : 'password'
+                      (isManagerServerMode ? showAdminKey : showCPAManagementKey)
+                        ? 'text'
+                        : 'password'
                     }
                     value={loginCredential}
                     onChange={(event) =>
@@ -882,7 +1186,11 @@ export function LoginPage() {
                     {loading ? t('login.submitting') : t('login.submit_button')}
                   </Button>
 
-                  {error && <div className={styles.errorBox}>{error}</div>}
+                  {error && (
+                    <div className={styles.errorBox} role="alert">
+                      {error}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
