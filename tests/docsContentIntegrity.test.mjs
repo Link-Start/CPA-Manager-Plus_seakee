@@ -66,6 +66,74 @@ describe('documentation content integrity', () => {
     expect(missing).toEqual([]);
   });
 
+  it('keeps every setup problem link backed by bilingual troubleshooting anchors', () => {
+    const chinese = readFileSync(path.join(docsRoot, 'troubleshooting/setup.md'), 'utf8');
+    const english = readFileSync(path.join(docsRoot, 'en/troubleshooting/setup.md'), 'utf8');
+    const anchors = [
+      'cpa-connection-required',
+      'setup-managed-by-environment',
+      'cpa-management-key-invalid',
+      'cpa-management-api-unreachable',
+      'cpa-usage-config-unavailable',
+      'cpa-usage-retention-invalid',
+      'poll-interval-exceeds-retention',
+      'enable-cpa-usage-statistics-failed',
+      'admin-key-policy',
+      'admin-key-too-short',
+      'admin-key-already-initialized',
+      'admin-key-invalid',
+      'admin-verification-busy',
+      'bootstrap-token-unavailable',
+      'bootstrap-token-expired',
+      'bootstrap-token-invalid',
+      'slim-cpa-source-invalid',
+      'slim-cpa-provision-unavailable',
+      'slim-cpa-download-failed',
+      'panel-base-path-environment',
+      'panel-base-path-invalid',
+      'runtime-update-not-managed',
+      'runtime-update-check-failed',
+      'runtime-update-start-failed',
+      'runtime-operation-not-found',
+      'runtime-control-unavailable',
+    ];
+
+    for (const anchor of anchors) {
+      expect(chinese).toContain(`id="${anchor}"`);
+      expect(english).toContain(`id="${anchor}"`);
+    }
+  });
+
+  it('keeps the unified Gateway and UI-managed initialization contract in primary docs', () => {
+    const gettingStarted = readFileSync(path.join(docsRoot, 'guide/getting-started.md'), 'utf8');
+    const gettingStartedEn = readFileSync(
+      path.join(docsRoot, 'en/guide/getting-started.md'),
+      'utf8'
+    );
+    const clients = readFileSync(path.join(docsRoot, 'gateway/clients.md'), 'utf8');
+    const clientsEn = readFileSync(path.join(docsRoot, 'en/gateway/clients.md'), 'utf8');
+    const configuration = readFileSync(path.join(docsRoot, 'operations/configuration.md'), 'utf8');
+    const configurationEn = readFileSync(
+      path.join(docsRoot, 'en/operations/configuration.md'),
+      'utf8'
+    );
+
+    for (const content of [gettingStarted, gettingStartedEn, clients, clientsEn]) {
+      expect(content).toContain('18137');
+      expect(content).not.toContain(':18317/management.html');
+    }
+    expect(clients).toContain('CPAMP Gateway');
+    expect(clients).not.toContain('不要把 Codex、Claude Code、OpenCode 或 OpenAI SDK 指向 CPAMP');
+    expect(clientsEn).toContain('CPAMP Gateway');
+    expect(clientsEn).not.toContain('Do not point Codex, Claude Code, OpenCode');
+    expect(gettingStarted).toContain('安装器不会生成或输出该管理密钥');
+    expect(gettingStartedEn).toContain('installer does not generate or print that admin key');
+    expect(configuration).toContain('一次性 bootstrap token');
+    expect(configuration).not.toContain('首次启动会生成随机管理员密钥');
+    expect(configurationEn).toContain('one-time bootstrap token');
+    expect(configurationEn).not.toContain('first startup generates a random admin key');
+  });
+
   it('requires title and description frontmatter on discovery-critical pages', () => {
     const criticalPages = [
       'index.md',

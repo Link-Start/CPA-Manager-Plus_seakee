@@ -18,7 +18,7 @@
     "check:demo-isolation": "node bin/release/check-web-demo-isolation.mjs",
     "preview": "npm --workspace apps/web run preview",
     "preview:demo": "npm --workspace apps/web run preview:demo",
-    "test": "npm --workspace apps/web run test -- src ../../tests",
+    "test": "npm --workspace apps/web run test -- src && vitest run --root . --dir tests",
     "lint": "npm --workspace apps/web run lint",
     "format": "npm --workspace apps/web run format",
     "type-check": "npm --workspace apps/web run type-check",
