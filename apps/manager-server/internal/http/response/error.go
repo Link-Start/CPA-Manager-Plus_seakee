@@ -4,10 +4,23 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/problem"
 )
 
 func Error(w http.ResponseWriter, status int, err error) {
-	JSON(w, status, map[string]any{"error": err.Error(), "code": UsageServiceErrorCode(err)})
+	payload := map[string]any{"error": err.Error(), "code": UsageServiceErrorCode(err)}
+	if typed, ok := problem.As(err); ok {
+		status = typed.Status
+		payload["code"] = typed.Code
+		if typed.DocsURL != "" {
+			payload["docsUrl"] = typed.DocsURL
+		}
+		if len(typed.Details) > 0 {
+			payload["details"] = typed.Details
+		}
+	}
+	JSON(w, status, payload)
 }
 
 func MethodNotAllowed(w http.ResponseWriter) {
@@ -15,6 +28,9 @@ func MethodNotAllowed(w http.ResponseWriter) {
 }
 
 func SetupErrorStatus(err error) int {
+	if typed, ok := problem.As(err); ok {
+		return typed.Status
+	}
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "setup is managed by environment variables"):
@@ -64,6 +80,9 @@ func ModelPriceErrorStatus(err error) int {
 }
 
 func UsageServiceErrorCode(err error) string {
+	if typed, ok := problem.As(err); ok {
+		return typed.Code
+	}
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "connection setup is managed by environment variables"):

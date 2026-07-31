@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -22,16 +23,131 @@ import (
 
 const encryptedPrefix = "enc:v1:"
 const adminKeyPrefix = "cpamp_"
+const bootstrapTokenPrefix = "cpamp_bootstrap_"
 const generatedAdminKeyLength = 32
 const generatedSecretAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-const adminHashIterations = 1
+const adminHashIterations = 120000
+const legacyAdminHashIterations = 1
+const bootstrapHashIterations = 1
+
+var ErrAdminKeyTooShort = errors.New("admin key must be at least 16 characters")
+var ErrAdminKeyCharacterClasses = errors.New("admin key must contain at least three of uppercase, lowercase, number, and special character")
+var ErrAdminKeyVerificationBusy = errors.New("admin key verification is temporarily busy")
+
+type adminKeyVerifier struct {
+	slots  chan struct{}
+	verify func(model.AdminCredential, string) bool
+}
+
+var boundedAdminKeyVerifier = newAdminKeyVerifier(defaultAdminKeyVerificationConcurrency(), VerifyAdminKey)
 
 func GenerateAdminKey() (string, error) {
-	random, err := randomAlnum(generatedAdminKeyLength)
+	random, err := randomAdminKeyBody(generatedAdminKeyLength)
 	if err != nil {
 		return "", err
 	}
 	return adminKeyPrefix + random, nil
+}
+
+func ValidateAdminKey(adminKey string) error {
+	adminKey = strings.TrimSpace(adminKey)
+	if len([]rune(adminKey)) < 16 {
+		return ErrAdminKeyTooShort
+	}
+	classes := 0
+	var upper, lower, digit, special bool
+	for _, value := range adminKey {
+		switch {
+		case value >= 'A' && value <= 'Z':
+			upper = true
+		case value >= 'a' && value <= 'z':
+			lower = true
+		case value >= '0' && value <= '9':
+			digit = true
+		default:
+			special = true
+		}
+	}
+	for _, present := range []bool{upper, lower, digit, special} {
+		if present {
+			classes++
+		}
+	}
+	if classes < 3 {
+		return ErrAdminKeyCharacterClasses
+	}
+	return nil
+}
+
+func GenerateBootstrapToken() (string, error) {
+	return GenerateServiceSecret(bootstrapTokenPrefix)
+}
+
+func GenerateServiceSecret(prefix string) (string, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return "", errors.New("secret prefix is required")
+	}
+	for _, value := range prefix {
+		if (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9') || value == '_' || value == '-' {
+			continue
+		}
+		return "", errors.New("secret prefix contains unsupported characters")
+	}
+	random, err := randomAlnum(generatedAdminKeyLength)
+	if err != nil {
+		return "", err
+	}
+	return prefix + random, nil
+}
+
+func NewBootstrapCredential(token string, ttl time.Duration) (model.BootstrapCredential, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return model.BootstrapCredential{}, errors.New("bootstrap token is required")
+	}
+	if ttl <= 0 {
+		return model.BootstrapCredential{}, errors.New("bootstrap token ttl must be positive")
+	}
+	salt, err := randomBytes(16)
+	if err != nil {
+		return model.BootstrapCredential{}, err
+	}
+	tokenHash, err := hashAdminKey(token, salt, bootstrapHashIterations)
+	if err != nil {
+		return model.BootstrapCredential{}, err
+	}
+	now := time.Now()
+	return model.BootstrapCredential{
+		Version:     1,
+		Salt:        base64.RawStdEncoding.EncodeToString(salt),
+		TokenHash:   base64.RawStdEncoding.EncodeToString(tokenHash),
+		CreatedAtMS: now.UnixMilli(),
+		ExpiresAtMS: now.Add(ttl).UnixMilli(),
+	}, nil
+}
+
+func VerifyBootstrapToken(credential model.BootstrapCredential, token string, now time.Time) bool {
+	token = strings.TrimSpace(token)
+	if token == "" || credential.Salt == "" || credential.TokenHash == "" || credential.ConsumedAtMS != 0 {
+		return false
+	}
+	if credential.ExpiresAtMS > 0 && now.UnixMilli() >= credential.ExpiresAtMS {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(credential.Salt)
+	if err != nil {
+		return false
+	}
+	want, err := base64.RawStdEncoding.DecodeString(credential.TokenHash)
+	if err != nil {
+		return false
+	}
+	got, err := hashAdminKey(token, salt, bootstrapHashIterations)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
 func NewAdminCredential(adminKey string, source string) (model.AdminCredential, error) {
@@ -72,13 +188,51 @@ func VerifyAdminKey(credential model.AdminCredential, adminKey string) bool {
 	}
 	iterations := credential.Iterations
 	if iterations <= 0 {
-		iterations = adminHashIterations
+		iterations = legacyAdminHashIterations
 	}
 	got, err := hashAdminKey(adminKey, salt, iterations)
 	if err != nil {
 		return false
 	}
 	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+func VerifyAdminKeyBounded(credential model.AdminCredential, adminKey string) (bool, error) {
+	return boundedAdminKeyVerifier.Verify(credential, adminKey)
+}
+
+func newAdminKeyVerifier(maxConcurrent int, verify func(model.AdminCredential, string) bool) *adminKeyVerifier {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	if verify == nil {
+		verify = VerifyAdminKey
+	}
+	return &adminKeyVerifier{
+		slots:  make(chan struct{}, maxConcurrent),
+		verify: verify,
+	}
+}
+
+func (v *adminKeyVerifier) Verify(credential model.AdminCredential, adminKey string) (bool, error) {
+	select {
+	case v.slots <- struct{}{}:
+		defer func() { <-v.slots }()
+		return v.verify(credential, adminKey), nil
+	default:
+		return false, ErrAdminKeyVerificationBusy
+	}
+}
+
+func defaultAdminKeyVerificationConcurrency() int {
+	concurrency := runtime.GOMAXPROCS(0)
+	if concurrency < 1 {
+		return 1
+	}
+	if concurrency > 4 {
+		return 4
+	}
+	return concurrency
 }
 
 func ExtractBearerToken(header string) string {
@@ -265,6 +419,49 @@ func randomAlnum(length int) (string, error) {
 		}
 	}
 	return string(out), nil
+}
+
+func randomAdminKeyBody(length int) (string, error) {
+	if length < 3 {
+		return "", errors.New("admin key body length must be at least 3")
+	}
+	body, err := randomAlnum(length)
+	if err != nil {
+		return "", err
+	}
+	out := []byte(body)
+	required := []string{"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789"}
+	for index, alphabet := range required {
+		value, err := randomIndex(len(alphabet))
+		if err != nil {
+			return "", err
+		}
+		out[index] = alphabet[value]
+	}
+	for index := len(out) - 1; index > 0; index-- {
+		swap, err := randomIndex(index + 1)
+		if err != nil {
+			return "", err
+		}
+		out[index], out[swap] = out[swap], out[index]
+	}
+	return string(out), nil
+}
+
+func randomIndex(limit int) (int, error) {
+	if limit <= 0 || limit > 256 {
+		return 0, errors.New("random index limit must be between 1 and 256")
+	}
+	threshold := 256 - (256 % limit)
+	buffer := []byte{0}
+	for {
+		if _, err := rand.Read(buffer); err != nil {
+			return 0, err
+		}
+		if int(buffer[0]) < threshold {
+			return int(buffer[0]) % limit, nil
+		}
+	}
 }
 
 func EqualHMAC(left string, right string) bool {
