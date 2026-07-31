@@ -1,12 +1,13 @@
 # Quick Start
 
-Choose a path based on what you need. Both use the CPAMP interface, but installation and available capabilities differ.
+New users should start with CPAMP Full Mode: one Full deployment provides the gateway, management, and local analytics. Use the Lightweight Panel only when CPA already runs and you only want to replace its built-in management UI.
 
 | Your situation                                                      | Recommended path                                             |
 | ------------------------------------------------------------------- | ------------------------------------------------------------ |
-| CPA already runs and you only want a clearer management UI          | [CPAMP Lightweight Panel](#path-1-install-lightweight-panel) |
-| You need request history, cost analytics, inspection, or automation | [CPAMP Full Mode](#path-2-install-full-mode)                 |
-| You are not sure                                                    | Read [Choosing A Panel](./choosing-a-panel.md)               |
+| New deployment requiring gateway, management, and analytics         | [CPAMP Full Mode](#path-2-install-full-mode)                 |
+| CPA already runs and you also need history, cost, or automation      | [CPAMP Full Mode](#path-2-install-full-mode)                 |
+| CPA already runs and you only want a clearer management UI           | [CPAMP Lightweight Panel](#path-1-install-lightweight-panel) |
+| You are not sure                                                     | Read [Choosing A Panel](./choosing-a-panel.md)               |
 
 ## Path 1: Install Lightweight Panel
 
@@ -24,7 +25,7 @@ Log in with the CPA Management Key. See [Install Lightweight Panel](../deploymen
 
 ## Path 2: Install Full Mode
 
-Full Mode runs Manager Server for request history, cost analytics, server-side inspection, and automation. The installer is the recommended path for most users:
+Full Mode provides one Gateway plus Manager Server, request history, cost analytics, server-side inspection, and automation. Full Docker and Full native packages bundle CPA. The installer is the recommended path for most users:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/seakee/CPA-Manager-Plus/main/bin/install-cpamp.sh
@@ -40,19 +41,18 @@ In the installer:
 After installation, open:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
-Log in with the CPAMP Admin Key saved or printed by the installer. See [Install Full Mode](../deployment/installer.md) for details.
+Startup logs print a one-time bootstrap token. Use it to enter setup and create the CPAMP Admin Key in the UI; the installer does not generate or print that admin key. See [Install Full Mode](../deployment/installer.md) for details.
 
-## First CPA Connection
+## First Initialization
 
-If the installer did not save a CPA connection, enter these values when Full Mode opens for the first time:
+- **Bundled CPA or installer-managed CPA + CPAMP**: enter the one-time bootstrap token and set the CPAMP Admin Key. No CPA URL or CPA Management Key is required.
+- **Slim**: choose Download Latest Compatible CPA or Use Existing CPA. A successful download switches the deployment to Integrated; the existing-CPA path immediately validates the CPA URL and CPA Management Key.
+- **CPAMP-only with an external CPA**: validate the CPA URL and CPA Management Key first, then set the CPAMP Admin Key.
 
-1. CPAMP Admin Key.
-2. CPA URL, for example `http://cli-proxy-api:8317`.
-3. CPA Management Key.
-4. Keep request monitoring in the default automatic mode.
+The CPAMP Admin Key must be at least 16 characters and contain at least three of uppercase letters, lowercase letters, digits, and special characters. Setup includes a generate button.
 
 ## Confirm That It Works
 
@@ -64,10 +64,11 @@ If the installer did not save a CPA connection, enter these values when Full Mod
 
 ### Full Mode
 
-- You can log in to `:18317/management.html` with the CPAMP Admin Key.
+- You can log in to `:18137/management.html` with the CPAMP Admin Key.
 - Dashboard shows that CPA is connected.
 - Monitoring shows an event after a real request passes through CPA.
 - Usage Analytics shows the corresponding tokens and estimated cost.
+- After creating a provider and normal CPA API Key, clients can use the same `18137` Gateway as their model API address.
 
 If Full Mode opens but has no request data, see [Monitoring Has No Data](../troubleshooting/request-monitoring.md).
 

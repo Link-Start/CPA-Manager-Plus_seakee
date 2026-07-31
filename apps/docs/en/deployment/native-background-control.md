@@ -72,7 +72,7 @@ $env:CPA_MANAGER_PLUS_LOG_DIR = 'C:\cpamp\logs'
 
 ## Security Notes
 
-The Manager Server can print the generated first-start admin key to stdout. In background mode, stdout and stderr are written to log files, so treat the log directory as sensitive.
+On first startup, Manager Server prints a one-time bootstrap token to stdout for entering UI initialization and creating the admin key. Background mode writes stdout and stderr to log files, so treat the log directory as sensitive and do not reuse the token after it is consumed or expires.
 
 The default `run/` and `logs/` directories are private. On macOS/Linux, default directories are set to `0700` and runtime files to `0600`. On Windows, default runtime directories and files receive a protected ACL for the current user.
 

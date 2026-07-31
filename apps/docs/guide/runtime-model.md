@@ -1,28 +1,28 @@
 # CPAMP 与 CPA 如何协作
 
-CPA 负责接收和转发真实模型请求，CPAMP 负责管理 CPA，并在完整模式下保存请求历史、分析成本和处理账号状态。
+CPA 是实际的模型路由引擎；CPAMP 完整模式把它和 Manager Server 统一放在一个 Gateway 后面，并保存请求历史、分析成本和处理账号状态。新用户只需要把 CPAMP 视为一个完整项目。
 
 普通使用者只需要记住三件事：
 
-1. Codex、Claude Code、OpenCode 等客户端始终连接 CPA，不连接 CPAMP。
-2. CPAMP 轻量面板从 CPA 的 `:8317/management.html` 打开，使用 CPA Management Key。
-3. CPAMP 完整模式从 `:18317/management.html` 打开，使用 CPAMP 管理员密钥。
+1. 完整模式统一使用 `18137`：管理页面和模型 API 都从这个 Gateway 进入。
+2. 管理登录使用 CPAMP 管理密钥；模型请求仍使用普通 CPA API Key。
+3. 只有沿用 CPA 自己托管的轻量面板时，才直接打开 CPA 的 `:8317/management.html` 并使用 CPA Management Key。
 
 ## 请求应该发到哪里
 
-| 操作                   | 地址                            | 使用的密钥         |
-| ---------------------- | ------------------------------- | ------------------ |
-| 客户端请求模型         | CPA 的 `/v1/...` 等模型接口     | CPA 普通 API 密钥  |
-| 使用 CPAMP 轻量面板    | CPA `:8317/management.html`     | CPA Management Key |
-| 使用 CPAMP 完整模式    | CPAMP `:18317/management.html`  | CPAMP 管理员密钥   |
-| CPAMP 完整模式连接 CPA | setup 或配置中心填写的 CPA 地址 | CPA Management Key |
+| 操作                         | 地址                                             | 使用的密钥         |
+| ---------------------------- | ------------------------------------------------ | ------------------ |
+| 完整模式客户端请求模型       | CPAMP `:18137/v1/...` 等 Gateway 模型接口        | CPA 普通 API Key   |
+| 使用 CPAMP 完整模式管理页面  | CPAMP `:18137/management.html` 或自定义 Base Path | CPAMP 管理密钥     |
+| 使用 CPAMP 轻量面板          | CPA `:8317/management.html`                      | CPA Management Key |
+| External / Slim 沿用已有 CPA | 初始化或配置中心填写的 CPA 地址                  | CPA Management Key |
 
-不要把这三类密钥混用。登录失败时，先确认当前打开的是 `8317` 还是 `18317`。
+不要把三类密钥混用。同一个 `18137` Gateway 会按请求路径分流：模型接口验证普通 CPA API Key，CPAMP 管理与分析接口验证 CPAMP 管理密钥。
 
 ## 两种模式的区别
 
 - **轻量面板**：只替换 CPA 官方管理界面，不增加服务或数据库。
-- **完整模式**：增加 Manager Server，用于请求历史、成本分析、服务端巡检、备份和自动化。
+- **完整模式**：提供统一 Gateway、Manager Server 和本地 SQLite；Full 包内置 CPA，Slim 可以下载 CPA 或连接已有 CPA。
 
 不知道应该使用哪一种时，查看[如何选择面板](./choosing-a-panel.md)。
 
@@ -30,20 +30,21 @@ CPA 负责接收和转发真实模型请求，CPAMP 负责管理 CPA，并在完
 
 ```text
 Codex / Claude Code / 其他客户端
-  -> CPA
-      -> 模型提供商
-      -> 请求日志与用量队列
+  -> CPAMP Gateway :18137
+      -> 内置或已配置的 CPA
+          -> 模型提供商
+          -> 请求日志与用量队列
 
-CPAMP 完整模式
-  -> 从 CPA 读取管理信息和用量事件
+CPAMP Manager
+  -> 管理 CPA 并读取用量事件
   -> 保存请求历史、价格、巡检和自动化状态
 ```
 
 因此：
 
-- 客户端请求失败时，先检查 CPA、Provider、账号和客户端配置。
+- 客户端请求失败时，先检查 Gateway、CPA、Provider、账号和客户端配置。
 - CPAMP 页面没有数据时，先确认请求经过 CPA，再检查请求监控采集。
-- CPAMP 不会独立转发模型请求。
+- 已有外部 CPA 的旧客户端可以继续直连 CPA，再逐步迁移到 `18137`；两条路径最终都由 CPA 处理模型请求。
 
 :::
 

@@ -1,31 +1,84 @@
-# Upgrade CPA Manager Plus
+# Update CPA Manager Plus And CPA
 
-This guide explains how to upgrade CPAMP without losing SQLite data, `data.key`, or locally managed secrets. Follow the section for the way CPAMP is currently deployed; do not overwrite an existing deployment with first-install commands.
+CPAMP now has two update paths: Integrated Full deployments use managed UI updates, while separated, External, and Slim deployments without integrated CPA keep using image, installer, or external CPA update workflows.
 
-## Before You Upgrade
+## UI Hierarchy
 
-1. Read the target [release notes](../reference/releases.md) and the GitHub Release Upgrade Notes.
-2. Record the current image tag or native version, launch command, environment variables, and data directory.
-3. Stop extra instances that could write to the same SQLite database. Only one Manager Server may consume a CPA usage queue.
-4. Back up:
+### Dashboard: Lightweight Detection
+
+The Dashboard version card continues to check CPAMP and CPA versions automatically. Integrated/Full uses the signed runtime manifest, while external and split deployments keep the public version endpoints. Its job is to show:
+
+- Current and discovered versions.
+- Whether an update appears available.
+- A “Go to System updates” link for Integrated sessions instead of changing binaries directly.
+
+The actual update belongs on System so release notes, compatibility requirements, impact, progress, and rollback are visible before the user confirms a change.
+
+### System → Runtime & Updates: Complete Flow
+
+This section shows:
+
+- Deployment mode and managed capabilities.
+- Current and available CPAMP/CPA versions.
+- Release pages, release notes, and the minimum CPAMP version required by CPA.
+- “Update CPAMP,” “Update CPA,” and “Update all.”
+- Confirmation, progress, component results, failure details, and rollback results.
+
+When an update starts, the browser receives a one-time operation token. If CPAMP Manager is briefly unavailable while its binary changes, the page can still query that one operation through the Gateway runtime endpoint. The token cannot perform other management actions.
+
+## Managed Update Support
+
+| Mode                                                   | Managed CPAMP update | Managed CPA update                 |
+| ------------------------------------------------------ | -------------------- | ---------------------------------- |
+| Integrated Full Docker / Native                        | Yes                  | Yes                                |
+| Slim after downloading CPA and switching to Integrated | Yes                  | Yes                                |
+| Slim using an existing CPA                             | No                   | No; update external CPA separately |
+| Separated `installer-managed` CPA + CPAMP              | No                   | No; use Compose or the installer   |
+| External / CPA Panel                                   | No                   | No                                 |
+
+Managed updates verify the signed release manifest, platform/architecture/libc, asset size, and SHA-256. Each restarted component must pass health checks. If a later component fails, previously switched components are rolled back in reverse order.
+
+The manifest attached to the latest stable CPAMP release is refreshed every six hours and can also be refreshed manually. This lets a new standalone CPA release appear in the UI without waiting for another CPAMP release. If the repository-level `CPA_RUNTIME_VERSION` pin is configured, both release packaging and scheduled manifest refresh deliberately stay on that CPA version until the pin changes.
+
+The signed manifest declares the minimum CPAMP version required by CPA. When the current CPAMP is too old, the UI disables “Update CPA.” Use “Update all” when the CPAMP version in the manifest satisfies the requirement. If the selected release channel still has no compatible CPAMP, “Update all” is disabled as well. Scheduled refreshes conservatively use the current stable CPAMP as the compatibility floor for a newly published CPA, so an older CPAMP may need to update with it.
+
+Shutdown budgets increase by layer: CPA may need about 30 seconds, the supervisor allows 35 seconds, the Integrated runtime allows 40 seconds, Docker CPAMP and installer stop operations allow 45 seconds, and the Windows native control script allows 50 seconds. Do not configure a shorter grace period in custom Compose, systemd, or another process manager; a normal graceful shutdown could otherwise be mistaken for failure and be force-killed or rolled back.
+
+## Before Updating
+
+1. Read the target Release Notes and compatibility requirements.
+2. Back up the complete data directory:
    - `usage.sqlite`, `usage.sqlite-wal`, and `usage.sqlite-shm`.
    - `data.key`.
-   - Installer-managed `secrets/`, `.env`, `compose.yaml`, or `config.json`.
-   - Custom reverse-proxy, systemd, launchd, or Windows service configuration.
+   - `cpa/config.yaml`, `cpa/auths/`, and `cpa/logs/`.
+   - `runtime/`, which holds installed components and rollback state.
+3. Confirm that no second Manager Server uses the same SQLite or consumes the same CPA usage queue.
+4. For public deployments, confirm that the reverse proxy allows the current dynamic Base Path.
 
-See [Backup And Restore](./backup.md) for safe procedures. A CPA Management Key encrypted in SQLite cannot be recovered if `data.key` is lost.
+## Integrated UI Update
 
-## What Happens After Startup
+1. Open “System → Runtime & Updates.”
+2. Click “Check for updates.”
+3. Review both component versions, release notes, and compatibility requirements.
+4. Select the scope and confirm.
+5. Keep the page open until the operation reaches `succeeded`, `failed`, or `rolled_back`.
 
-- Manager Server applies compatible SQLite schema and metadata migrations automatically; do not run SQL manually.
-- Large historical corrections may continue in the background after the HTTP server starts listening.
-- Account-history or dashboard-hourly rollups may pause during migration. Related pages temporarily fall back to raw events and can be slower until catch-up completes.
-- Do not start a second Manager Server against the same SQLite database or CPA queue to accelerate migration or rollup rebuilds.
-- Use authenticated `GET /status` to inspect migration, collector, and event state.
+Status meanings:
 
-## Docker Deployment Created By The Installer
+| Status               | Meaning                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `queued` / `running` | Verifying, installing, or restarting components                                           |
+| `handoff_pending`    | The new CPAMP is installed; the runtime is restarting and awaiting readiness confirmation |
+| `rolling_back`       | The update failed and applied components are being restored                               |
+| `succeeded`          | Selected components passed health checks and the replacement runtime confirmed readiness  |
+| `rolled_back`        | The update failed, but the previous version was restored                                  |
+| `failed`             | Update or rollback did not fully succeed; inspect component errors and recover manually   |
 
-Do not rerun the installer. Enter the original installation directory and update the images:
+Integrated Docker stores updated binaries under `/data/runtime/components/`. On container restart, the image launcher reads runtime state and delegates to the active version. Periodically refresh the base image as well for operating-system and image-layer fixes.
+
+## Separated Docker From The Installer
+
+Enter the original install directory:
 
 ```bash
 cd "$HOME/cpa-manager-plus"
@@ -34,214 +87,86 @@ docker compose up -d
 docker compose ps
 ```
 
-Replace the path if `CPAMP_INSTALL_DIR` selected another directory.
-
-A full CPA + CPAMP installation pulls both images declared in Compose. To update only CPAMP:
+Update only CPAMP:
 
 ```bash
 docker compose pull cpa-manager-plus
 docker compose up -d cpa-manager-plus
 ```
 
-Do not rerun the installer with `CPAMP_OVERWRITE=1` as an upgrade shortcut. That option regenerates configuration and may overwrite maintained `.env`, `compose.yaml`, CPA configuration, or `run.sh` files.
-
-## Manually Maintained Docker Compose
-
-### Tracking `latest`
+Update only CPA:
 
 ```bash
-docker compose pull cpa-manager-plus
-docker compose up -d cpa-manager-plus
-docker compose logs --tail=100 cpa-manager-plus
+docker compose pull cli-proxy-api
+docker compose up -d cli-proxy-api
 ```
 
-### Pinned Version
+Installer upgrades do not regenerate the CPAMP Admin Key or overwrite CPA `config.yaml`, auths, logs, Docker data volumes, or custom Compose files. Before recreating services, the installer records the current CPAMP image and, for a separated stack, the CPA image. If an old image ID cannot be read, the image no longer exists, or Compose uses an immutable digest reference that cannot be retagged, the installer fails before `pull` so it does not enter an upgrade that cannot be rolled back automatically. If the new deployment never becomes healthy, it retags the saved image IDs, recreates the previous services without pulling, and verifies health again. Use an explicit installer operation for repair or configuration regeneration; do not treat `CPAMP_OVERWRITE=1` as a normal update shortcut.
 
-Change the Compose image to the target version:
+## Manual Docker
 
-```yaml
-services:
-  cpa-manager-plus:
-    image: seakee/cpa-manager-plus:vX.Y.Z
-```
-
-Then run:
+Keep the original `/data` volume attached:
 
 ```bash
-docker compose pull cpa-manager-plus
-docker compose up -d cpa-manager-plus
-```
-
-The corresponding GHCR image is also available:
-
-```text
-ghcr.io/seakee/cpa-manager-plus:vX.Y.Z
-```
-
-Confirm that the new container mounts the existing `/data` volume or host directory. Do not create a new empty volume for an upgrade.
-
-## Manual `docker run`
-
-Inspect the current ports, volumes, environment, network, and `--add-host` settings first:
-
-```bash
-docker inspect cpa-manager-plus
-```
-
-Pull the target image and recreate the container. This is a minimal example; retain every option used by the current deployment:
-
-```bash
-docker pull seakee/cpa-manager-plus:vX.Y.Z
+docker pull seakee/cpa-manager-plus:latest
 docker stop cpa-manager-plus
 docker rm cpa-manager-plus
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
-  -p 18317:18317 \
+  -p 18137:18137 \
   -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:vX.Y.Z
+  seakee/cpa-manager-plus:latest
 ```
 
-If CPA runs on a Linux host, retain:
+Continue mapping `8137` or `18317` while older clients use them. All three ports have the same capabilities.
+
+## Native Packages
+
+### Older Native Install Managed By The Installer
+
+Download the new installer and choose upgrade, or run non-interactively:
+
+```bash
+CPAMP_OPERATION=upgrade \
+CPAMP_NON_INTERACTIVE=1 \
+CPAMP_CONFIRM=1 \
+bash install-cpamp.sh
+```
+
+The installer detects the old `run.sh`, PID/service, and SQLite. It preserves data, secrets, CPA state, and the old runtime. The archive is extracted into a staging directory before the target version directory changes, so an interrupted attempt can be retried with the same version. It stops the old process only after the new package and startup files are ready. If the new version does not become healthy, it restores the old run script and attempts to restart the previous version.
+
+systemd and other external process managers are outside the installer PID lifecycle. Stop the external service first, run the upgrade, then reinstall or reload the service file generated in the install directory.
+
+### Manual Replacement
+
+1. Stop the process.
+2. Back up the complete data directory and old package.
+3. Download the matching `_full` or `_slim` package.
+4. Keep using the existing `CPA_MANAGER_RUNTIME_DATA_DIR` / `USAGE_DATA_DIR`.
+5. Start the new package and verify `18137/health`.
+
+Do not replace an existing data directory with an empty one, and do not copy only `usage.sqlite` while omitting WAL/SHM and `data.key`.
+
+## Verification And Recovery
+
+```bash
+curl http://127.0.0.1:18137/health
+curl http://127.0.0.1:18137/usage-service/info
+curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
+  http://127.0.0.1:18137/status
+```
+
+Inspect:
 
 ```text
---add-host=host.docker.internal:host-gateway
+deployment.mode
+runtimeAvailable
+components.cpamp
+components.cpa
+latestOperationId
+operations
+collector.lastError
 ```
 
-Removing the old container does not remove a named volume, but removing the volume destroys the data.
-
-## Native Deployment Created By The Installer
-
-The installer normally creates:
-
-```text
-runtime/cpa-manager-plus_<version>_<os>_<arch>/
-data/
-secrets/
-run.sh
-cpa-manager-plus.service
-```
-
-Do not overwrite the running version directory:
-
-1. Stop the current process or systemd service.
-2. Back up `data/`, `secrets/`, the old runtime, `run.sh`, and the service file.
-3. Download and extract the target release under `runtime/` as a new version directory.
-4. Copy `config.json` from the old version directory into the new one. Installer-generated relative paths continue to reference the shared `data/` and `secrets/` directories.
-5. Change the working directory and binary path in `run.sh` to the new version directory.
-6. If the generated systemd unit is installed, update `WorkingDirectory` and `ExecStart`, then run `systemctl daemon-reload`.
-7. Start and verify the new version before deciding whether to remove the old runtime.
-
-Do not copy only `usage.sqlite` and omit WAL/SHM. Back up while the process is stopped or use a safe SQLite method from [Backup And Restore](./backup.md).
-
-## Manual Native Packages
-
-### macOS Or Linux, Foreground Or Control Script
-
-1. Run `./cpa-manager-plusctl stop`, or stop your process supervisor.
-2. Back up the data directory and `data.key`.
-3. Extract the new package into a new version directory.
-4. Continue using the external `USAGE_DATA_DIR` / `USAGE_DB_PATH`, or copy `config.json` and `data/` while the process is stopped.
-5. Start with the control script from the new directory:
-
-```bash
-./cpa-manager-plusctl start
-./cpa-manager-plusctl status
-./cpa-manager-plusctl logs
-```
-
-Do not extract over a running directory; that can mix binary, control script, and embedded panel versions.
-
-### Linux systemd With A Fixed Program Directory
-
-If the service always launches `/opt/cpa-manager-plus/cpa-manager-plus`:
-
-```bash
-sudo systemctl stop cpa-manager-plus
-sudo cp -a /var/lib/cpa-manager-plus "/var/lib/cpa-manager-plus.backup.$(date +%Y%m%d%H%M%S)"
-sudo cp -a cpa-manager-plus_vX.Y.Z_linux_amd64/. /opt/cpa-manager-plus/
-sudo systemctl start cpa-manager-plus
-sudo systemctl status cpa-manager-plus
-```
-
-Keeping `/var/lib/cpa-manager-plus` outside the program directory prevents release files from overwriting runtime data.
-
-### Windows
-
-1. Stop CPAMP through its control script or service manager:
-
-```powershell
-.\cpa-manager-plusctl.ps1 stop
-```
-
-2. Back up `data`, `config.json`, and service configuration.
-3. Extract the new ZIP into a new version directory.
-4. Continue using the existing data directory, or copy configuration and data while stopped.
-5. Start from the new directory and inspect logs:
-
-```powershell
-.\cpa-manager-plusctl.ps1 start
-.\cpa-manager-plusctl.ps1 status
-.\cpa-manager-plusctl.ps1 logs
-```
-
-Update the Windows service configuration if its executable path contains the version directory.
-
-## CPAMP Lightweight Panel
-
-The CPAMP Lightweight Panel is downloaded and hosted by CPA. Updating it changes only the browser frontend; it does not install or update Manager Server, the SQLite schema, or the collector.
-
-Confirm that CPA points to this repository:
-
-```yaml
-remote-management:
-  panel-github-repository: 'https://github.com/seakee/CPA-Manager-Plus'
-```
-
-CPA normally refreshes its cached panel automatically. If it still serves an old panel, remove the cached file from the CPA working directory and reload or restart CPA:
-
-```bash
-rm static/management.html
-```
-
-When `Disable Panel Auto Updates` is enabled, CPA downloads a panel only when the cached file is absent. Confirm that the file is CPA's panel cache, not Manager Server persistent data, before removing it.
-
-## Custom `management.html` Or `PANEL_PATH`
-
-For a manually deployed single-file panel:
-
-1. Download `management.html` from the target release.
-2. Verify it against the release checksum.
-3. Keep the old file and atomically replace the static file or the file referenced by `PANEL_PATH`.
-4. Clear reverse-proxy and browser caches.
-
-Replacing only `management.html` does not update Manager Server APIs. Mixing a frontend and Manager Server across several releases can cause field or feature incompatibilities; use the panel and Manager Server from the same CPAMP release.
-
-## Verify The Upgrade
-
-Run:
-
-```bash
-curl -f http://127.0.0.1:18317/health
-curl -f http://127.0.0.1:18317/usage-service/info
-curl -f -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://127.0.0.1:18317/status
-```
-
-Confirm:
-
-- The panel and server report the target version.
-- `configured` has the expected value.
-- `collector.lastError` is empty or understood.
-- `lastConsumedAt`, `lastInsertedAt`, and `eventCount` update normally.
-- Dashboard, Request Monitoring, and Usage Analytics load data.
-- Background migration completes and rollup checkpoints continue advancing in `/status`.
-- Reverse-proxied `/management.html`, `/usage-service/*`, and management API paths still route to the correct service.
-
-## Rollback Principles
-
-- Docker: restore the previous image tag and recreate the container while mounting the pre-upgrade data backup.
-- Native: stop the new version and restore the old binary, configuration, and pre-upgrade data backup.
-- Single-file panel: restore the previous `management.html`.
-- Do not assume an older binary can read a database migrated by a newer version. For schema or data-semantics changes, restore the pre-upgrade SQLite, WAL/SHM, and `data.key` together.
-- If the cause is unclear, preserve both versions' logs and database copies. Do not repeatedly start different versions against the same live database.
+Common failures return a specific error code and documentation link in the UI. Continue with [Setup Troubleshooting](../troubleshooting/setup.md), [Backup And Restore](./backup.md), and [Integrated Runtime Migration](../migration/integrated-runtime.md).

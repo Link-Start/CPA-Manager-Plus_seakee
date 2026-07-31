@@ -10,7 +10,7 @@
 2. 在对应 Docker 或原生包环境中运行 `reset-admin-key`。
 3. 只记录终端输出的新 CPAMP 管理员密钥，不要把它提交到仓库或发到聊天中。
 4. 重启 Manager Server。
-5. 打开 `:18317/management.html`，用新密钥登录并确认 CPA 连接正常。
+5. 打开 `:18137/management.html`，用新密钥登录并确认 CPA 连接正常。
 
 下面的命令按部署方式分类。只执行与你当前部署匹配的一组。
 

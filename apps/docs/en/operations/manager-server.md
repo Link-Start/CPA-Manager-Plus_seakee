@@ -1,6 +1,6 @@
 # Manager Server Guide
 
-Manager Server is the backend for the full CPAMP experience. It hosts `management.html`, stores local SQLite data, consumes the CPA usage queue through the collector, and protects management capabilities with the CPAMP Admin Key.
+Manager Server is the backend for the full CPAMP experience. CPAMP Gateway places it and bundled or configured CPA behind `18137`; Manager Server hosts the panel, stores local SQLite data, consumes the CPA usage queue, and protects management capabilities with the CPAMP Admin Key.
 
 Most users do not need to read this page from top to bottom. Start with the document that matches your task:
 
@@ -16,7 +16,7 @@ This page is mainly for advanced deployments that need environment variables, cu
 When you open this entry point, you are using Manager Server mode:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
 When CPA itself serves this entry point, you are using the CPAMP Lightweight Panel:
@@ -31,8 +31,8 @@ The CPAMP Lightweight Panel does not connect to or read Manager Server SQLite an
 
 Manager Server:
 
-- Serves the embedded management panel.
-- Runs first setup or reads an environment-managed CPA connection.
+- Serves the embedded management panel through the unified Gateway.
+- Runs the initialization flow for Integrated, Slim, installer-managed, or External mode.
 - Authenticates users with the `cpamp_...` admin key.
 - Encrypts setup/panel-saved CPA Management Keys with `data.key`.
 - Proxies CPA Management API calls after setup.
@@ -45,64 +45,53 @@ Manager Server:
 ## Architecture
 
 ```text
-Browser
-  -> Manager Server :18317
-      -> /management.html
-      -> /usage-service/info
-      -> /usage-service/config
-      -> /v0/management/usage              from SQLite
-      -> /v0/management/model-prices       from SQLite
-      -> /v0/management/api-key-aliases    from SQLite
-      -> /v0/management/dashboard/*        from SQLite
-      -> /v0/management/monitoring/*       from SQLite
-      -> /v0/management/codex-inspection/* from SQLite / background workers
-      -> other /v0/management/*            proxied to CPA
-      -> collector -> CPA usage queue
-      -> /data/usage.sqlite
+Browser / API client
+  -> CPAMP Gateway :18137
+      -> panel, CPAMP management, and analytics paths -> Manager Server (internal listener)
+          -> SQLite /data/usage.sqlite
+          -> collector -> CPA usage queue
+      -> model, CPA management, and callback paths -> bundled or configured CPA
 ```
 
-CPA still runs separately. CPAMP does not bundle CPA.
+Integrated Full starts bundled CPA, and Slim becomes Integrated after downloading CPA. Installer-managed and External modes connect to a separately running CPA.
 
 :::
 
 ## First Setup And Login
 
-On first startup, CPAMP needs an admin key. You can provide one:
+Existing automation or migration deployments can explicitly provide an admin key:
 
 ```bash
 CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key'
 ```
 
-If not configured, Manager Server generates:
+New installs do not auto-generate an admin key. Manager Server prints a one-time bootstrap token in the first startup logs. Use it to enter the UI and create the admin key, or use the generate button. The key must be at least 16 characters and include at least three of uppercase letters, lowercase letters, digits, and special characters.
 
 ```text
-cpamp_...
+CPA Manager Plus one-time bootstrap token: ...
 ```
 
-and prints it once in the startup logs.
+The bootstrap token expires and becomes invalid after use. Never place it in a URL, screenshot, or public log.
 
-First setup asks for:
+Initialization depends on deployment mode:
 
 ```text
-Admin Key
-CPA URL
-CPA Management Key
-Request Monitoring
-Collection Mode
-Poll Interval
+Integrated Full / installer-managed -> create CPAMP Admin Key
+Slim -> download latest CPA or use existing CPA -> create CPAMP Admin Key
+External -> validate CPA URL and CPA Management Key -> create CPAMP Admin Key
 ```
 
 After setup:
 
 - Browser login uses the CPAMP admin key.
-- Setup/panel-saved CPA Management Keys are stored server-side and encrypted.
+- Setup/panel-saved external CPA Management Keys are stored server-side and encrypted.
 - In installer env/secret mode, Manager Server reads the CPA URL and CPA Management Key from the deployment environment.
 - Manager Server uses the resolved CPA Management Key when calling CPA.
 - New browsers no longer need the CPA Management Key.
 
 ## CPA Prerequisites
 
-Request monitoring requires CPA usage publishing and the CPA usage queue.
+Request monitoring requires CPA usage publishing and the CPA usage queue. Integrated runtime creates a safe baseline configuration for a new bundled CPA; an existing external CPA must still meet the requirements below.
 
 Minimum:
 
@@ -192,7 +181,10 @@ Saving CPAMP configuration does not rewrite the full CPA `config.yaml`.
 | Variable                                | Default                                                     | Description                                                                                                                                                                                                                        |
 | --------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CPA_MANAGER_CONFIG`                    | empty                                                       | Optional config file path. Native packages default to `config.json` next to the binary.                                                                                                                                            |
-| `HTTP_ADDR`                             | `0.0.0.0:18317`                                             | Manager Server listen address.                                                                                                                                                                                                     |
+| `CPA_MANAGER_DEPLOYMENT_MODE`           | inferred                                                    | `integrated`, `slim`, `installer-managed`, or `external`.                                                                                                                                                                          |
+| `CPA_MANAGER_GATEWAY_ADDRS`             | `0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317`                 | Unified Gateway listeners; new deployments use `18137`.                                                                                                                                                                            |
+| `CPA_MANAGER_PANEL_BASE_PATH`           | `/management.html`                                          | Fixed panel Base Path; the UI is read-only when set.                                                                                                                                                                               |
+| `HTTP_ADDR`                             | `0.0.0.0:18317`                                             | Manager Server listener for direct `serve` mode. Runtime mode uses an internal listener and exposes the Gateway publicly.                                                                                                           |
 | `CPA_MANAGER_PPROF_ADDR`                | empty                                                       | Optional Go pprof listen address; only `localhost`, `127.0.0.1`, or `::1` is accepted.                                                                                                                                             |
 | `USAGE_DATA_DIR`                        | Docker: `/data`; native: `./data`                           | Base data directory.                                                                                                                                                                                                               |
 | `USAGE_DB_PATH`                         | Docker: `/data/usage.sqlite`; native: `./data/usage.sqlite` | SQLite database path.                                                                                                                                                                                                              |
@@ -266,7 +258,7 @@ When `USAGE_QUOTA_COOLDOWN_ENABLED`, `USAGE_ACCOUNT_ACTIONS_ENABLED`, or `USAGE_
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `GET /health`                                                    | Health check.                                                                                                |
 | `GET /status`                                                    | Collector, SQLite, event count, and background data-migration progress.                                      |
-| `GET /usage-service/info`                                        | Manager Server mode detection.                                                                               |
+| `GET /usage-service/info`                                        | Manager Server mode and setup-state detection; it does not return the custom Base Path.                      |
 | `GET /usage-service/config`                                      | Read CPAMP Manager Server config.                                                                            |
 | `PUT /usage-service/config`                                      | Save CPAMP config and restart collector if needed.                                                           |
 | `GET /usage-service/account-processing-policy`                   | Read quota cooldown, account action queue, and auto-disable policy.                                          |

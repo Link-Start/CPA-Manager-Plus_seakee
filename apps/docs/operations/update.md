@@ -1,31 +1,84 @@
-# 更新 CPA Manager Plus
+# 更新 CPA Manager Plus 与 CPA
 
-本页说明如何在不丢失 SQLite 数据、`data.key` 和本机 secret 的前提下更新 CPAMP。请选择与你当前部署方式对应的章节，不要用首次安装命令覆盖已有配置。
+新版 CPAMP 提供两类更新路径：Integrated Full 由 UI 托管更新；分离式、External 和未集成 CPA 的 Slim 部署继续使用原有镜像、安装器或外部 CPA 更新流程。
+
+## UI 层级
+
+### 仪表盘：轻量检测入口
+
+仪表盘版本卡片继续自动检测 CPAMP 和 CPA 版本。Integrated/Full 使用签名 runtime manifest，外部和分离式部署继续使用公开版本接口。这里的职责是快速提示：
+
+- 当前版本与发现的新版本。
+- 是否存在可用更新。
+- Integrated 会显示“前往系统更新”，不直接在仪表盘执行变更。
+
+把实际更新放在 System 页面，可以避免误触，并为 Release Notes、兼容要求、影响范围、进度和回滚留出完整空间。
+
+### 系统 → 运行时与更新：完整更新流程
+
+该区域显示：
+
+- 部署模式和托管能力。
+- CPAMP、CPA 当前版本与可用版本。
+- Release 页面、Release Notes、CPA 最低 CPAMP 版本要求。
+- “仅更新 CPAMP”“仅更新 CPA”“全部更新”。
+- 更新确认、运行进度、组件结果、失败原因和回滚结果。
+
+更新开始后，浏览器会保存一次性的 operation token。即使 CPAMP Manager 在二进制切换期间短暂不可用，页面仍可通过 Gateway runtime endpoint 查询本次操作；token 只允许读取对应 operation，不提供其他管理权限。
+
+## 哪些部署支持托管更新
+
+| 模式                                   | CPAMP 托管更新 | CPA 托管更新                  |
+| -------------------------------------- | -------------- | ----------------------------- |
+| Integrated Full Docker / Native        | 支持           | 支持                          |
+| Slim 下载 CPA 并成功切换为 Integrated  | 支持           | 支持                          |
+| Slim 沿用已有 CPA                      | 不支持         | 不支持，由外部 CPA 自己更新   |
+| `installer-managed` 分离式 CPA + CPAMP | 不支持         | 不支持，使用 Compose 或安装器 |
+| External / CPA Panel                   | 不支持         | 不支持                        |
+
+托管更新会验证签名发布清单、平台/架构/libc、资产大小和 SHA-256。组件重启后必须通过健康检查；后续组件失败时，已经切换的组件会按相反顺序尝试回滚。
+
+最新稳定版 CPAMP Release 上的清单每六小时自动刷新一次，也可以手动刷新。因此 CPA 独立发布后无需等待下一次 CPAMP 发版，就能出现在 UI 的更新检测中。如果仓库配置了 `CPA_RUNTIME_VERSION` 固定版本，Release 打包和定时清单刷新都会有意保持该 CPA 版本，直到固定值被修改。
+
+签名清单会声明 CPA 所需的最低 CPAMP 版本。若当前 CPAMP 不满足要求，UI 会禁用“仅更新 CPA”；当清单中的最新版 CPAMP 可以满足要求时，应使用“全部更新”。如果当前发布通道中的 CPAMP 仍不满足要求，“全部更新”也会被禁用，需等待兼容版本进入该通道。定时清单刷新默认把当前稳定版 CPAMP 作为新 CPA 的保守兼容下限，因此旧版 CPAMP 可能需要一起更新。
+
+停止预算按层级递增：CPA 最长约 30 秒，Supervisor 35 秒，Integrated runtime 40 秒，Docker CPAMP/安装器停止窗口 45 秒，Windows 原生控制脚本 50 秒。不要在自定义 Compose、systemd 或外部进程管理器中配置更短的停止宽限，否则正常优雅关闭可能被误判为失败并触发强杀或回滚。
 
 ## 更新前检查
 
-1. 阅读目标版本的 [版本说明](../reference/releases.md) 和 GitHub Release Upgrade Notes。
-2. 记录当前镜像标签、原生包版本、启动命令、环境变量和数据目录。
-3. 停止会修改相同 SQLite 的额外实例。同一个 CPA 用量队列只能由一个 Manager Server 消费。
-4. 备份完整数据和配置：
+1. 阅读目标版本 Release Notes 和兼容要求。
+2. 备份完整数据目录：
    - `usage.sqlite`、`usage.sqlite-wal`、`usage.sqlite-shm`。
    - `data.key`。
-   - 安装器目录中的 `secrets/`、`.env`、`compose.yaml` 或 `config.json`。
-   - 自定义反向代理、systemd、launchd 或 Windows 服务配置。
+   - `cpa/config.yaml`、`cpa/auths/`、`cpa/logs/`。
+   - `runtime/`，用于保留已安装组件和回滚状态。
+3. 确认没有第二个 Manager Server 使用同一 SQLite 或消费同一 CPA 用量队列。
+4. 公网部署确认反向代理允许当前动态 Base Path。
 
-详细备份方法见 [备份与恢复](./backup.md)。`data.key` 丢失后，SQLite 中加密保存的 CPA Management Key 无法恢复。
+## Integrated UI 更新
 
-## 更新后会发生什么
+1. 打开“系统 → 运行时与更新”。
+2. 点击“检查更新”。
+3. 阅读两个组件的版本、Release Notes 和兼容要求。
+4. 选择更新范围并确认。
+5. 保持页面打开直到 operation 进入 `succeeded`、`failed` 或 `rolled_back`。
 
-- Manager Server 启动时自动执行兼容的 SQLite schema 和 metadata 迁移，不需要手工运行 SQL。
-- 大型历史数据修正可能在 HTTP 服务开始监听后继续后台执行。
-- migration 期间 account-history 或 dashboard-hourly rollup 可能暂停追平；相关页面会临时回退 raw events，性能可能暂时降低。
-- 不要为了加速 migration 或 rollup 重建而启动第二个 Manager Server 连接同一 SQLite 或消费同一 CPA 队列。
-- 可通过带管理员密钥的 `GET /status` 查看迁移、采集器和事件状态。
+状态含义：
 
-## 一键安装器生成的 Docker 部署
+| 状态                 | 含义                                             |
+| -------------------- | ------------------------------------------------ |
+| `queued` / `running` | 正在验证、安装或重启组件                         |
+| `handoff_pending`    | 新 CPAMP 已安装，正在重启运行时并等待新版本确认  |
+| `rolling_back`       | 更新失败，正在恢复已切换组件                     |
+| `succeeded`          | 所选组件已更新，且新运行时已确认服务健康         |
+| `rolled_back`        | 更新失败，但旧版本已恢复                         |
+| `failed`             | 更新或回滚未完全成功，需要查看组件错误并手动处理 |
 
-安装器生成的 Docker 部署不需要重新运行安装脚本。进入原安装目录更新镜像：
+Docker Integrated 更新后的二进制保存在 `/data/runtime/components/`。容器重启时，镜像内启动器会读取 runtime state 并委托给当前版本。仍应定期更新基础镜像，以获得系统层修复。
+
+## 一键安装器生成的分离式 Docker
+
+进入原安装目录：
 
 ```bash
 cd "$HOME/cpa-manager-plus"
@@ -34,214 +87,86 @@ docker compose up -d
 docker compose ps
 ```
 
-如果安装时通过 `CPAMP_INSTALL_DIR` 选择了其他目录，请替换上面的路径。
-
-完整 CPA + CPAMP 安装会同时拉取 Compose 中配置的 CPA 和 CPAMP 镜像。只想更新 CPAMP 时可以指定服务：
+只更新 CPAMP：
 
 ```bash
 docker compose pull cpa-manager-plus
 docker compose up -d cpa-manager-plus
 ```
 
-不要为升级设置 `CPAMP_OVERWRITE=1` 重跑安装器。该选项用于重新生成配置，可能覆盖你维护的 `.env`、`compose.yaml`、CPA 配置或 `run.sh`。
-
-## 手动 Docker Compose
-
-### 使用 `latest`
+只更新 CPA：
 
 ```bash
-docker compose pull cpa-manager-plus
-docker compose up -d cpa-manager-plus
-docker compose logs --tail=100 cpa-manager-plus
+docker compose pull cli-proxy-api
+docker compose up -d cli-proxy-api
 ```
 
-### 使用固定版本
+安装器升级不会重新生成 CPAMP 管理密钥，也不会覆盖 CPA `config.yaml`、auths、logs、Docker 数据卷或自定义 Compose 文件。重建服务前，脚本会记录当前 CPAMP 镜像；分离式栈同时记录 CPA 镜像。若无法读取旧镜像 ID、旧镜像已不存在，或 Compose 使用不可重新标记的 digest 引用，安装器会在 `pull` 之前失败关闭，避免进入无法自动回滚的状态。若新版部署始终无法健康启动，会重新标记这些旧镜像、在禁止拉取的情况下重建旧服务，并再次验证健康状态。需要修复或重新生成配置时使用安装器明确提供的 operation，不要把 `CPAMP_OVERWRITE=1` 当作普通升级方式。
 
-先把 Compose 中的镜像从旧版本改为目标版本，例如：
+## 手动 Docker
 
-```yaml
-services:
-  cpa-manager-plus:
-    image: seakee/cpa-manager-plus:vX.Y.Z
-```
-
-然后执行：
+确认新容器继续挂载原来的 `/data` volume：
 
 ```bash
-docker compose pull cpa-manager-plus
-docker compose up -d cpa-manager-plus
-```
-
-也可以使用对应的 GHCR 镜像：
-
-```text
-ghcr.io/seakee/cpa-manager-plus:vX.Y.Z
-```
-
-确认新容器继续挂载原来的 `/data` volume 或宿主机目录。不要为了更新创建新的空 volume。
-
-## 手动 `docker run`
-
-先检查当前容器的端口、volume、环境变量、network 和 `--add-host` 参数：
-
-```bash
-docker inspect cpa-manager-plus
-```
-
-拉取目标镜像并重建容器。下面是最小示例，实际命令必须保留原部署的全部参数：
-
-```bash
-docker pull seakee/cpa-manager-plus:vX.Y.Z
+docker pull seakee/cpa-manager-plus:latest
 docker stop cpa-manager-plus
 docker rm cpa-manager-plus
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
-  -p 18317:18317 \
+  -p 18137:18137 \
   -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:vX.Y.Z
+  seakee/cpa-manager-plus:latest
 ```
 
-如果 CPA 跑在 Linux 宿主机，继续保留：
+如果旧客户端仍使用 `8137` 或 `18317`，继续映射这些端口；三个端口能力相同。
+
+## 原生包
+
+### 一键安装器管理的旧版 Native
+
+重新下载新版安装器并选择升级，或非交互执行：
+
+```bash
+CPAMP_OPERATION=upgrade \
+CPAMP_NON_INTERACTIVE=1 \
+CPAMP_CONFIRM=1 \
+bash install-cpamp.sh
+```
+
+脚本会识别旧 `run.sh`、PID/service 和 SQLite，保留数据、secret、CPA 状态和旧 runtime。压缩包会先解压到临时目录，完整后才替换目标版本目录，因此中断后可以使用同一版本重试。新包和启动文件准备完成后才停止旧进程；新版本未能健康启动时会恢复旧启动脚本并尝试重启旧版本。
+
+systemd 或其他外部进程管理器不受安装器 PID 管理。先停止外部服务，执行升级，再重新安装或加载安装目录中的 service 文件。
+
+### 手动替换
+
+1. 停止进程。
+2. 备份完整数据目录和旧包。
+3. 下载匹配的 `_full` 或 `_slim` 包。
+4. 继续使用原 `CPA_MANAGER_RUNTIME_DATA_DIR` / `USAGE_DATA_DIR`。
+5. 启动新包并验证 `18137/health`。
+
+不要复制空 `data/` 覆盖旧目录，也不要只复制 `usage.sqlite` 而漏掉 WAL/SHM 和 `data.key`。
+
+## 验证与故障处理
+
+```bash
+curl http://127.0.0.1:18137/health
+curl http://127.0.0.1:18137/usage-service/info
+curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
+  http://127.0.0.1:18137/status
+```
+
+重点检查：
 
 ```text
---add-host=host.docker.internal:host-gateway
+deployment.mode
+runtimeAvailable
+components.cpamp
+components.cpa
+latestOperationId
+operations
+collector.lastError
 ```
 
-删除旧容器不会删除命名 volume，但删除 volume 会丢失数据。
-
-## 一键安装器生成的原生部署
-
-安装器通常生成如下结构：
-
-```text
-runtime/cpa-manager-plus_<version>_<os>_<arch>/
-data/
-secrets/
-run.sh
-cpa-manager-plus.service
-```
-
-更新时不要直接覆盖正在运行的旧目录：
-
-1. 停止当前进程或 systemd 服务。
-2. 备份 `data/`、`secrets/`、旧 runtime 目录、`run.sh` 和 service 文件。
-3. 从 GitHub Releases 下载并解压目标包到 `runtime/` 下的新版本目录。
-4. 把旧版本目录的 `config.json` 复制到新版本目录。安装器生成的相对路径会继续指向共享的 `data/` 和 `secrets/`。
-5. 把 `run.sh` 的工作目录和二进制路径改为新版本目录。
-6. 如果使用安装器生成的 systemd 文件，同步更新 `WorkingDirectory` 和 `ExecStart`，然后执行 `systemctl daemon-reload`。
-7. 启动并完成验证后再决定是否清理旧 runtime；保留旧包可以缩短程序回滚时间。
-
-不要只复制 `usage.sqlite` 而遗漏 WAL/SHM；备份应在进程停止后进行，或使用 [备份与恢复](./backup.md) 中的 SQLite 安全方法。
-
-## 手动原生包
-
-### macOS / Linux 前台或控制脚本
-
-1. 执行 `./cpa-manager-plusctl stop`，或停止你自己的进程管理器。
-2. 备份数据目录和 `data.key`。
-3. 解压新包到新的版本目录。
-4. 继续使用原来的外部 `USAGE_DATA_DIR` / `USAGE_DB_PATH`，或在停机状态下把 `config.json` 和 `data/` 复制到新目录。
-5. 使用新目录里的控制脚本启动：
-
-```bash
-./cpa-manager-plusctl start
-./cpa-manager-plusctl status
-./cpa-manager-plusctl logs
-```
-
-不要把新包直接解压到仍在运行的目录，以免二进制、控制脚本和静态面板来自不同版本。
-
-### Linux systemd 固定目录
-
-如果服务始终从 `/opt/cpa-manager-plus/cpa-manager-plus` 启动：
-
-```bash
-sudo systemctl stop cpa-manager-plus
-sudo cp -a /var/lib/cpa-manager-plus "/var/lib/cpa-manager-plus.backup.$(date +%Y%m%d%H%M%S)"
-sudo cp -a cpa-manager-plus_vX.Y.Z_linux_amd64/. /opt/cpa-manager-plus/
-sudo systemctl start cpa-manager-plus
-sudo systemctl status cpa-manager-plus
-```
-
-保持 `/var/lib/cpa-manager-plus` 独立于程序目录，可以避免更新包覆盖运行数据。
-
-### Windows
-
-1. 使用控制脚本或服务管理器停止 CPAMP：
-
-```powershell
-.\cpa-manager-plusctl.ps1 stop
-```
-
-2. 备份 `data`、`config.json` 和服务配置。
-3. 将新 ZIP 解压到新的版本目录。
-4. 继续使用原数据目录，或在停止状态下复制配置和数据。
-5. 使用新目录的脚本或 Windows 服务启动并检查日志：
-
-```powershell
-.\cpa-manager-plusctl.ps1 start
-.\cpa-manager-plusctl.ps1 status
-.\cpa-manager-plusctl.ps1 logs
-```
-
-如果 Windows 服务的可执行文件路径包含版本目录，需要同步修改服务配置。
-
-## CPAMP 轻量面板
-
-CPAMP 轻量面板由 CPA 下载和托管。更新它只会更新浏览器前端，不会安装或更新 Manager Server、SQLite schema 或后台采集能力。
-
-确认 CPA 指向本项目：
-
-```yaml
-remote-management:
-  panel-github-repository: 'https://github.com/seakee/CPA-Manager-Plus'
-```
-
-CPA 通常会自动更新缓存面板。如果仍显示旧版本，删除 CPA 工作目录中的缓存文件并重新加载或重启 CPA：
-
-```bash
-rm static/management.html
-```
-
-如果开启了 `Disable Panel Auto Updates`，只有缓存文件不存在时 CPA 才会重新下载。删除前确认操作的是 CPA 的 panel cache，不是 Manager Server 的持久化数据。
-
-## 自定义 `management.html` 或 `PANEL_PATH`
-
-如果从 Release 手工部署单文件面板：
-
-1. 下载目标版本的 `management.html`。
-2. 校验 Release 中提供的 checksum。
-3. 先保存旧文件，再用新文件原子替换静态站点或 `PANEL_PATH` 指向的文件。
-4. 刷新反向代理缓存和浏览器缓存。
-
-只替换 `management.html` 不会更新 Manager Server API。前端和 Manager Server 跨多个版本混用可能出现字段或功能不兼容，建议使用同一 CPAMP Release 的面板和 Manager Server。
-
-## 更新后验证
-
-基础检查：
-
-```bash
-curl -f http://127.0.0.1:18317/health
-curl -f http://127.0.0.1:18317/usage-service/info
-curl -f -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://127.0.0.1:18317/status
-```
-
-确认：
-
-- 面板和服务显示目标版本。
-- `configured` 为预期值。
-- `collector.lastError` 为空或可解释。
-- `lastConsumedAt`、`lastInsertedAt` 和 `eventCount` 正常更新。
-- Dashboard、请求监控和 Usage Analytics 能读取数据。
-- `/status` 中的后台 migration 最终完成，rollup checkpoint 继续推进。
-- 反向代理部署的 `/management.html`、`/usage-service/*` 和管理 API 路径仍指向正确服务。
-
-## 回滚原则
-
-- Docker：将镜像标签改回旧版本并重建容器，继续挂载更新前的数据备份。
-- 原生包：停止新版本，恢复旧二进制、配置和更新前的数据备份后再启动。
-- 单文件面板：恢复旧 `management.html`。
-- 不要假设旧程序一定能读取新版本迁移后的数据库。涉及 schema 或数据语义变更时，应同时恢复更新前的 SQLite、WAL/SHM 和 `data.key`。
-- 如果失败原因不明确，保留新旧日志和数据库副本，不要反复启动多个版本写入同一数据库。
+常见问题会在 UI 返回具体错误码和文档链接。继续参考[初始化故障排查](../troubleshooting/setup.md)、[备份与恢复](./backup.md)和[集成运行时迁移](../migration/integrated-runtime.md)。

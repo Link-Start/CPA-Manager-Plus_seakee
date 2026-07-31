@@ -2,7 +2,7 @@
 
 Use the installer for a first deployment, or when CPA is already running and you only want to bring up CPAMP. It does not overwrite existing config files by default. Before it writes files or starts services, it shows a summary and asks for confirmation.
 
-Most users only need four steps: run the script, choose the install scope, choose Docker or a native package, and confirm the summary. After installation, use the address and key printed by the installer.
+Most users only need four steps: run the script, choose the install scope, choose Docker or a native package, and confirm the summary. Then open the `18137` management entry and set the CPAMP Admin Key in the UI.
 
 ## Run It
 
@@ -24,24 +24,24 @@ The wizard walks through:
 
 1. Detecting OS, architecture, WSL, ports, and required commands.
 2. Choosing the operation language.
-3. Choosing the install scope: CPA + CPAMP, or CPAMP only.
-4. Choosing the deployment method: Docker, or CPAMP native package.
-5. Generating minimal config files and local secret files.
+3. Detecting a local CPA and validating its Management Key before it can be selected.
+4. Choosing CPA + CPAMP Full or CPAMP Slim, then Docker or a native package.
+5. Generating minimal config files and only the CPA secrets required by the selected mode.
 6. Showing a summary so you can confirm, modify, or abort.
 7. Running the install only after confirmation.
 
 ## Supported Combinations
 
-| Install scope |    Docker |    Native package |
-| ------------- | --------: | ----------------: |
-| CPA + CPAMP   | Supported | Not supported yet |
-| CPAMP only    | Supported |         Supported |
+| Install scope |    Docker | Native package |
+| ------------- | --------: | -------------: |
+| CPA + CPAMP   | Supported |      Supported |
+| CPAMP only    | Supported |      Supported |
 
-Use Docker for a full CPA + CPAMP install. The CPAMP native package contains Manager Server only; CPA must already be deployed separately.
+Native releases provide both `_full` and `_slim` packages: `_full` bundles CPA, while `_slim` contains CPAMP only. Docker publishes one image that includes CPA; when the installer selects CPAMP only, that same image runs in Slim mode without starting its bundled CPA. Both Slim paths can download the latest CPA during setup or keep an existing CPA.
 
 ## Full Docker Install
 
-Choose this when CPA is not installed yet. The installer starts both CPA and CPAMP and prepares persistent storage and login keys.
+Choose this when CPA is not installed yet. Docker uses separate CPA and CPAMP containers; native mode downloads the `_full` package with bundled CPA. Both leave CPAMP Admin Key creation to the setup UI.
 
 ::: details Generated files and connection behavior
 
@@ -50,7 +50,6 @@ When you choose CPA + CPAMP, the script generates:
 ```text
 compose.yaml
 .env
-secrets/cpamp-admin-key
 secrets/cpa-management-key
 secrets/cpa-demo-client-key
 cliproxyapi/config.yaml
@@ -61,7 +60,6 @@ cliproxyapi/logs/
 Generated keys use these formats by default:
 
 ```text
-CPAMP Admin Key: cpamp_ + 32 alphanumeric characters
 CPA Management Key: cpa_ + 32 alphanumeric characters
 Demo client API key: sk- + 64 alphanumeric characters
 ```
@@ -98,42 +96,41 @@ CPAMP reads the CPA Management Key from a Docker secret and connects to CPA thro
 http://cli-proxy-api:8317
 ```
 
-This connection is managed by `compose.yaml` and `secrets/cpa-management-key` in the install directory. Open the panel and log in with the CPAMP Admin Key; first setup is not required.
+This connection is managed by `compose.yaml` and `secrets/cpa-management-key`, so setup proceeds directly to the CPAMP Admin Key step.
 
 After deployment, open:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
-The script saves the CPAMP Admin Key and prints its file path and view command. Interactive installs can choose whether to reveal the full key in the terminal; do not share terminal screenshots containing it. The demo client API key is only for a quick post-install connectivity check; create named production clients in the panel.
+Fresh installs do not generate a CPAMP Admin Key. Startup logs contain a one-time bootstrap token; use it in the UI to set an Admin Key with at least 16 characters and at least three character classes. The demo client API key is only for a quick connectivity check; create named production clients in the panel.
 
 :::
 
 ## CPAMP-Only Install
 
-If CPA is already running, choose CPAMP only. The interactive wizard first asks whether you want to enter the CPA URL and CPA Management Key now.
+If CPA is already running, the installer probes `127.0.0.1:8317`. Selecting the detected service requires a CPA Management Key, and the installer must successfully request `/v0/management/config` before writing configuration.
 
-If you choose to enter them now and skip first setup, the installer stores the connection in:
+If you connect an existing CPA now, the installer stores the validated connection in:
 
 ```text
 .env
 secrets/cpa-management-key
 ```
 
-After startup, log in with the CPAMP Admin Key; first setup is not required. This is environment-managed configuration: CPA URL and CPA Management Key come from the install directory, and the panel cannot directly replace that connection. To change it, update the install directory config and secret, then restart CPAMP.
+After startup, only set the CPAMP Admin Key in the UI. This is an installer-managed connection: CPA URL and CPA Management Key come from the install directory, and the panel cannot replace them directly. Update the files and restart CPAMP to change the connection.
 
-If you choose to enter it later, the installer does not write the CPA Management Key into environment-managed config. Open the panel and complete setup with:
+If you decide later, the installer deploys Slim. Setup then lets you:
 
 ```text
-CPA URL
-CPA Management Key
-Request monitoring preference
+- download the latest CPA selected through a signed manifest and verified SHA-256 checksum; or
+- use an existing CPA after immediate URL and Management Key validation.
 ```
 
 If you want the connection to be managed by files, choose the option that stores the CPA connection in local secret files. In that mode, CPA URL and CPA Management Key come from config files, and the panel cannot directly replace that connection.
 
-For CPAMP-only Docker installs where CPA runs on the same host, the installer defaults to:
+For a same-host CPA, the installer validates `127.0.0.1:8317` from the host and writes this container address:
 
 ```text
 http://host.docker.internal:8317
@@ -143,12 +140,11 @@ On Linux it also writes `host.docker.internal:host-gateway`, so the container ca
 
 ## Native Package Mode
 
-For CPAMP-only installs, you can choose the native package. The script downloads the matching GitHub Release asset for your OS and architecture, then creates:
+Native mode downloads the matching release asset: `_full` for bundled CPA and `_slim` for CPAMP only. The historical unsuffixed asset remains a Slim compatibility alias. The installer creates:
 
 ```text
 runtime/<package>/
 data/
-secrets/cpamp-admin-key
 run.sh
 cpa-manager-plus.service  # Linux
 cpa-manager-plus.log
@@ -193,7 +189,9 @@ Common variables:
 | `CPAMP_INSTALL_MODE`        | `stack` or `cpamp`.                                                                                                  |
 | `CPAMP_DEPLOY_METHOD`       | `docker` or `native`.                                                                                                |
 | `CPAMP_INSTALL_DIR`         | Install directory. Defaults to `~/cpa-manager-plus`.                                                                 |
-| `CPAMP_PORT`                | Public CPAMP port. Defaults to `18317`.                                                                              |
+| `CPAMP_API_PORT`            | Gateway port. Defaults to `8137`.                                                                                    |
+| `CPAMP_PANEL_PORT`          | Recommended management entry. Defaults to `18137`.                                                                   |
+| `CPAMP_PORT`                | Compatibility entry. Defaults to `18317`.                                                                            |
 | `CPAMP_CPA_PORT`            | Public CPA port for full Docker install. Defaults to `8317`.                                                         |
 | `CPAMP_IMAGE`               | CPAMP Docker image.                                                                                                  |
 | `CPAMP_CPA_IMAGE`           | CPA Docker image.                                                                                                    |
@@ -201,19 +199,29 @@ Common variables:
 | `CPAMP_CPA_CONNECTION_MODE` | `setup` or `env`.                                                                                                    |
 | `CPAMP_CPA_URL`             | CPA URL for `env` mode.                                                                                              |
 | `CPAMP_CPA_MANAGEMENT_KEY`  | CPA Management Key for `env` mode.                                                                                   |
+| `CPAMP_DETECTED_CPA_URL`    | Overrides the auto-detection candidate.                                                                              |
+| `CPAMP_USE_DETECTED_CPA`    | Set to `1` in non-interactive mode to select and validate the detected CPA.                                          |
 | `CPAMP_OPERATION`           | `install`, `upgrade`, `repair`, or `regenerate`. Existing non-interactive deployments require an explicit operation. |
 | `CPAMP_PROJECT_NAME`        | Docker Compose project name. Defaults to `cpamp`; use another name for an isolated deployment on the same host.      |
 
 ## Rerun And Overwrite
 
-The following `CPAMP_OPERATION` modes apply to Docker deployments. Native packages continue to use their existing version and overwrite options.
+`CPAMP_OPERATION` applies to Docker and installer-managed native deployments. Docker supports `upgrade`, `repair`, and `regenerate`; native deployments support `upgrade` and `regenerate`.
 
 Before writing files, the installer checks both the install directory and Docker data volume. When it detects an existing deployment, interactive mode offers:
 
-1. **Upgrade existing deployment**: pull and recreate containers without changing config or secrets.
+1. **Upgrade existing deployment**: pull and recreate containers without changing config or secrets. The installer records the current CPAMP image and the CPA image for split-stack installs. If an old image ID is missing, the local image no longer exists, or Compose uses a digest reference, it stops before pulling and asks you to restore the old service or explicitly regenerate the deployment. If the upgraded service never becomes healthy, it retags the saved image IDs, recreates the previous services, and verifies health again before reporting the failed upgrade.
 2. **Repair admin login**: stop CPAMP, synchronize the SQLite admin credential with `secrets/cpamp-admin-key`, restart, and verify login. CPA and application data are not deleted.
-3. **Regenerate deployment config**: back up generated config before replacing it while preserving secrets and the data volume.
+3. **Regenerate deployment config**: back up generated config before replacing it while preserving secrets and the data volume by default. If you explicitly provide a new CPA URL and CPA Management Key, the installer validates the connection, backs up the old key, and atomically replaces `secrets/cpa-management-key`.
 4. **Exit**.
+
+Both `upgrade` and `regenerate` keep the existing deployment method, install scope, and CPA source. `regenerate` is not an in-place topology conversion between Full/Slim, Docker/native, or existing/bundled CPA. Use a new install directory for that conversion. For a parallel Docker deployment, also choose a new `CPAMP_PROJECT_NAME` and non-conflicting ports, verify the new deployment, and then migrate traffic and data.
+
+When an older native deployment is detected, upgrade preserves `usage.sqlite`, WAL/SHM, `data.key`, CPA config/auths/logs, and the old runtime. Native archives are extracted into a staging directory before the version directory is replaced, so a failed download or extraction does not leave a half-written active package and the same target version can be retried. The installer writes startup files before stopping the old installer-managed PID. A failed health check restores the old `run.sh` and attempts to restart the previous version. If systemd or another external manager owns the listening process, the installer refuses to terminate an unverified PID and asks the operator to stop the service first.
+
+An in-place Docker upgrade deliberately preserves an older custom `compose.yaml`. If that file only published legacy `18317`, the upgraded service remains reachable there but does not automatically expose `18137` or `8137`. After reviewing custom changes and the installer backup, run `CPAMP_OPERATION=regenerate` when you are ready to generate the new mappings.
+
+Newly generated Compose files give CPAMP a 45-second stop grace period and separated CPA a 35-second grace period. Upgrade, repair, and rollback also run `docker compose stop -t 45` for preserved older Compose files, so migration does not require rewriting them first.
 
 If the install directory was deleted but `cpamp_cpa-manager-plus-data` still exists, the installer no longer silently generates a new key and reports success. It requires either recovery of the old data or a fresh install with a different Compose project name.
 
@@ -243,12 +251,12 @@ To regenerate deployment config:
 CPAMP_OPERATION=regenerate bash install-cpamp.sh
 ```
 
-`CPAMP_OVERWRITE=1` remains compatible with the old workflow and maps to config regeneration. The installer backs up the previous `.env`, `compose.yaml`, CPA config, `run.sh`, and service file under `backups/installer-*`. You should still separately back up `secrets/`, `data/`, and `cliproxyapi/`. If `data.key` is lost, stored CPA Management Keys cannot be recovered.
+`CPAMP_OVERWRITE=1` remains compatible with the old workflow and maps to config regeneration. The installer backs up the previous `.env`, `.cpamp-native.env`, `compose.yaml`, CPA config, `run.sh`, service file, and existing `secrets/cpa-management-key` under `backups/installer-*`. You should still separately back up `secrets/`, `data/`, and `cliproxyapi/`. If `data.key` is lost, stored CPA Management Keys cannot be recovered.
 
 :::
 
 ## Startup And Login Verification
 
-After Docker installation, upgrade, or repair, the script waits for CPAMP health and then uses the current admin key against a protected Manager Server endpoint. It reports the install as completed only after both checks pass.
+After Docker installation, the script checks `18137/health`; ports `8137`, `18137`, and `18317` all reach the same gateway. Fresh installs proceed to UI setup without an Admin Key. Upgrades and repairs still validate a protected endpoint when a legacy admin secret exists.
 
 If the container is healthy but the key is rejected, interactive mode offers to stop CPAMP and repair the database credential automatically. Non-interactive mode exits with a failure and instructs the operator to use `CPAMP_OPERATION=repair`. This prevents the installer from presenting a newly generated key that does not match an existing database.

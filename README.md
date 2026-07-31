@@ -50,11 +50,11 @@ Operate providers, credentials, OAuth, plugins, and configuration while keeping 
 
 CPA / CLIProxyAPI can serve either the official Management Center or the CPAMP Lightweight Panel directly on `:8317`. The lightweight panel replaces the official UI without adding another service. Deploy CPAMP Full Mode when you also need persistent observability and long-running operations.
 
-| Option                                                                                                       | Best for                                                    | Entry                                   |
-| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------- |
-| Official [CLI Proxy API Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) | Keeping the upstream UI maintained by the CPA project       | CPA `:8317/management.html`             |
-| CPAMP Lightweight Panel                                                                                      | Replacing only the UI without another service or database   | CPA `:8317/management.html`             |
-| CPAMP Full Mode                                                                                              | Request history, cost analytics, inspection, and automation | Manager Server `:18317/management.html` |
+| Option                                                                                                       | Best for                                                                        | Entry                          |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------ |
+| Official [CLI Proxy API Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) | Keeping the upstream UI maintained by the CPA project                           | CPA `:8317/management.html`    |
+| CPAMP Lightweight Panel                                                                                      | Replacing only the UI without another service or database                       | CPA `:8317/management.html`    |
+| CPAMP Full Mode                                                                                              | One bundled gateway plus request history, analytics, inspection, and automation | CPAMP `:18137/management.html` |
 
 See [Choosing A CPA Panel](https://seakee.github.io/CPA-Manager-Plus/docs/en/guide/choosing-a-panel.html) for the comparison, or [install the CPAMP Lightweight Panel](https://seakee.github.io/CPA-Manager-Plus/docs/en/deployment/cpa-panel.html) directly in CPA.
 
@@ -89,13 +89,15 @@ See [Choosing A CPA Panel](https://seakee.github.io/CPA-Manager-Plus/docs/en/gui
 
 ### Production Operations
 
-- Run CPAMP Full Mode as one Docker container or a native Linux, macOS, or Windows package for amd64/arm64; the full stack can run alongside CPA.
+- Run CPAMP Full Mode as one Docker container or a native Linux, macOS, or Windows package for amd64/arm64. Full packages include CPA; Slim packages can download CPA later or keep an existing CPA.
+- Use the same gateway capability on `18137`, `8137`, and legacy `18317`, while new deployments only need the `18137` entry.
+- Update CPAMP and bundled CPA from System with signed manifests, health checks, operation progress, and automatic rollback attempts.
 - Keep request history, Manager configuration, automation state, and model prices in local files with no account registration or telemetry SDK.
 - Back up SQLite files together with `data.key` to preserve encrypted CPA Management Keys.
 
 Want to preview the interface first? Open the [Live Demo](https://seakee.github.io/CPA-Manager-Plus/). The demo uses fictional data only. It is not a deployment or runtime mode and cannot connect to, manage, or monitor a real CPA instance.
 
-CPAMP manages and observes traffic through CPA / CLIProxyAPI. It is not a replacement proxy and does not forward model traffic by itself.
+CPAMP routes gateway requests to bundled or configured CPA / CLIProxyAPI while CPA remains the provider and protocol engine.
 
 ## Quick Start
 
@@ -116,28 +118,24 @@ CPAMP_DRY_RUN=1 bash install-cpamp.sh
 
 See [One-Click Installer](https://seakee.github.io/CPA-Manager-Plus/docs/en/deployment/installer.html) for upgrade, repair, and admin-key recovery behavior.
 
-### CPA + CPAMP Together
+### Integrated CPA + CPAMP
 
 ```yaml
 services:
-  cli-proxy-api:
-    image: eceasy/cli-proxy-api:latest
-    restart: unless-stopped
-    ports:
-      - '8317:8317'
-    volumes:
-      - cpa-data:/app/data
-
   cpa-manager-plus:
     image: seakee/cpa-manager-plus:latest
     restart: unless-stopped
     ports:
-      - '18317:18317'
+      - '18137:18137'
+      # Optional compatibility mappings:
+      # - '8137:8137'
+      # - '18317:18317'
+    environment:
+      CPA_MANAGER_DEPLOYMENT_MODE: integrated
     volumes:
       - cpa-manager-plus-data:/data
 
 volumes:
-  cpa-data:
   cpa-manager-plus-data:
 ```
 
@@ -145,22 +143,17 @@ volumes:
 docker compose up -d
 ```
 
-Open `http://<host>:18317/management.html`, retrieve the CPAMP Admin Key from the Manager Server log, then enter the CPA URL and CPA Management Key during setup.
+Open `http://<host>:18137/management.html`, enter the one-time bootstrap token from the startup log, then set or generate the CPAMP Admin Key in the UI. Bundled CPA requires no separate URL or Management Key.
 
-### CPAMP Only
+### Slim Or Existing CPA
 
-If CPA is already running:
+The installer can deploy CPAMP-only Slim. On first open, choose either the latest compatible CPA or an existing CPA:
 
 ```bash
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
+bash install-cpamp.sh
 ```
 
-Recommended CPA version: `v7.1.39+`. The HTTP usage queue needs `v6.10.8+`.
+Downloading CPA switches Slim to Integrated and enables managed CPAMP/CPA updates. Keeping an existing CPA validates its Management API immediately and leaves that CPA under its existing update workflow.
 
 ## Documentation
 
@@ -175,6 +168,8 @@ Recommended CPA version: `v7.1.39+`. The HTTP usage queue needs `v6.10.8+`.
 | Operate Manager Server, backups, upgrades, and migrations | [Manager Server Guide](https://seakee.github.io/CPA-Manager-Plus/docs/en/operations/manager-server.html)                                                                                             |
 | Back up data or recover a lost admin key                  | [Backup And Restore](https://seakee.github.io/CPA-Manager-Plus/docs/en/operations/backup.html), [Reset Admin Key](https://seakee.github.io/CPA-Manager-Plus/docs/en/operations/reset-admin-key.html) |
 | Migrate from the legacy CPA-Manager                       | [Migration From CPA-Manager](https://seakee.github.io/CPA-Manager-Plus/docs/en/migration/from-cpa-manager.html)                                                                                      |
+| Migrate older Full, Slim, Docker, or native deployments   | [Integrated Runtime Migration](https://seakee.github.io/CPA-Manager-Plus/docs/en/migration/integrated-runtime.html)                                                                                  |
+| Resolve first-run and runtime setup errors                | [Setup Troubleshooting](https://seakee.github.io/CPA-Manager-Plus/docs/en/troubleshooting/setup.html)                                                                                                |
 | Diagnose empty monitoring or queue problems               | [Troubleshooting](https://seakee.github.io/CPA-Manager-Plus/docs/en/troubleshooting/request-monitoring.html)                                                                                         |
 
 ## Data, Privacy, And Security
@@ -213,6 +208,8 @@ Build the Docker stack locally:
 ```bash
 docker compose -f docker-compose.manager.yml up --build
 ```
+
+Release images embed the trusted runtime-manifest public key. A local source build intentionally fails managed update checks closed unless `CPA_MANAGER_RELEASE_PUBLIC_KEY` is supplied as a build variable; gateway, panel, and analytics features remain available.
 
 ## Release
 

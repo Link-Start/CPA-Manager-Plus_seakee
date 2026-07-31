@@ -111,15 +111,15 @@ rm static/management.html
 
 需要请求历史、成本分析或服务端自动化时：
 
-1. 按 [Docker 部署](./docker.md) 或 [原生包部署](./native.md) 启动 Manager Server。
+1. 按 [Docker 部署](./docker.md) 安装 Full，或按 [原生包部署](./native.md) 安装 Slim 并选择沿用已有 CPA。
 2. 打开：
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
-3. 使用 CPAMP Admin Key 完成 setup 或登录。
-4. 配置 CPA 地址、CPA Management Key 和请求采集。
+3. 使用一次性 bootstrap token 初始化，并设置 CPAMP Admin Key。
+4. Slim 选择沿用已有 CPA 时，填写并即时验证 CPA 地址和 CPA Management Key；Full 内置 CPA 不需要这一步。
 
 CPA 端口上的轻量面板可以继续保留，但完整功能只从 Manager Server 面板入口使用。
 

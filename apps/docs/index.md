@@ -6,7 +6,7 @@ description: CPA Manager Plus 使用文档，覆盖 CPA / CLIProxyAPI 配置、�
 hero:
   name: CPA Manager Plus
   text: CPA 管理面板与可观测性文档
-  tagline: 管理 CPA / CLIProxyAPI，持久化请求，分析成本，并处理 Codex、Claude 与 xAI 的配额和账号健康。
+  tagline: 安装一个 CPAMP，即可获得 CPA Gateway、管理、请求监控、成本分析和账号健康能力。
   actions:
     - theme: brand
       text: 快速开始
@@ -20,7 +20,7 @@ hero:
 
 features:
   - title: 快速完成安装
-    details: 先选择轻量面板或完整模式，再按推荐步骤完成登录和验证。
+    details: 新用户直接安装 Full；已有 CPA 且只想替换界面时再选择轻量面板。
   - title: 管理模型与账号
     details: 添加 Provider、OAuth 和认证文件，检查配额与账号状态。
   - title: 查看请求与成本
@@ -41,12 +41,12 @@ import homePreview from './images/home-zh.png';
 <div class="cpamp-doc-grid">
   <section class="cpamp-doc-card">
     <h3>开始使用</h3>
-    <p>先确定适合自己的模式，再完成安装、登录和第一次验证。</p>
+    <p>新用户从 Full 开始；已有 CPA 的用户可以选择 Slim 沿用现有服务，或只安装轻量面板。</p>
     <ul>
-      <li><a href="./guide/choosing-a-panel.html">选择轻量面板或完整模式</a></li>
       <li><a href="./guide/getting-started.html">快速开始</a></li>
-      <li><a href="./deployment/cpa-panel.html">安装轻量面板</a></li>
       <li><a href="./deployment/installer.html">安装完整模式</a></li>
+      <li><a href="./guide/choosing-a-panel.html">选择 Full、Slim 或轻量面板</a></li>
+      <li><a href="./deployment/cpa-panel.html">已有 CPA：安装轻量面板</a></li>
     </ul>
   </section>
   <section class="cpamp-doc-card">
@@ -85,15 +85,15 @@ import homePreview from './images/home-zh.png';
 
 <div class="cpamp-mode-grid">
   <section class="cpamp-mode-card">
+    <h3>CPAMP 完整模式</h3>
+    <p>一个 `18137` Gateway 同时提供模型 API、管理、请求历史、成本分析、账号巡检和自动化。</p>
+    <a href="./deployment/docker.html">Docker 部署（推荐）</a>
+    <a href="./deployment/native.html">原生包部署</a>
+  </section>
+  <section class="cpamp-mode-card">
     <h3>CPAMP 轻量面板</h3>
     <p>已有 CPA，只替换管理界面，不增加服务、数据库或端口。</p>
     <a href="./deployment/cpa-panel.html">安装轻量面板</a>
-  </section>
-  <section class="cpamp-mode-card">
-    <h3>CPAMP 完整模式</h3>
-    <p>需要请求历史、成本分析、账号巡检和自动化；可用 Docker 或原生包安装。</p>
-    <a href="./deployment/docker.html">Docker 部署（推荐）</a>
-    <a href="./deployment/native.html">原生包部署</a>
   </section>
 </div>
 

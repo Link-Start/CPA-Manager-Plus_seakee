@@ -3,14 +3,14 @@
 先确认你打开的是 CPAMP 完整模式：
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
 CPA `:8317/management.html` 上的轻量面板不保存请求历史，因此看不到请求监控属于正常现象。
 
 ## 按顺序检查
 
-1. **发送一条真实请求**：确认 Codex、Claude Code 或其他客户端确实通过 CPA 请求了模型。
+1. **发送一条真实请求**：确认 Codex、Claude Code 或其他客户端通过 CPAMP `18137` Gateway，或迁移期间直接通过已配置的外部 CPA 请求了模型。
 2. **检查 CPA 连接**：仪表盘应显示 CPA 已连接，没有认证错误。
 3. **开启请求监控**：在配置中心的 Manager Server 配置中确认请求监控已启用。
 4. **等待新的请求**：请求监控只能显示启用并采集之后的新事件，已经过期的数据不能补回。
@@ -23,15 +23,15 @@ CPA `:8317/management.html` 上的轻量面板不保存请求历史，因此看�
 | 仪表盘显示 CPA 未连接      | CPA 地址、CPA Management Key、网络和远程管理配置 |
 | CPA 已连接，但一直没有请求 | 客户端 Base URL、CPA 用量发布、请求监控开关      |
 | 偶尔有数据、偶尔缺失       | Manager Server 重启、队列保留时间、重复采集实例  |
-| 使用反向代理后没有数据     | 先改为 Manager Server 直连 CPA `:8317`           |
+| 使用反向代理后没有数据     | 让反向代理整体转发到 CPAMP `18137`；External 模式再检查 CPAMP 到 CPA 的连接 |
 | 更新后暂时没有新数据       | 发送新请求并检查当前连接                         |
 
 ## 最常见的修复方法
 
-1. 确认客户端 Base URL 指向 CPA，而不是 CPAMP。
+1. 完整模式优先把客户端 Base URL 指向 CPAMP `18137`；若仍直连外部 CPA，确认它就是 CPAMP 当前配置的 CPA。
 2. 在 CPA 配置中启用 `usage-statistics-enabled`。
 3. 在 CPAMP 配置中心启用请求监控，并保持自动采集模式。
-4. 让 Manager Server 直接访问 CPA API 端口。
+4. Integrated 模式确认内部 CPA 正常；External / installer-managed 模式确认 Manager Server 可直接访问 CPA API 端口。
 5. 重启后发送一条新请求，再刷新请求监控。
 
 仍然没有数据时，保存同一时间段的 CPA 日志、Manager Server 日志和系统信息页版本信息。不要分享真实 API Key、Management Key 或认证文件。

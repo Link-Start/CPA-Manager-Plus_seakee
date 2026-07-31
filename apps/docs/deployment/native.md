@@ -1,164 +1,156 @@
 # 原生包部署
 
-不想使用 Docker 时，可以直接运行 CPAMP 原生包。它适合已有进程管理、systemd、launchd 或 Windows 服务托管习惯的环境。
+原生包适合不使用 Docker，或已经有 systemd、launchd、Windows 服务和其他进程管理方案的环境。新版同时提供 Full 与 Slim：
 
-原生包模式仍然是 Manager Server 模式：二进制会托管 `/management.html`，本地保存 SQLite 数据，并使用 CPAMP 管理员密钥登录。它不是旧 CPA-Manager 的“给 CPA 端口面板外接 Usage Service”工作流。
+| 包 | 内容 | 首次初始化 |
+| --- | --- | --- |
+| `_full` | CPAMP + 内置 CPA | 只设置 CPAMP 管理密钥 |
+| `_slim` | CPAMP，不预装 CPA | 在 UI 选择下载最新版 CPA或沿用已有 CPA，然后设置 CPAMP 管理密钥 |
+| 无后缀旧包名 | Slim 兼容资产 | 与 `_slim` 相同，用于兼容旧下载链接 |
 
-如果只想安装 CPAMP 原生包，可以使用 [一键安装脚本](./installer.md)。脚本不会原生安装 CPA；完整新部署仍建议用 Docker。
+Full 与 Slim 都支持 Linux、macOS、Windows 的 amd64/arm64。
 
-## 最短安装流程
+Linux Full 默认内置可在 glibc、musl 和较旧发行版上运行的 CPA `no-plugin` 便携构建。它不支持 CPA 动态库插件；如需动态库插件，请使用 Slim 并连接到单独部署的 glibc CPA。
 
-1. 确认 CPA 已经运行，并准备 CPA 地址和 CPA Management Key。
-2. 从 GitHub Release 下载与你系统和架构匹配的原生包。
-3. 解压后运行 `cpa-manager-plus`，或使用包内的后台控制脚本。
-4. 打开 `http://<host>:18317/management.html`。
-5. 使用日志中生成的 CPAMP 管理员密钥登录并连接 CPA。
-
-需要长期运行时，再选择 systemd、launchd、Windows 服务或其他进程管理方式。
-
-## 前置要求
-
-运行前先准备：
-
-- CPA / CLI Proxy API 单独运行。
-- CPA Management API 已启用。
-- CPA Management Key。
-- CPAMP 数据目录持久化并纳入备份。
-- 同一个 CPA 用量队列只由一个 CPAMP Manager Server 消费。
-
-推荐 CPA 版本：
+推荐管理入口：
 
 ```text
-v7.1.39+
+http://<host>:18137/management.html
 ```
 
-HTTP 用量队列最低要求：
+`18137`、`8137`、`18317` 由同一个 Gateway Handler 提供服务，能力完全一致。新部署只需要使用 `18137`。
 
-```text
-v6.10.8+
-```
-
-## 下载
-
-从 [GitHub Releases](https://github.com/seakee/CPA-Manager-Plus/releases/latest) 下载对应平台包。
-
-常见包名：
-
-```text
-cpa-manager-plus_<version>_linux_amd64.tar.gz
-cpa-manager-plus_<version>_linux_arm64.tar.gz
-cpa-manager-plus_<version>_darwin_amd64.tar.gz
-cpa-manager-plus_<version>_darwin_arm64.tar.gz
-cpa-manager-plus_<version>_windows_amd64.zip
-cpa-manager-plus_<version>_windows_arm64.zip
-```
-
-Linux 查看架构：
+## 推荐：一键安装器
 
 ```bash
-uname -m
+curl -fsSLO https://raw.githubusercontent.com/seakee/CPA-Manager-Plus/main/bin/install-cpamp.sh
+bash install-cpamp.sh
 ```
 
-映射：
+选择 Native 后：
+
+- “CPA + CPAMP 完整安装”下载 `_full` 包。
+- “仅安装 CPAMP”下载 `_slim` 包，并在首次 UI 中选择 CPA 来源。
+- 安装器不会生成 CPAMP 管理密钥；启动后从日志取得一次性初始化令牌，在 UI 中设置管理密钥。
+- 已有旧版 Native 安装会被识别为升级目标。`CPAMP_OPERATION=upgrade` 会保留 SQLite/WAL/SHM、`data.key`、CPA 配置/auths/logs 和旧 runtime，下载新包后再切换进程；新版本启动失败时恢复旧启动脚本并尝试重启旧版本。
+
+默认安装器进程可以自动切换。若你已把 CPAMP 交给 systemd 或其他外部进程管理器，先停止该服务，再执行升级，随后按你的服务策略重新加载本地生成的 service 文件。
+
+## 手动下载
+
+从 [GitHub Releases](https://github.com/seakee/CPA-Manager-Plus/releases/latest) 下载对应平台资产。
+
+Full 示例：
 
 ```text
-x86_64  -> linux_amd64
-aarch64 -> linux_arm64
-arm64   -> linux_arm64
+cpa-manager-plus_<version>_linux_amd64_full.tar.gz
+cpa-manager-plus_<version>_linux_arm64_full.tar.gz
+cpa-manager-plus_<version>_darwin_amd64_full.tar.gz
+cpa-manager-plus_<version>_darwin_arm64_full.tar.gz
+cpa-manager-plus_<version>_windows_amd64_full.zip
+cpa-manager-plus_<version>_windows_arm64_full.zip
 ```
 
-## 手动运行
+Slim 示例：
+
+```text
+cpa-manager-plus_<version>_linux_amd64_slim.tar.gz
+cpa-manager-plus_<version>_windows_arm64_slim.zip
+```
+
+Linux 架构映射：
+
+```text
+x86_64  -> amd64
+aarch64 -> arm64
+arm64   -> arm64
+```
+
+## 启动
 
 macOS / Linux：
 
 ```bash
-tar -xzf cpa-manager-plus_vX.Y.Z_linux_amd64.tar.gz
-cd cpa-manager-plus_vX.Y.Z_linux_amd64
-./cpa-manager-plus
+tar -xzf cpa-manager-plus_vX.Y.Z_linux_amd64_full.tar.gz
+cd cpa-manager-plus_vX.Y.Z_linux_amd64_full
+./cpa-manager-plusctl start
+./cpa-manager-plusctl logs 100
 ```
 
 Windows PowerShell：
 
 ```powershell
-Expand-Archive .\cpa-manager-plus_vX.Y.Z_windows_amd64.zip -DestinationPath .
-cd .\cpa-manager-plus_vX.Y.Z_windows_amd64
-.\cpa-manager-plus.exe
+Expand-Archive .\cpa-manager-plus_vX.Y.Z_windows_amd64_full.zip -DestinationPath .
+cd .\cpa-manager-plus_vX.Y.Z_windows_amd64_full
+.\cpa-manager-plusctl.ps1 start
+.\cpa-manager-plusctl.ps1 logs 100
 ```
 
-打开：
-
-```text
-http://<host>:18317/management.html
-```
-
-如果没有配置管理员密钥，进程会在日志中输出一次生成的 `cpamp_...`。请立即保存。
-
-也可以显式设置：
-
-macOS / Linux：
+包内 `.cpamp-runtime-mode` 会让控制脚本自动使用 `runtime` 子命令，并选择 `integrated` 或 `slim`。需要前台运行时：
 
 ```bash
-CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key' ./cpa-manager-plus
+./cpa-manager-plus runtime
 ```
 
-Windows PowerShell：
+Full 首次启动日志会显示一次性初始化令牌。Slim 下载内置 CPA 成功后会切换为 Integrated。
 
-```powershell
-$env:CPA_MANAGER_ADMIN_KEY = 'replace-with-a-long-random-admin-key'
-.\cpa-manager-plus.exe
-```
+## 初始化向导
+
+### Full
+
+1. 输入一次性初始化令牌。
+2. 设置 CPAMP 管理密钥，或一键生成。
+3. 进入管理页面。
+
+### Slim
+
+1. 选择“下载最新兼容 CPA”或“沿用已有 CPA”。
+2. 下载路径会验证签名清单、平台、架构、libc 和 SHA-256；已有 CPA 路径会立即验证地址和 Management Key。
+3. 设置 CPAMP 管理密钥。
+4. 进入管理页面。
+
+管理密钥至少 16 位，并包含大写字母、小写字母、数字、特殊字符中的至少三类。
 
 ## 数据位置
 
-默认情况下，原生包会在二进制旁边创建：
-
-```text
-config.json
-data/usage.sqlite
-data/data.key
-```
-
-可通过环境变量覆盖：
-
-```bash
-USAGE_DATA_DIR=/var/lib/cpa-manager-plus ./cpa-manager-plus
-```
-
-或：
-
-```bash
-USAGE_DB_PATH=/var/lib/cpa-manager-plus/usage.sqlite ./cpa-manager-plus
-```
-
-需要备份：
+默认数据目录为当前工作目录下的 `data/`：
 
 ```text
 data/usage.sqlite
 data/usage.sqlite-wal
 data/usage.sqlite-shm
 data/data.key
+data/cpa/config.yaml
+data/cpa/auths/
+data/cpa/logs/
+data/runtime/
 ```
 
-`data.key` 用来解密已保存的 CPA Management Key。丢失后只能重新保存 CPA 连接。
-
-::: details 高级：Linux systemd 示例
-
-## Linux systemd 示例
-
-安装到固定目录：
+可以固定到独立目录：
 
 ```bash
-sudo mkdir -p /opt/cpa-manager-plus /var/lib/cpa-manager-plus
-sudo cp -a cpa-manager-plus_vX.Y.Z_linux_amd64/* /opt/cpa-manager-plus/
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin cpa-manager-plus
-sudo chown -R cpa-manager-plus:cpa-manager-plus /opt/cpa-manager-plus /var/lib/cpa-manager-plus
+export CPA_MANAGER_RUNTIME_DATA_DIR=/var/lib/cpa-manager-plus
+export USAGE_DATA_DIR=/var/lib/cpa-manager-plus
+./cpa-manager-plusctl start
 ```
 
-创建 `/etc/systemd/system/cpa-manager-plus.service`：
+备份应包含完整数据目录。`data.key` 丢失后，SQLite 中加密保存的 CPA Management Key 无法恢复。
+
+## systemd
+
+使用一键安装器时，会在安装目录生成 `cpa-manager-plus.service`。确认路径和运行用户后复制到 systemd：
+
+```bash
+sudo cp ./cpa-manager-plus.service /etc/systemd/system/cpa-manager-plus.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now cpa-manager-plus
+```
+
+手动包也可以直接让 systemd 调用控制脚本所在目录的二进制：
 
 ```ini
 [Unit]
-Description=CPA Manager Plus Manager Server
+Description=CPA Manager Plus Runtime
 After=network-online.target
 Wants=network-online.target
 
@@ -167,91 +159,50 @@ Type=simple
 User=cpa-manager-plus
 Group=cpa-manager-plus
 WorkingDirectory=/opt/cpa-manager-plus
-ExecStart=/opt/cpa-manager-plus/cpa-manager-plus
+Environment=CPA_MANAGER_RUNTIME_DATA_DIR=/var/lib/cpa-manager-plus
+ExecStart=/opt/cpa-manager-plus/cpa-manager-plus runtime
 Restart=on-failure
 RestartSec=3
-
-Environment=HTTP_ADDR=0.0.0.0:18317
-Environment=USAGE_DATA_DIR=/var/lib/cpa-manager-plus
-# 推荐用环境文件或 secret manager 提供稳定密钥。
-# Environment=CPA_MANAGER_ADMIN_KEY=replace-with-a-long-random-admin-key
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-启动：
+## 动态 Base Path
+
+初始化后可在“系统 → 运行时与更新”把 `/management.html` 动态改为 `/`、`/admin`、`/panel` 等路径。无需重启；旧路径立即返回 404。
+
+需要由服务配置锁定时：
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now cpa-manager-plus
-sudo systemctl status cpa-manager-plus
+export CPA_MANAGER_PANEL_BASE_PATH=/admin
+./cpa-manager-plusctl start
 ```
 
-查看日志：
+环境变量配置时 UI 只读。Base Path 不是安全边界，公网部署仍需 HTTPS 和强管理密钥。
 
-```bash
-journalctl -u cpa-manager-plus -f
-```
+## 更新
 
-:::
+- Full Integrated：在“系统 → 运行时与更新”检查并更新 CPAMP、CPA 或两者。失败时自动尝试回滚。
+- Slim 下载 CPA 后：切换为 Integrated，后续同样使用 UI 更新。
+- Slim 沿用已有 CPA：CPAMP 不托管外部 CPA 更新；更新外部 CPA 时遵循它自己的部署流程。
+- 旧版 Native：先运行新版一键安装器执行一次平滑升级，之后 Integrated 部署可使用 UI 更新。
 
-## 首次 setup
-
-打开：
-
-```text
-http://<host>:18317/management.html
-```
-
-填写：
-
-```text
-管理员密钥:         日志中的 cpamp_... 或你配置的管理员密钥
-CPA URL:            http://127.0.0.1:8317、http://<cpa-host>:8317 或你的 CPA 地址
-CPA Management Key: CPA remote-management.secret-key
-```
-
-setup 后：
-
-- 浏览器登录使用 CPAMP 管理员密钥。
-- CPA Management Key 会在服务端加密保存。
-- 新浏览器不再需要 CPA Management Key。
-
-## 后台运行
-
-原生包内置后台控制脚本，可以直接执行 `start`、`status`、`logs`、`restart` 和 `stop`。脚本会写入 PID 记录和日志文件，并对默认运行目录使用私有权限。详见 [原生包后台控制](./native-background-control.md)。
-
-生产环境也可以使用 systemd、launchd、Windows 服务管理器或进程管理工具托管进程。无论使用哪种方式，都要保证数据目录持久化并纳入备份。
-
-## 升级
-
-1. 停止原生进程。
-2. 备份数据目录，包括 `data.key`。
-3. 解压新包。
-4. 复制 `config.json` 和 `data/`，或继续使用 `USAGE_DATA_DIR` / `USAGE_DB_PATH`。
-5. 启动新二进制。
-
-systemd 示例：
-
-```bash
-sudo systemctl stop cpa-manager-plus
-sudo cp -a /var/lib/cpa-manager-plus /var/lib/cpa-manager-plus.backup.$(date +%Y%m%d%H%M%S)
-sudo cp -a cpa-manager-plus_vX.Y.Z_linux_amd64/* /opt/cpa-manager-plus/
-sudo systemctl start cpa-manager-plus
-```
-
-升级不会要求手动迁移 SQLite。程序启动时会自动执行兼容迁移。
+手动替换包时必须保留完整数据目录，不要覆盖 `usage.sqlite`、WAL/SHM、`data.key` 或 `data/cpa/`。
 
 ## 验证
 
 ```bash
-curl http://127.0.0.1:18317/health
-curl http://127.0.0.1:18317/usage-service/info
-curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://127.0.0.1:18317/status
+curl http://127.0.0.1:18137/health
+curl http://127.0.0.1:18137/usage-service/info
+curl http://127.0.0.1:18137/v1/models
 ```
 
-检查 `configured`、`collector.lastError`、`lastConsumedAt`、`lastInsertedAt` 和 `eventCount`。
+初始化后：
 
-如果监控页面为空，继续按 [请求监控排障](../troubleshooting/request-monitoring.md) 检查。
+```bash
+curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
+  http://127.0.0.1:18137/status
+```
+
+初始化错误会附带直达[初始化故障排查](../troubleshooting/setup.md)对应章节的链接。

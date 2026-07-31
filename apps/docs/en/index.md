@@ -6,7 +6,7 @@ description: CPA Manager Plus documentation for CPA / CLIProxyAPI configuration,
 hero:
   name: CPA Manager Plus
   text: CPA Management And Observability Docs
-  tagline: Operate CPA / CLIProxyAPI, persist requests, analyze cost, and manage Codex, Claude, and xAI quota and account health.
+  tagline: Install one CPAMP project for the CPA Gateway, management, request monitoring, cost analytics, and account health.
   actions:
     - theme: brand
       text: Get Started
@@ -20,7 +20,7 @@ hero:
 
 features:
   - title: Install With Confidence
-    details: Choose Lightweight Panel or Full Mode, then follow the recommended login and verification steps.
+    details: New users install Full; use the Lightweight Panel only when an existing CPA needs a replacement UI.
   - title: Manage Models And Accounts
     details: Add providers, OAuth, and auth files, then check quota and account state.
   - title: Understand Requests And Cost
@@ -41,12 +41,12 @@ import homePreview from '../images/home.png';
 <div class="cpamp-doc-grid">
   <section class="cpamp-doc-card">
     <h3>Get Started</h3>
-    <p>Choose the right mode, then complete installation, login, and the first verification.</p>
+    <p>Start with Full for a new deployment. Existing CPA users can keep their service through Slim or install only the Lightweight Panel.</p>
     <ul>
-      <li><a href="./guide/choosing-a-panel.html">Choose Lightweight Panel Or Full Mode</a></li>
       <li><a href="./guide/getting-started.html">Quick Start</a></li>
-      <li><a href="./deployment/cpa-panel.html">Install Lightweight Panel</a></li>
       <li><a href="./deployment/installer.html">Install Full Mode</a></li>
+      <li><a href="./guide/choosing-a-panel.html">Choose Full, Slim, Or Lightweight Panel</a></li>
+      <li><a href="./deployment/cpa-panel.html">Existing CPA: Install Lightweight Panel</a></li>
     </ul>
   </section>
   <section class="cpamp-doc-card">
@@ -85,15 +85,15 @@ import homePreview from '../images/home.png';
 
 <div class="cpamp-mode-grid">
   <section class="cpamp-mode-card">
+    <h3>CPAMP Full Mode</h3>
+    <p>One `18137` Gateway provides model APIs, management, request history, cost analytics, account inspection, and automation.</p>
+    <a href="./deployment/docker.html">Docker Deployment (Recommended)</a>
+    <a href="./deployment/native.html">Native Package Deployment</a>
+  </section>
+  <section class="cpamp-mode-card">
     <h3>CPAMP Lightweight Panel</h3>
     <p>Keep your existing CPA and replace only the management UI, with no additional service, database, or port.</p>
     <a href="./deployment/cpa-panel.html">Install Lightweight Panel</a>
-  </section>
-  <section class="cpamp-mode-card">
-    <h3>CPAMP Full Mode</h3>
-    <p>Use request history, cost analytics, account inspection, and automation through Docker or a native package.</p>
-    <a href="./deployment/docker.html">Docker Deployment (Recommended)</a>
-    <a href="./deployment/native.html">Native Package Deployment</a>
   </section>
 </div>
 

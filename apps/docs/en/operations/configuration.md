@@ -29,14 +29,16 @@ Native package defaults:
 
 Full Docker and native Manager Server modes use a `cpamp_...` admin key for login.
 
-Configure it with:
+New installs create the admin key in the UI. Startup logs print only a one-time bootstrap token. Use it to enter initialization, then set an admin key of at least 16 characters containing at least three of uppercase letters, lowercase letters, digits, and special characters. The UI can generate one.
+
+Existing automation and migration deployments may still preconfigure it with:
 
 | Variable                     | Description                     |
 | ---------------------------- | ------------------------------- |
 | `CPA_MANAGER_ADMIN_KEY`      | Pass the admin key directly.    |
 | `CPA_MANAGER_ADMIN_KEY_FILE` | Read the admin key from a file. |
 
-If it is not configured, the first startup generates a random admin key and prints it to the logs. It will not be shown again.
+Do not place the bootstrap token or admin key in URLs, source control, or public logs. The bootstrap token expires and becomes invalid after use.
 
 ## CPA Management Key
 
@@ -46,8 +48,15 @@ Where it is stored depends on the configuration source:
 
 - CPA connections saved through setup or the panel are encrypted with `data.key` and written to SQLite.
 - CPA connections managed by the installer or environment variables come from `CPA_UPSTREAM_URL` and `CPA_MANAGEMENT_KEY` / `CPA_MANAGEMENT_KEY_FILE`. That connection is not written to SQLite; with the one-click installer, the key is usually in `secrets/cpa-management-key` under the install directory.
+- Integrated Full stores its internal CPA Management Key in the runtime data directory; initialization does not ask the user to enter or reveal it.
 
 The CPAMP Lightweight Panel is hosted by CPA, and the browser holds the CPA Management Key, matching CPA-port access semantics.
+
+## Management Base Path
+
+The default entry is `/management.html`. After initialization, “System → Runtime & Updates” can dynamically change it to `/`, `/admin`, `/panel`, or another valid path. The browser moves to the new entry after save, and the old path immediately returns 404.
+
+`CPA_MANAGER_PANEL_BASE_PATH` can lock the value from the environment. The UI is read-only when the environment owns it. A Base Path only reduces discoverability; public deployments still need HTTPS, a strong admin key, and appropriate network controls.
 
 ## Collection Configuration
 

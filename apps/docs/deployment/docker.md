@@ -1,224 +1,125 @@
 # Docker 部署
 
-Docker 是新部署最省心的方式。CPAMP 镜像包含 Manager Server 和内置 `management.html` 面板；CPA / CLI Proxy API 仍是单独服务，可以和 CPAMP 放在同一个 Compose 文件里。
+新版 CPAMP Full Docker 镜像已经内置 CPA。对新用户而言，CPAMP 是一个完整项目：安装一个容器后即可获得 CPA 网关基础能力、CPAMP 管理能力和本地数据分析能力，不需要先单独初始化 CPA。
 
-想让脚本检查环境并生成 Compose 文件，可以先看 [一键安装脚本](./installer.md)。下面的内容适合手动维护 Compose 或把 CPAMP 合入已有部署。
-
-新部署建议使用 Manager Server 托管面板：
+推荐管理入口：
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
-不要沿用旧 CPA-Manager 的“CPA 面板 + External Usage Service URL”思路。Plus 的完整能力来自 Manager Server；CPAMP 轻量面板是由 CPA 托管的独立 UI 选择，不连接或读取 Manager Server 的 SQLite 监控数据。
+`18137`、`8137` 和兼容端口 `18317` 连接到同一个 Gateway Handler，API、管理接口和面板能力一致。新部署只需要公开 `18137`；`8137` 和 `18317` 用于现有客户端或旧部署平滑迁移。
 
-## 先选场景
+## 选择部署方式
 
-| 你的环境                  | 建议做法                              |
-| ------------------------- | ------------------------------------- |
-| CPA 和 CPAMP 都没有安装   | 使用 [一键安装脚本](./installer.md)   |
-| 已有 CPA，只需要完整模式  | 直接看[仅部署 CPAMP](#仅部署-cpamp)   |
-| 需要自己维护 Compose 文件 | 使用本页的 CPA + CPAMP 示例           |
-| 只想替换 CPA 官方管理界面 | 改用 [CPAMP 轻量面板](./cpa-panel.md) |
+| 场景                                 | 建议                                                                  |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| 全新安装，希望 CPAMP 自己管理 CPA    | 使用本页的单容器 Full Docker                                          |
+| 使用一键安装脚本同时安装 CPA + CPAMP | 脚本继续生成分离式 Compose，便于保留现有 CPA 运维方式                 |
+| 已有 CPA，只想连接它                 | 安装 Slim，首次打开面板时选择“沿用已有 CPA”                           |
+| 已有旧版 Docker 部署                 | 保留原 `/data` 和 CPA 目录，按[更新指南](../operations/update.md)升级 |
 
-如果没有定制网络、镜像或 Compose 的需求，优先使用安装脚本，不必阅读本页全部高级配置。
-
-## 前置要求
-
-部署前先确认：
-
-- 已运行的 CPA / CLI Proxy API，或准备在同一个 Compose 中启动 CPA。
-- CPA Management API 已启用。
-- CPA Management Key。
-- 挂载并备份持久化 `/data`。
-- 同一个 CPA 用量队列只由一个 CPAMP Manager Server 消费。
-
-推荐 CPA 版本：
-
-```text
-v7.1.39+
-```
-
-HTTP 用量队列最低要求：
-
-```text
-v6.10.8+
-```
-
-CPA 需要允许 Manager Server 访问 Management API：
-
-```yaml
-remote-management:
-  secret-key: '你的 CPA Management Key'
-  allow-remote: true
-```
-
-请求监控依赖 CPA 用量发布：
-
-```yaml
-usage-statistics-enabled: true
-```
-
-也可以由 CPAMP 在首次 setup 或保存配置时启用。
-
-## CPA + CPAMP 一起部署
-
-如果还没有运行 CPA，用下面的 Compose 文件同时启动 CPA 和 CPAMP：
+## 最短安装流程
 
 ```yaml
 services:
-  cli-proxy-api:
-    image: eceasy/cli-proxy-api:latest
-    container_name: cli-proxy-api
-    restart: unless-stopped
-    ports:
-      - '8317:8317'
-    volumes:
-      - cpa-data:/app/data
-
   cpa-manager-plus:
     image: seakee/cpa-manager-plus:latest
-    container_name: cpa-manager-plus
     restart: unless-stopped
     ports:
-      - '18317:18317'
+      - '18137:18137'
+      # 可选兼容映射：
+      # - '8137:8137'
+      # - '18317:18317'
     environment:
-      HTTP_ADDR: '0.0.0.0:18317'
+      CPA_MANAGER_DEPLOYMENT_MODE: 'integrated'
+      CPA_MANAGER_GATEWAY_ADDRS: '0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317'
       USAGE_DB_PATH: '/data/usage.sqlite'
       CPA_MANAGER_DATA_KEY_PATH: '/data/data.key'
-      # 托管部署建议显式设置：
-      # CPA_MANAGER_ADMIN_KEY: "replace-with-a-long-random-admin-key"
-      USAGE_COLLECTOR_MODE: 'auto'
-      USAGE_BATCH_SIZE: '100'
-      USAGE_POLL_INTERVAL_MS: '500'
-      USAGE_QUERY_LIMIT: '50000'
     volumes:
       - cpa-manager-plus-data:/data
-    depends_on:
-      - cli-proxy-api
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:18317/health']
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:18137/health']
       interval: 10s
       timeout: 3s
       retries: 3
 
 volumes:
-  cpa-data:
   cpa-manager-plus-data:
 ```
 
 ```bash
 docker compose up -d
-```
-
-打开：
-
-```text
-http://<host>:18317/management.html
-```
-
-首次 setup 填写：
-
-```text
-管理员密钥:         启动日志或 secret 文件中的 cpamp_...
-CPA URL:            http://cli-proxy-api:8317
-CPA Management Key: CPA remote-management.secret-key
-```
-
-如果没有设置 `CPA_MANAGER_ADMIN_KEY`，CPAMP 会生成管理员密钥，并只在启动日志输出一次：
-
-```bash
 docker compose logs cpa-manager-plus
 ```
 
-setup 完成后，新浏览器登录只需要 CPAMP 管理员密钥。CPA Management Key 会在服务端加密保存。
+首次启动日志会显示一次性初始化令牌。打开管理入口后：
 
-## 仅部署 CPAMP
+1. 输入一次性初始化令牌。
+2. 设置至少 16 位、包含大写字母、小写字母、数字、特殊字符中至少三类的 CPAMP 管理密钥；也可以一键生成。
+3. 完成初始化并进入管理页面。
 
-如果 CPA 已经在运行，只启动 CPAMP：
+内置 CPA 不需要填写 CPA 地址或 CPA Management Key。不要把一次性初始化令牌放进截图、工单或公开日志。
 
-```bash
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
-```
-
-也可以使用 GHCR 镜像：
-
-```text
-ghcr.io/seakee/cpa-manager-plus:latest
-```
-
-## CPA URL 怎么填
-
-| 场景                                     | CPAMP setup 中填写的 CPA URL                                                            |
-| ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| CPA 和 CPAMP 在同一个 Compose network    | `http://cli-proxy-api:8317`                                                             |
-| CPA 跑在 Docker Desktop 宿主机           | `http://host.docker.internal:8317`                                                      |
-| CPA 跑在 Linux 宿主机，CPAMP 跑在 Docker | `http://host.docker.internal:8317`，并加 `--add-host=host.docker.internal:host-gateway` |
-| CPA 是远程服务且只适合 HTTP queue        | `https://your-cpa.example.com`                                                          |
-
-Linux 宿主机 CPA 示例：
+## `docker run`
 
 ```bash
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
-  --add-host=host.docker.internal:host-gateway \
-  -p 18317:18317 \
+  -p 18137:18137 \
   -v cpa-manager-plus-data:/data \
   seakee/cpa-manager-plus:latest
 ```
 
-然后填写：
+如有旧客户端仍访问其他端口，可以同时增加：
 
-```text
-http://host.docker.internal:8317
+```bash
+-p 8137:8137 -p 18317:18317
 ```
 
-不要在容器里用 `127.0.0.1` 访问宿主机 CPA。容器里的 `127.0.0.1` 是容器自身。
+三个端口能力一致，因此可以先增加 `18137`，再逐步把客户端和反向代理从旧端口切换过去。
 
-::: details 高级：常用环境变量
+## Slim：连接已有 CPA
 
-## 常用环境变量
+需要继续使用已有 CPA 时，使用 Slim 原生包，或让一键安装器生成 CPAMP-only 部署。首次向导会提供两个选择：
 
-| 变量                         | 默认值                            | 说明                                    |
-| ---------------------------- | --------------------------------- | --------------------------------------- |
-| `HTTP_ADDR`                  | `0.0.0.0:18317`                   | Manager Server 监听地址。               |
-| `USAGE_DATA_DIR`             | `/data`                           | 数据目录。                              |
-| `USAGE_DB_PATH`              | `/data/usage.sqlite`              | SQLite 数据库路径。                     |
-| `CPA_MANAGER_DATA_KEY_PATH`  | `/data/data.key`                  | 数据密钥路径。                          |
-| `CPA_MANAGER_ADMIN_KEY`      | 空                                | 显式设置 Manager Server 管理员密钥。    |
-| `CPA_MANAGER_ADMIN_KEY_FILE` | `/run/secrets/cpa_admin_key`      | 从文件读取管理员密钥。                  |
-| `CPA_MANAGER_DATA_KEY`       | 空                                | 显式设置数据加密 key。                  |
-| `CPA_MANAGER_DATA_KEY_FILE`  | `/run/secrets/cpa_data_key`       | 从文件读取数据加密 key。                |
-| `CPA_UPSTREAM_URL`           | 空                                | 可选环境变量管理的 CPA URL。            |
-| `CPA_MANAGEMENT_KEY`         | 空                                | 可选环境变量管理的 CPA Management Key。 |
-| `CPA_MANAGEMENT_KEY_FILE`    | `/run/secrets/cpa_management_key` | 从文件读取 CPA Management Key。         |
-| `USAGE_COLLECTOR_MODE`       | `auto`                            | `auto`、`subscribe`、`http` 或 `resp`。 |
-| `USAGE_BATCH_SIZE`           | `100`                             | 单批最大采集记录数。                    |
-| `USAGE_POLL_INTERVAL_MS`     | `500`                             | 空闲轮询间隔。                          |
-| `USAGE_QUERY_LIMIT`          | `50000`                           | 最近用量事件返回上限。                  |
+- 下载最新兼容 CPA：校验签名清单和 SHA-256 后安装，成功后切换为 Integrated，并获得 CPAMP/CPA 托管更新能力。
+- 沿用已有 CPA：填写 CPA 地址和 CPA Management Key，CPAMP 会立即验证 Management API，验证成功才进入下一步。
 
-更多运行时配置见 [Manager Server 指南](../operations/manager-server.md)。
+一键安装器生成的 Docker Full stack 仍采用分离式 CPA + CPAMP，部署模式为 `installer-managed`。它不会被单容器镜像强制切换为内置 CPA，也不会覆盖已有 CPA 配置、auths 或 logs。
 
-:::
+## 自定义管理入口 Base Path
 
-## 数据持久化和备份
+默认入口为 `/management.html`。初始化完成后可在“系统 → 运行时与更新”动态修改为 `/`、`/admin`、`/panel` 等路径，无需重启 CPAMP。切换成功后旧入口立即返回 404。
 
-必须挂载 `/data`。Docker 默认数据：
+也可以在启动时固定：
+
+```yaml
+environment:
+  CPA_MANAGER_PANEL_BASE_PATH: '/admin'
+```
+
+环境变量配置时 UI 只读。修改 Base Path 只能降低入口被随意发现的概率，不是认证或访问控制；公网部署仍应使用强管理密钥、HTTPS、防火墙或访问控制策略。
+
+反向代理必须同时允许新路径。配置前先阅读[反向代理指南](./reverse-proxy.md)。
+
+## 数据位置与备份
+
+完整 `/data` 都应持久化。关键内容包括：
 
 ```text
 /data/usage.sqlite
 /data/usage.sqlite-wal
 /data/usage.sqlite-shm
 /data/data.key
+/data/cpa/config.yaml
+/data/cpa/auths/
+/data/cpa/logs/
+/data/runtime/
 ```
 
-备份必须包含 SQLite 文件和 `data.key`：
+备份示例：
 
 ```bash
 docker run --rm \
@@ -228,88 +129,56 @@ docker run --rm \
   tar czf /backup/cpa-manager-plus-data-backup.tar.gz -C /data .
 ```
 
-`data.key` 很重要：
+`data.key` 用于解密 SQLite 中保存的 CPA Management Key。丢失后只能重新配置 CPA 连接。备份或恢复时不要只复制 `usage.sqlite`，应同时保留 WAL/SHM 和 `data.key`。
 
-- `usage.sqlite` 保存用量数据和加密后的 CPAMP 配置。
-- `data.key` 用来解密通过 setup / 面板保存到 SQLite 的 CPA Management Key。
-- 如果 `data.key` 丢失，保存到 SQLite 的 CPA Management Key 无法恢复，只能重新保存 CPA 连接。
-- 如果使用安装器 env/secret 管理连接，同时备份安装目录里的 `secrets/`。
+## 更新
 
-::: details 高级：采集协议和网络要求
+Integrated Full Docker 可以直接在 UI 中更新：
 
-## 采集路径
+1. 仪表盘的版本卡片只做轻量检测，并在发现新版时链接到“系统”。
+2. “系统 → 运行时与更新”展示 CPAMP/CPA 当前版本、Release Notes、兼容要求和更新范围。
+3. 可选择仅更新 CPAMP、仅更新 CPA 或一起更新。
+4. 更新过程显示进度；失败时自动尝试回滚，并可通过 operation token 在 Manager 短暂重启期间继续查询状态。
 
-`USAGE_COLLECTOR_MODE=auto` 时，Manager Server 会按顺序尝试：
+只有 Integrated 部署支持托管更新。分离式 `installer-managed`、External 和只连接已有 CPA 的 Slim 部署仍按[更新指南](../operations/update.md)更新镜像或外部 CPA。
 
-1. RESP Pub/Sub。
-2. HTTP 用量队列。
-3. RESP pop fallback。
+正式 Release 镜像已经内置 runtime manifest 验签公钥。如果使用仓库中的 `docker-compose.manager.yml` 从源码执行 `--build`，需要通过构建变量提供 `CPA_MANAGER_RELEASE_PUBLIC_KEY` 才能启用托管更新；未配置时更新检测会安全失败，但网关、面板和分析能力不受影响。不要通过跳过签名校验来启用开发镜像更新。
 
-RESP Pub/Sub 和 RESP pop 需要直接连接 CPA API 端口，通常是 `8317`。普通 HTTP 反向代理不适用于 RESP。HTTP 用量队列可以经过 HTTP proxy。
-
-如果看到 `unsupported RESP prefix 'H'`，通常表示 RESP 采集器连到了 HTTP 地址。优先改用 `auto` 或 `http`，并确认 CPA 版本至少为 `v6.10.8+`。
-
-:::
-
-## 升级
-
-升级前先备份 `/data`。
-
-Compose：
+即使启用 UI 自更新，也应定期更新基础镜像，以获得 Alpine、CA 证书和其他镜像层修复：
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-`docker run`：
+## 常用环境变量
 
-```bash
-docker pull seakee/cpa-manager-plus:latest
-docker stop cpa-manager-plus
-docker rm cpa-manager-plus
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
-```
+| 变量                          | 默认值                                     | 说明                                                                  |
+| ----------------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
+| `CPA_MANAGER_DEPLOYMENT_MODE` | 自动推断                                   | Full Docker 设置为 `integrated`；旧部署会根据已有连接和内置二进制推断 |
+| `CPA_MANAGER_GATEWAY_ADDRS`   | `0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317` | 等价 Gateway 监听地址                                                 |
+| `CPA_MANAGER_PANEL_BASE_PATH` | `/management.html`                         | 固定面板入口；设置后 UI 只读                                          |
+| `USAGE_DATA_DIR`              | `/data`                                    | 持久化数据目录                                                        |
+| `USAGE_DB_PATH`               | `/data/usage.sqlite`                       | SQLite 路径                                                           |
+| `CPA_MANAGER_DATA_KEY_PATH`   | `/data/data.key`                           | 数据加密 key 路径                                                     |
+| `CPA_UPSTREAM_URL`            | 空                                         | 连接外部 CPA；存在时旧部署推断为 `installer-managed`                  |
+| `CPA_MANAGEMENT_KEY_FILE`     | 空                                         | 外部 CPA Management Key 文件                                          |
+
+旧版的 `HTTP_ADDR` 仍用于直接运行 Manager Server 的高级场景；Integrated runtime 对外入口由 `CPA_MANAGER_GATEWAY_ADDRS` 管理。
 
 ## 验证
 
-基础健康检查：
-
 ```bash
-curl http://127.0.0.1:18317/health
-curl http://127.0.0.1:18317/usage-service/info
+curl http://127.0.0.1:18137/health
+curl http://127.0.0.1:18137/usage-service/info
+curl http://127.0.0.1:18137/v1/models
 ```
 
-setup 后检查采集器状态：
+初始化后：
 
 ```bash
 curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://127.0.0.1:18317/status
+  http://127.0.0.1:18137/status
 ```
 
-重点检查：
-
-```text
-configured
-collector.lastError
-lastConsumedAt
-lastInsertedAt
-eventCount
-```
-
-如果监控页面为空，继续按 [请求监控排障](../troubleshooting/request-monitoring.md) 检查。
-
-## 相比旧 CPA-Manager 的变化
-
-旧 CPA-Manager Docker 文档使用 `seakee/cpa-manager`，并描述了 CPA 面板外接 Usage Service。CPA Manager Plus 中：
-
-- 镜像变为 `seakee/cpa-manager-plus`。
-- 容器通常命名为 `cpa-manager-plus`。
-- Full Docker / Manager Server 模式登录使用 CPAMP 管理员密钥，不使用 CPA Management Key。
-- setup / 面板保存的 CPA Management Key 使用 `/data/data.key` 加密保存；安装器 env/secret 模式从安装目录读取。
-- CPAMP 轻量面板不会配置或挂接外部 Manager Server 统计。
+如果初始化失败，错误提示中的“查看解决方案”会直达[初始化故障排查](../troubleshooting/setup.md)的对应锚点。

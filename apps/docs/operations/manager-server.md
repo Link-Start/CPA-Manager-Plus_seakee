@@ -1,6 +1,6 @@
 # Manager Server 指南
 
-Manager Server 是完整 CPAMP 体验的后端。它托管 `management.html`，保存本地 SQLite，用采集器消费 CPA 用量队列，并用 CPAMP 管理员密钥保护管理能力。
+Manager Server 是完整 CPAMP 体验的后端。CPAMP Gateway 把它与内置或已配置的 CPA 统一放在 `18137` 后面；Manager Server 托管面板、保存本地 SQLite、消费 CPA 用量队列，并用 CPAMP 管理密钥保护管理能力。
 
 普通用户通常不需要从头阅读本页。根据目标直接进入对应文档：
 
@@ -16,7 +16,7 @@ Manager Server 是完整 CPAMP 体验的后端。它托管 `management.html`，�
 当你打开下面入口时，使用的是 Manager Server 模式：
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
 当 CPA 自己托管下面入口时，属于 CPAMP 轻量面板：
@@ -29,8 +29,8 @@ CPAMP 轻量面板不会连接或读取 Manager Server SQLite，也没有完整�
 
 ## Manager Server 负责什么
 
-- 托管内置管理面板。
-- 执行首次 setup，或读取环境管理的 CPA 连接。
+- 通过统一 Gateway 托管内置管理面板。
+- 按 Integrated、Slim、installer-managed 或 External 模式执行对应初始化流程。
 - 使用 `cpamp_...` 管理员密钥做登录认证。
 - 使用 `data.key` 加密保存通过 setup / 面板写入的 CPA Management Key。
 - setup 后代理 CPA Management API。
@@ -43,64 +43,53 @@ CPAMP 轻量面板不会连接或读取 Manager Server SQLite，也没有完整�
 ## 架构
 
 ```text
-Browser
-  -> Manager Server :18317
-      -> /management.html
-      -> /usage-service/info
-      -> /usage-service/config
-      -> /v0/management/usage              从 SQLite 读取
-      -> /v0/management/model-prices       从 SQLite 读取
-      -> /v0/management/api-key-aliases    从 SQLite 读取
-      -> /v0/management/dashboard/*        从 SQLite 读取
-      -> /v0/management/monitoring/*       从 SQLite 读取
-      -> /v0/management/codex-inspection/* 从 SQLite / 后台任务读取
-      -> 其他 /v0/management/*             代理到 CPA
-      -> 采集器 -> CPA 用量队列
-      -> /data/usage.sqlite
+Browser / API client
+  -> CPAMP Gateway :18137
+      -> 面板、CPAMP 管理与分析路径 -> Manager Server（内部监听）
+          -> SQLite /data/usage.sqlite
+          -> 采集器 -> CPA 用量队列
+      -> 模型、CPA 管理与回调路径 -> 内置或已配置的 CPA
 ```
 
-CPA 仍然需要单独运行，CPAMP 不包含 CPA 本体。
+Integrated Full 会启动内置 CPA；Slim 下载 CPA 成功后也会转为 Integrated。installer-managed 与 External 模式连接分离运行的 CPA。
 
 :::
 
 ## 首次 setup 与登录
 
-首次启动时，CPAMP 需要管理员密钥。可以显式提供：
+已有自动化或迁移部署可以显式提供管理员密钥：
 
 ```bash
 CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key'
 ```
 
-如果不提供，Manager Server 会生成：
+新安装默认不自动生成管理员密钥。Manager Server 会在首次启动日志中输出一次性 bootstrap token；使用它进入 UI 后设置管理密钥，或点击一键生成。管理密钥必须至少 16 位，并在大写字母、小写字母、数字、特殊字符中至少包含三类。
 
 ```text
-cpamp_...
+CPA Manager Plus one-time bootstrap token: ...
 ```
 
-并只在启动日志中输出一次。
+bootstrap token 有过期时间，使用后立即失效；不要放入 URL、截图或公开日志。
 
-首次 setup 需要填写：
+初始化步骤取决于部署模式：
 
 ```text
-管理员密钥
-CPA URL
-CPA Management Key
-请求监控
-采集模式
-轮询间隔
+Integrated Full / installer-managed -> 设置 CPAMP 管理密钥
+Slim -> 下载最新版 CPA 或沿用已有 CPA -> 设置 CPAMP 管理密钥
+External -> 验证 CPA URL 和 CPA Management Key -> 设置 CPAMP 管理密钥
 ```
 
 setup 后：
 
 - 浏览器登录使用 CPAMP 管理员密钥。
-- setup / 面板保存的 CPA Management Key 会在服务端加密保存。
+- setup / 面板保存的外部 CPA Management Key 会在服务端加密保存。
 - 安装器 env/secret 模式下，Manager Server 从部署环境读取 CPA URL 和 CPA Management Key。
 - Manager Server 使用解析后的 CPA Management Key 访问 CPA。
 - 新浏览器不再需要 CPA Management Key。
 
 ## CPA 前置条件
 
-请求监控依赖 CPA 用量发布和 CPA 用量队列。
+请求监控依赖 CPA 用量发布和 CPA 用量队列。Integrated runtime 会为新内置 CPA 生成安全的基础配置；沿用外部 CPA 时仍需满足下面的条件。
 
 最低要求：
 
@@ -190,7 +179,10 @@ Manager Server 管理：
 | 变量                                    | 默认值                                                      | 说明                                                                                                                                                       |
 | --------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CPA_MANAGER_CONFIG`                    | 空                                                          | 可选配置文件路径；原生包默认使用二进制旁边的 `config.json`。                                                                                               |
-| `HTTP_ADDR`                             | `0.0.0.0:18317`                                             | Manager Server 监听地址。                                                                                                                                  |
+| `CPA_MANAGER_DEPLOYMENT_MODE`           | 自动推断                                                    | `integrated`、`slim`、`installer-managed` 或 `external`。                                                                                                  |
+| `CPA_MANAGER_GATEWAY_ADDRS`             | `0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317`                 | 统一 Gateway 监听地址；新部署使用 `18137`。                                                                                                                |
+| `CPA_MANAGER_PANEL_BASE_PATH`           | `/management.html`                                          | 固定面板 Base Path；设置后 UI 只读。                                                                                                                       |
+| `HTTP_ADDR`                             | `0.0.0.0:18317`                                             | 直接运行 `serve` 时的 Manager Server 监听地址；runtime 模式会使用内部监听地址，对外由 Gateway 提供服务。                                                   |
 | `CPA_MANAGER_PPROF_ADDR`                | 空                                                          | 可选 Go pprof 监听地址；仅接受 `localhost`、`127.0.0.1` 或 `::1`。                                                                                         |
 | `USAGE_DATA_DIR`                        | Docker: `/data`; native: `./data`                           | 数据目录。                                                                                                                                                 |
 | `USAGE_DB_PATH`                         | Docker: `/data/usage.sqlite`; native: `./data/usage.sqlite` | SQLite 路径。                                                                                                                                              |
@@ -264,7 +256,7 @@ USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED=false
 | ---------------------------------------------------------------- | -------------------------------------------------------- |
 | `GET /health`                                                    | 健康检查。                                               |
 | `GET /status`                                                    | 采集器、SQLite、事件计数和后台数据迁移进度。             |
-| `GET /usage-service/info`                                        | Manager Server 模式探测。                                |
+| `GET /usage-service/info`                                        | Manager Server 模式和初始化状态探测；不会返回自定义 Base Path。 |
 | `GET /usage-service/config`                                      | 读取 CPAMP Manager Server 配置。                         |
 | `PUT /usage-service/config`                                      | 保存 CPAMP 配置，必要时重启采集器。                      |
 | `GET /usage-service/account-processing-policy`                   | 读取配额冷却、账号处理队列和自动禁用策略。               |

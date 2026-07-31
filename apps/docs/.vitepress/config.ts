@@ -49,6 +49,7 @@ const zhSidebar: DefaultTheme.Sidebar = [
       { text: '更新 CPAMP', link: '/operations/update' },
       { text: '备份与恢复', link: '/operations/backup' },
       { text: '重置管理员密钥', link: '/operations/reset-admin-key' },
+      { text: '初始化与运行时错误', link: '/troubleshooting/setup' },
       { text: '请求监控为空', link: '/troubleshooting/request-monitoring' },
       { text: '日志查看', link: '/manual/logs' },
       { text: '系统信息', link: '/manual/system' },
@@ -79,6 +80,7 @@ const zhSidebar: DefaultTheme.Sidebar = [
       { text: '提供商与兼容接口', link: '/gateway/providers' },
       { text: '版本说明', link: '/reference/releases' },
       { text: '从 CPA-Manager 迁移', link: '/migration/from-cpa-manager' },
+      { text: '迁移到内置 CPA Runtime', link: '/migration/integrated-runtime' },
     ],
   },
 ];
@@ -116,6 +118,7 @@ const enSidebar: DefaultTheme.Sidebar = [
       { text: 'Upgrade CPAMP', link: '/en/operations/update' },
       { text: 'Backup And Restore', link: '/en/operations/backup' },
       { text: 'Reset Admin Key', link: '/en/operations/reset-admin-key' },
+      { text: 'Setup And Runtime Errors', link: '/en/troubleshooting/setup' },
       {
         text: 'Monitoring Has No Data',
         link: '/en/troubleshooting/request-monitoring',
@@ -152,6 +155,7 @@ const enSidebar: DefaultTheme.Sidebar = [
       { text: 'Providers And Compatibility APIs', link: '/en/gateway/providers' },
       { text: 'Releases', link: '/en/reference/releases' },
       { text: 'Migrate From CPA-Manager', link: '/en/migration/from-cpa-manager' },
+      { text: 'Migrate To Bundled CPA Runtime', link: '/en/migration/integrated-runtime' },
     ],
   },
 ];

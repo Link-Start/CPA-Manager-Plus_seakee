@@ -72,7 +72,7 @@ $env:CPA_MANAGER_PLUS_LOG_DIR = 'C:\cpamp\logs'
 
 ## 安全说明
 
-Manager Server 首次启动时可能会把生成的管理员密钥打印到 stdout。后台运行模式会把 stdout 和 stderr 写入日志文件，因此日志目录应当视为敏感数据目录。
+首次启动时，Manager Server 会把一次性 bootstrap token 打印到 stdout，用于进入 UI 初始化并设置管理密钥。后台运行模式会把 stdout 和 stderr 写入日志文件，因此日志目录应当视为敏感数据目录；token 使用后或过期后不应继续复用。
 
 默认 `run/` 和 `logs/` 目录是私有的。macOS/Linux 上，默认目录权限会设置为 `0700`，运行文件权限为 `0600`。Windows 上，默认运行目录和文件会设置为仅当前用户可访问的受保护 ACL。
 

@@ -21,6 +21,8 @@ Open the [Dashboard Demo](https://seakee.github.io/CPA-Manager-Plus/#/demo) to i
 
 Dashboard data comes from Manager Server's local SQLite database and the CPA usage queue. Cost is estimated from request events and model prices; it is not a provider invoice.
 
+When an Integrated/Full deployment finds a newer CPAMP or CPA release, the version card shows View Updates. Dashboard does not perform the upgrade itself; it opens the runtime panel at the top of [System](./system.md), where release notes, progress, failures, and rollback results are available. External and split deployments do not show this action.
+
 ## Common Workflow
 
 1. Start with connection state and collector state.

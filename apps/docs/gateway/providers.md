@@ -31,7 +31,7 @@
 - `/backend-api/codex/...`：Codex CLI。
 - Provider 回调路径：OAuth 登录。
 
-模型请求应转发到 CPA，不应转发到 CPAMP。需要同域名分流时查看[反向代理](../deployment/reverse-proxy.md)。
+完整模式下，模型请求可以直接进入 CPAMP `18137` Gateway，再由 Gateway 转发到内置或已配置的 CPA。同域名部署不再需要手工拆分模型和管理路径，详情见[反向代理](../deployment/reverse-proxy.md)。
 
 模型价格只影响 CPAMP 的本地成本估算，不会改变 CPA 路由或 Provider 账单。
 

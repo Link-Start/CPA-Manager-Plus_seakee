@@ -31,7 +31,7 @@ Common client interfaces include:
 - `/backend-api/codex/...` for Codex CLI.
 - Provider callback paths for OAuth login.
 
-Model requests must go to CPA, not CPAMP. For same-domain routing, see [Reverse Proxy](../deployment/reverse-proxy.md).
+In Full Mode, model requests can enter the CPAMP `18137` Gateway, which forwards them to bundled or configured CPA. Same-domain deployments no longer need manual model/management path splitting; see [Reverse Proxy](../deployment/reverse-proxy.md).
 
 Model prices affect CPAMP local cost estimates only. They do not change CPA routing or provider billing.
 

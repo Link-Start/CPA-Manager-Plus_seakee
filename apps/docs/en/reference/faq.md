@@ -2,10 +2,10 @@
 
 CPA Manager Plus provides full monitoring and analytics through the Manager Server-hosted panel. The old CPA-Manager workflow that attached an External Usage Service is not supported in Plus.
 
-Use the Manager Server-hosted panel for CPAMP analytics:
+Use the recommended unified port for the Full Mode gateway, analytics, and monitoring:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
 ## Which Usage Option Should I Choose?
@@ -17,15 +17,17 @@ http://<host>:18317/management.html
 | Replace the official UI with a clearer interface and no additional service      | [CPAMP Lightweight Panel](../deployment/cpa-panel.md) |
 | No Docker, but all features are required                                        | CPAMP Full Mode (native package)                      |
 
-The CPAMP Lightweight Panel is an enhanced alternative to the official Management Center and is hosted directly by CPA. It does not configure Manager Server or read Manager Server SQLite data. Use Docker or native packages and open `:18317/management.html` for the full CPAMP feature set.
+The CPAMP Lightweight Panel is an enhanced alternative to the official Management Center and is hosted directly by CPA. It does not configure Manager Server or read Manager Server SQLite data. Install Full or Slim and open `:18137/management.html` for the complete CPAMP feature set.
 
 ## Which Address Should I Open?
 
 CPAMP Full Mode through Docker or a native package:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
+
+Gateway capabilities are identical on `18137`, `8137`, and `18317`; new deployments only need `18137`. The management Base Path can also be changed dynamically in “System → Runtime & Updates.”
 
 The CPAMP Lightweight Panel is hosted by CPA and is normally accessed from the CPA port:
 
@@ -39,18 +41,18 @@ If you see login instead of setup, Manager Server is already configured. Use the
 
 | Place                                 | Key                                                |
 | ------------------------------------- | -------------------------------------------------- |
-| CPAMP Full Docker / native login      | CPAMP Admin Key, usually starting with `cpamp_...` |
-| CPAMP first setup CPA connection      | CPA Management Key                                 |
-| CPAMP Lightweight Panel login         | CPA Management Key                                 |
-| Normal model API calls                | CPA API Key                                        |
-| `GET /v1/models`                      | CPA API Key                                        |
-| CPAMP Manager Server APIs after setup | CPAMP Admin Key                                    |
+| CPAMP Full / Slim management login             | CPAMP Admin Key, usually starting with `cpamp_...` |
+| Integrated Full / installer-managed setup      | No user-entered CPA Management Key                 |
+| External / Slim with an existing CPA            | CPA Management Key                                 |
+| CPAMP Lightweight Panel login                   | CPA Management Key                                 |
+| Normal model APIs and `GET /v1/models`           | CPA API Key                                        |
+| CPAMP Manager Server APIs after initialization  | CPAMP Admin Key                                    |
 
 Do not mix these keys. CPA connections saved through setup or the panel are encrypted with `data.key` and written to SQLite. Installer env/secret-managed connections read the key from the install directory and are not written to SQLite. In the CPAMP Lightweight Panel, the browser holds the CPA Management Key.
 
-## Full Docker Opens Login Instead Of Setup
+## Full Docker Opens Login Instead Of Initialization
 
-Manager Server is already configured.
+The current data directory or environment already contains a CPAMP admin credential. A brand-new Full install without one shows bootstrap-token verification and CPAMP Admin Key creation.
 
 Use the CPAMP Admin Key:
 
@@ -68,36 +70,33 @@ Stop Manager Server, back up the data directory, then follow [Reset Admin Key](.
 
 Changing the CPA panel repository only changes the frontend served by CPA.
 
-Request monitoring and historical analytics require Manager Server:
+Monitoring and historical analytics require Full Mode. To keep using this CPA, run the installer, choose CPAMP only, then choose Use Existing CPA during Slim initialization:
 
 ```bash
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
+curl -fsSLO https://raw.githubusercontent.com/seakee/CPA-Manager-Plus/main/bin/install-cpamp.sh
+bash install-cpamp.sh
 ```
 
 Open:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
-Complete setup with:
+During initialization:
 
 ```text
-CPAMP Admin Key
-CPA URL
-CPA Management Key
+1. Enter the one-time bootstrap token
+2. Choose Use Existing CPA
+3. Enter and validate the CPA URL and CPA Management Key
+4. Create the CPAMP Admin Key
 ```
 
 Do not look for the old "External Usage Service" setting in Plus.
 
 ## Setup Shows The Wrong Default CPA URL
 
-The setup form can suggest a default CPA URL from the frontend build.
+This only affects External mode or Slim's Use Existing CPA step. The suggested URL may come from the previous connection or frontend build configuration.
 
 Fix options:
 
@@ -158,7 +157,7 @@ Check Manager Server status:
 
 ```bash
 curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://<cpamp-host>:18317/status
+  http://<cpamp-host>:18137/status
 ```
 
 Important fields:
@@ -200,19 +199,15 @@ Do not use a public HTTPS reverse proxy domain.
 
 No. RESP Pub/Sub and RESP pop must connect directly to the CPA API port. HTTP queue can go through an HTTP proxy.
 
-For same-domain deployment, read [Reverse Proxy](../deployment/reverse-proxy.md). Rule of thumb:
+For same-domain deployment, forward all HTTP traffic to CPAMP `18137`; do not split model and management paths manually:
 
 ```text
-/management.html        -> CPAMP
-/usage-service/*        -> CPAMP
-/v0/management/*        -> CPAMP
-/v1/*                   -> CPA
-/backend-api/codex/*    -> CPA
-OAuth callbacks         -> CPA
-Fallback routes          -> CPA
+HTTPS reverse proxy -> CPAMP :18137
+  -> CPAMP management and analytics paths -> Manager Server
+  -> model, CPA management, and callback paths -> bundled or configured CPA
 ```
 
-Use CPAMP Admin Key for CPAMP management paths and normal API keys for `/v1/*`.
+Use the CPAMP Admin Key for CPAMP management paths and normal CPA API Keys for model paths. RESP Pub/Sub/pop still cannot pass through an HTTP reverse proxy; external RESP consumers must connect directly to the CPA API port.
 
 ## Container Cannot Connect To Host CPA
 
@@ -225,7 +220,8 @@ docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
   --add-host=host.docker.internal:host-gateway \
-  -p 18317:18317 \
+  -p 18137:18137 \
+  -e CPA_MANAGER_DEPLOYMENT_MODE=external \
   -v cpa-manager-plus-data:/data \
   seakee/cpa-manager-plus:latest
 ```
@@ -295,12 +291,12 @@ Examples:
 
 ```bash
 curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://<cpamp-host>:18317/status
+  http://<cpamp-host>:18137/status
 ```
 
 ```bash
 curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://<cpamp-host>:18317/v0/management/config
+  http://<cpamp-host>:18137/v0/management/config
 ```
 
 The CPA Management Key is not accepted for CPAMP Manager Server-only APIs.
@@ -312,7 +308,7 @@ Manager Server setup is not complete.
 Open:
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
 Finish setup first.
@@ -342,7 +338,7 @@ This is expected.
 The CPAMP Lightweight Panel does not use Manager Server analytics and cannot attach to a separate Manager Server. Open:
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
 for monitoring, dashboard analytics, model prices, API key aliases, usage import/export, and server inspection.

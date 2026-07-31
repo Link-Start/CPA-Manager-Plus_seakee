@@ -23,7 +23,7 @@ Use this page to confirm which features each usage option provides and what evid
 | Login credential                                          | CPA Management Key          | CPAMP Admin Key |
 | Backups, migration state, and pprof                       | ❌                          | ✅              |
 
-The CPAMP Lightweight Panel is an enhanced WebUI hosted directly by CPA and requires no additional service, just like the official panel. It does not connect to or read Manager Server. Use the Manager Server `:18317/management.html` entry for the server-backed capabilities in this table.
+The CPAMP Lightweight Panel is an enhanced WebUI hosted directly by CPA and requires no additional service, just like the official panel. It does not connect to or read Manager Server. Use CPAMP `:18137/management.html` for the server-backed capabilities in this table.
 
 > **The Live Demo is not a runtime mode.** It only previews the interface with fictional data. It cannot connect to, manage, or monitor a real CPA instance and does not mean the capabilities in this matrix are actually running.
 
@@ -33,8 +33,8 @@ Docker and native packages provide the same Full Mode capabilities; only the ins
 
 | Installation                    | Best for                              | Panel entry                                 |
 | ------------------------------- | ------------------------------------- | ------------------------------------------- |
-| Docker deployment (recommended) | Most new users and server deployments | `http://<cpamp-host>:18317/management.html` |
-| Native package deployment       | Hosts where Docker is not used        | `http://<cpamp-host>:18317/management.html` |
+| Docker deployment (recommended) | Most new users and server deployments | `http://<cpamp-host>:18137/management.html` |
+| Native package deployment       | Hosts where Docker is not used        | `http://<cpamp-host>:18137/management.html` |
 
 - Docker users should follow [Docker Deployment](../deployment/docker.md).
 - Linux, macOS, and Windows users should follow [Native Packages](../deployment/native.md).

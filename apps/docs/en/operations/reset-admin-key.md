@@ -10,7 +10,7 @@ The reset command modifies the local SQLite database directly. Stop Manager Serv
 2. Run `reset-admin-key` in the matching Docker or native environment.
 3. Record the new CPAMP Admin Key from the terminal, but never commit or share it.
 4. Restart Manager Server.
-5. Open `:18317/management.html`, log in with the new key, and confirm the CPA connection.
+5. Open `:18137/management.html`, log in with the new key, and confirm the CPA connection.
 
 The commands below are grouped by deployment. Run only the group that matches your setup.
 

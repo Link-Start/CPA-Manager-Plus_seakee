@@ -11,7 +11,7 @@ Back up these files as a set:
 - `usage.sqlite-shm`
 - `data.key`
 
-If your deployment directory contains custom configuration files, back them up too. With the one-click installer, also back up `secrets/` under the install directory; full installation and env/secret-managed connections store the CPA Management Key in `secrets/cpa-management-key`.
+Back up custom deployment configuration as well. For Integrated Full, back up the entire data directory, including `cpa/config.yaml`, `cpa/auths/`, `cpa/logs/`, and `runtime/`. With the one-click installer, also back up `secrets/` under the install directory; separated full installations and env/secret-managed connections store the CPA Management Key in `secrets/cpa-management-key`.
 
 ## Why data.key Is Required
 
@@ -77,7 +77,7 @@ If the old `usage.sqlite` is large and request history is no longer needed, star
 Export while the old instance is still reachable:
 
 ```bash
-export OLD_CPAMP_URL='http://old-host:18317'
+export OLD_CPAMP_URL='http://old-host:18137'
 export OLD_CPAMP_ADMIN_KEY='cpamp_...'
 
 curl -fsS \
@@ -90,10 +90,10 @@ chmod 600 manager-config.json
 
 `manager-config.json` may contain the CPA Management Key in plaintext. Treat it as a secret, do not commit it, and do not attach it to an issue.
 
-Stop the old instance and start the new instance with an empty data directory. Record the new administrator key generated during first startup, then import the configuration:
+Stop the old instance and start the new instance with an empty data directory. Read the one-time bootstrap token from the logs, create a new CPAMP Admin Key in the UI, then import the configuration:
 
 ```bash
-export NEW_CPAMP_URL='http://new-host:18317'
+export NEW_CPAMP_URL='http://new-host:18137'
 export NEW_CPAMP_ADMIN_KEY='cpamp_...'
 
 curl -fsS \
@@ -106,4 +106,4 @@ curl -fsS \
 
 The import validates the CPA Management API. After it succeeds, verify collector status and the related settings, then securely delete the exported file.
 
-If the connection is managed through environment variables or secret files, the API reports `source` as `env` and an import cannot override the connection fields. Move `CPA_UPSTREAM_URL`, `CPA_MANAGEMENT_KEY`, or the matching secret files through the deployment environment instead. Administrator credentials are also outside the Manager configuration export; the new instance uses its newly generated or explicitly configured `CPA_MANAGER_ADMIN_KEY`.
+If the connection is managed through environment variables or secret files, the API reports `source` as `env` and an import cannot override the connection fields. Move `CPA_UPSTREAM_URL`, `CPA_MANAGEMENT_KEY`, or the matching secret files through the deployment environment instead. Administrator credentials are also outside the Manager configuration export; initialize the new key in the UI or explicitly provide `CPA_MANAGER_ADMIN_KEY` for an existing automation workflow.

@@ -11,6 +11,8 @@ If you never used the old `seakee/cpa-manager`, skip this page and use [Quick St
 - Full Docker login changed from CPA Management Key to the Manager Server admin key `cpamp_...`.
 - The CPA Management Key is encrypted with `/data/data.key` before being saved to SQLite.
 - Existing data receives the required compatibility migration during the first startup.
+- The recommended Gateway entry is now `18137`. Keep `18317` mapped during migration if needed; both ports have the same capabilities.
+- Although the Full image bundles CPA, migration can remain in External mode and keep the CPA connection from the old database.
 
 ## Before Migration
 
@@ -24,7 +26,7 @@ If you never used the old `seakee/cpa-manager`, skip this page and use [Quick St
    - `usage.sqlite`
    - `usage.sqlite-wal`
    - `usage.sqlite-shm`
-5. Decide the admin key strategy. During migration, explicitly setting `CPA_MANAGER_ADMIN_KEY` or `CPA_MANAGER_ADMIN_KEY_FILE` is recommended.
+5. Decide the admin-key strategy. The recommended path is to use the one-time bootstrap token from first-start logs and create the key in the UI. Existing automation may still set `CPA_MANAGER_ADMIN_KEY` or `CPA_MANAGER_ADMIN_KEY_FILE` explicitly.
 
 ## Docker Volume Migration
 
@@ -49,12 +51,14 @@ services:
     image: seakee/cpa-manager-plus:latest
     restart: unless-stopped
     ports:
+      - '18137:18137'
+      # Keep during migration when needed:
       - '18317:18317'
     environment:
-      HTTP_ADDR: '0.0.0.0:18317'
+      CPA_MANAGER_DEPLOYMENT_MODE: 'external'
+      CPA_MANAGER_GATEWAY_ADDRS: '0.0.0.0:18137,0.0.0.0:18317'
       USAGE_DB_PATH: '/data/usage.sqlite'
       CPA_MANAGER_DATA_KEY_PATH: '/data/data.key'
-      CPA_MANAGER_ADMIN_KEY: 'replace-with-a-long-random-admin-key'
       USAGE_COLLECTOR_MODE: 'auto'
     volumes:
       - cpa-manager-data:/data
@@ -75,25 +79,30 @@ cp -a /srv/cpa-manager-data /srv/cpa-manager-data.backup
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
+  -p 18137:18137 \
   -p 18317:18317 \
   -v /srv/cpa-manager-data:/data \
-  -e CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key' \
+  -e CPA_MANAGER_DEPLOYMENT_MODE=external \
   seakee/cpa-manager-plus:latest
 ```
 
-After startup, open `http://<host>:18317/management.html` and log in with the admin key.
+Startup logs print a one-time bootstrap token. Open `http://<host>:18137/management.html` and create a policy-compliant admin key in the UI. The old `http://<host>:18317/management.html` entry can remain temporarily while reverse proxies and clients migrate.
 
 ## Native Package Migration
 
 1. Stop the old `cpa-manager` process.
 2. Back up the old program directory, especially `data/usage.sqlite*`.
-3. Extract `cpa-manager-plus_<version>_<os>_<arch>`.
+3. Prefer a `_slim` asset when an external CPA already exists. The unsuffixed asset remains a Slim compatibility alias.
 4. Copy the old `data` directory into the new package directory, or set `USAGE_DATA_DIR` / `USAGE_DB_PATH` to the old data directory.
-5. Set an admin key for the first startup:
+5. Start through the control script or runtime command:
 
 ```bash
-CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key' ./cpa-manager-plus
+./cpa-manager-plusctl start
+# Or run in the foreground:
+./cpa-manager-plus runtime
 ```
+
+6. Read the one-time bootstrap token from logs and create the CPAMP Admin Key at `http://<host>:18137/management.html`.
 
 ## Verify After First Startup
 

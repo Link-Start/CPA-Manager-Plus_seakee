@@ -5,7 +5,7 @@ description: Compare the official Management Center, CPAMP Lightweight Panel, an
 
 # Choosing A CPA / CLIProxyAPI Management Panel
 
-CPA / CLIProxyAPI users do not have to choose only between the official UI and a full additional service. CPAMP provides both a lightweight panel hosted directly by CPA and a full mode backed by Manager Server.
+CPAMP Full Mode integrates the CPA Gateway, management, and local analytics as one project for most new deployments. Users who already run CPA and only want a replacement UI can keep using the Lightweight Panel.
 
 ## Quick Decision
 
@@ -13,6 +13,7 @@ CPA / CLIProxyAPI users do not have to choose only between the official UI and a
 | ---------------------------------------------------------------------- | -------------------------- |
 | Use the upstream UI maintained by the CPA project                      | Official Management Center |
 | Replace the official UI with a clearer WebUI and no additional service | CPAMP Lightweight Panel    |
+| New install requiring both model gateway and management                | CPAMP Full Mode            |
 | Persist request history, diagnose failures, and analyze cost           | CPAMP Full Mode            |
 | Run server-side inspection, quota cooldowns, and account automation    | CPAMP Full Mode            |
 | Start with low commitment and decide about SQLite and collection later | CPAMP Lightweight Panel    |
@@ -41,7 +42,7 @@ See [Install The CPAMP Lightweight Panel](../deployment/cpa-panel.md).
 
 ## CPAMP Full Mode
 
-Full Mode adds Manager Server and local SQLite for server-backed capabilities that the lightweight panel does not provide:
+Full Mode provides one Gateway, Manager Server, and local SQLite. Full Docker/native packages bundle CPA, while Slim can download the latest CPA or use an existing CPA. It also provides server-backed capabilities that the Lightweight Panel does not:
 
 - Persistent request events from the CPA usage queue.
 - Request, cost, token, latency, and failure analytics by account, model, provider, API key, project, and time range.
@@ -55,18 +56,20 @@ Full Mode adds Manager Server and local SQLite for server-backed capabilities th
 | -------------------------- | ------------------------------------------- | -------------------------------------------- |
 | Official Management Center | `http://<cpa-host>:8317/management.html`    | Keeping the upstream default UI              |
 | CPAMP Lightweight Panel    | `http://<cpa-host>:8317/management.html`    | Replacing only the UI with no extra service  |
-| CPAMP Full Mode            | `http://<cpamp-host>:18317/management.html` | Monitoring, cost, inspection, and automation |
+| CPAMP Full Mode            | `http://<cpamp-host>:18137/management.html` | Gateway, monitoring, cost, inspection, and automation |
 
-The CPA-hosted `:8317` panel does not connect to or read Manager Server. Even when Manager Server runs separately, open its own `:18317/management.html` entry to use request history, cost analytics, model prices, and server-side inspection.
+The CPA-hosted `:8317` panel does not connect to or read Manager Server. Open CPAMP `:18137/management.html` for Full Mode; the same `18137` Gateway can also serve normal model APIs.
 
 ## Full Mode Installation Options
 
-Full Mode has one product capability set with two installation choices:
+Full Mode has one product capability set with two installation choices and two CPA sources:
 
 - **Docker deployment (recommended)**: for most new users and server deployments.
 - **Native package deployment**: for Linux, macOS, or Windows hosts without Docker.
+- **Full**: bundles CPA, so setup only creates the CPAMP Admin Key.
+- **Slim**: downloads the latest CPA during setup or validates and keeps an existing CPA.
 
-Both use the `:18317/management.html` entry and the CPAMP Admin Key.
+Both installation methods use `:18137/management.html` and the CPAMP Admin Key.
 
 ## Preview Before Choosing
 
@@ -75,9 +78,9 @@ The [Live Demo](https://seakee.github.io/CPA-Manager-Plus/) lets you preview the
 ## Recommended Upgrade Path
 
 1. Already run CPA and only want a different UI: install the CPAMP Lightweight Panel.
-2. Need historical monitoring or cost analytics: deploy Manager Server.
-3. Switch to `:18317/management.html` and configure the CPA connection and collector.
-4. The lightweight panel may remain on the CPA port, but the two entry points have independent capabilities.
+2. Need historical monitoring or cost analytics: install Slim and choose the existing CPA.
+3. Switch to `:18137/management.html`, finish initialization, and gradually move client base URLs to the same Gateway.
+4. The CPA `8317` Lightweight Panel may remain during migration, but its login and analytics capabilities are independent from Full Mode.
 
 ## Next Steps
 

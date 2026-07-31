@@ -1,224 +1,125 @@
 # Docker Deployment
 
-Docker is the simplest path for a new deployment. The CPAMP image contains Manager Server and the embedded `management.html` panel. CPA / CLI Proxy API is still a separate service, and can run in the same Compose stack.
+The new CPAMP Full Docker image includes CPA. For a new user, CPAMP is one complete project: one container provides the CPA gateway, CPAMP management, and local analytics without requiring a separate CPA initialization first.
 
-If you want the script to check the environment and generate Compose files for you, start with [One-Click Installer](./installer.md). The rest of this page is for manual Compose maintenance or merging CPAMP into an existing deployment.
-
-For new deployments, use the Manager Server-hosted panel:
+Recommended management entry:
 
 ```text
-http://<host>:18317/management.html
+http://<host>:18137/management.html
 ```
 
-Do not carry over the old CPA-Manager "CPA panel + External Usage Service URL" workflow. In Plus, the full feature set comes from Manager Server. The CPAMP Lightweight Panel is an independent UI choice hosted by CPA and does not connect to or read Manager Server SQLite monitoring data.
+Ports `18137`, `8137`, and the compatibility port `18317` use the same Gateway Handler. Their API, management, and panel capabilities are identical. New deployments only need to publish `18137`; keep the other ports only while migrating existing clients or older deployments.
 
-## Choose Your Scenario
+## Choose A Deployment
 
-| Your environment                         | Recommended action                                |
-| ---------------------------------------- | ------------------------------------------------- |
-| Neither CPA nor CPAMP is installed       | Use the [One-Click Installer](./installer.md)     |
-| CPA already runs and you need Full Mode  | Jump to [Deploy CPAMP Only](#deploy-cpamp-only)   |
-| You maintain your own Compose file       | Use the CPA + CPAMP example on this page          |
-| You only want to replace the official UI | Use the [CPAMP Lightweight Panel](./cpa-panel.md) |
+| Scenario                                         | Recommendation                                                                                |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| New install where CPAMP should manage CPA        | Use the single-container Full Docker deployment below                                         |
+| Install CPA + CPAMP with the one-click installer | The installer keeps a separated Compose stack to preserve existing CPA operations             |
+| Keep an existing CPA                             | Install Slim and choose “Use an existing CPA” in first setup                                  |
+| Upgrade an older Docker deployment               | Preserve `/data` and CPA directories, then follow the [update guide](../operations/update.md) |
 
-If you do not need custom networking, images, or Compose integration, use the installer and skip the advanced sections on this page.
-
-## Requirements
-
-Before deployment, confirm:
-
-- A running CPA / CLI Proxy API instance, or a plan to start CPA in the same Compose stack.
-- CPA Management API enabled.
-- A CPA Management Key.
-- Persistent `/data` storage mounted and backed up.
-- Exactly one CPAMP Manager Server consuming one CPA usage queue.
-
-Recommended CPA version:
-
-```text
-v7.1.39+
-```
-
-Minimum for HTTP usage queue:
-
-```text
-v6.10.8+
-```
-
-CPA must allow Manager Server to access the Management API:
-
-```yaml
-remote-management:
-  secret-key: 'your CPA Management Key'
-  allow-remote: true
-```
-
-Request monitoring depends on CPA usage publishing:
-
-```yaml
-usage-statistics-enabled: true
-```
-
-CPAMP can also enable this during first setup or config save.
-
-## Deploy CPA And CPAMP Together
-
-If CPA is not running yet, start CPA and CPAMP with this Compose file:
+## Shortest Install
 
 ```yaml
 services:
-  cli-proxy-api:
-    image: eceasy/cli-proxy-api:latest
-    container_name: cli-proxy-api
-    restart: unless-stopped
-    ports:
-      - '8317:8317'
-    volumes:
-      - cpa-data:/app/data
-
   cpa-manager-plus:
     image: seakee/cpa-manager-plus:latest
-    container_name: cpa-manager-plus
     restart: unless-stopped
     ports:
-      - '18317:18317'
+      - '18137:18137'
+      # Optional compatibility mappings:
+      # - '8137:8137'
+      # - '18317:18317'
     environment:
-      HTTP_ADDR: '0.0.0.0:18317'
+      CPA_MANAGER_DEPLOYMENT_MODE: 'integrated'
+      CPA_MANAGER_GATEWAY_ADDRS: '0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317'
       USAGE_DB_PATH: '/data/usage.sqlite'
       CPA_MANAGER_DATA_KEY_PATH: '/data/data.key'
-      # Recommended for managed deployments:
-      # CPA_MANAGER_ADMIN_KEY: "replace-with-a-long-random-admin-key"
-      USAGE_COLLECTOR_MODE: 'auto'
-      USAGE_BATCH_SIZE: '100'
-      USAGE_POLL_INTERVAL_MS: '500'
-      USAGE_QUERY_LIMIT: '50000'
     volumes:
       - cpa-manager-plus-data:/data
-    depends_on:
-      - cli-proxy-api
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:18317/health']
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:18137/health']
       interval: 10s
       timeout: 3s
       retries: 3
 
 volumes:
-  cpa-data:
   cpa-manager-plus-data:
 ```
 
 ```bash
 docker compose up -d
-```
-
-Open:
-
-```text
-http://<host>:18317/management.html
-```
-
-On first setup, enter:
-
-```text
-Admin Key:          cpamp_... from startup logs or the secret file
-CPA URL:            http://cli-proxy-api:8317
-CPA Management Key: CPA remote-management.secret-key
-```
-
-If `CPA_MANAGER_ADMIN_KEY` is not set, CPAMP generates an admin key and prints it once in the startup log:
-
-```bash
 docker compose logs cpa-manager-plus
 ```
 
-After setup, new browsers log in with the CPAMP Admin Key. The CPA Management Key is encrypted and stored server-side.
+The first startup log prints a one-time bootstrap token. Open the management entry and:
 
-## Deploy CPAMP Only
+1. Enter the one-time bootstrap token.
+2. Set a CPAMP Admin Key with at least 16 characters and at least three of uppercase, lowercase, digits, and special characters, or generate one in the UI.
+3. Complete initialization and enter the panel.
 
-If CPA is already running, start only CPAMP:
+Bundled CPA does not require a CPA URL or CPA Management Key. Do not include the bootstrap token in screenshots, tickets, or public logs.
 
-```bash
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
-```
-
-You can also use the GHCR image:
-
-```text
-ghcr.io/seakee/cpa-manager-plus:latest
-```
-
-## CPA URL Examples
-
-| Scenario                                       | CPA URL to enter during CPAMP setup                                                    |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| CPA and CPAMP in the same Compose network      | `http://cli-proxy-api:8317`                                                            |
-| CPA runs on Docker Desktop host                | `http://host.docker.internal:8317`                                                     |
-| CPA runs on Linux host, CPAMP in Docker        | `http://host.docker.internal:8317` plus `--add-host=host.docker.internal:host-gateway` |
-| CPA is remote and only suitable for HTTP queue | `https://your-cpa.example.com`                                                         |
-
-Linux host CPA example:
+## `docker run`
 
 ```bash
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
-  --add-host=host.docker.internal:host-gateway \
-  -p 18317:18317 \
+  -p 18137:18137 \
   -v cpa-manager-plus-data:/data \
   seakee/cpa-manager-plus:latest
 ```
 
-Then use:
+If older clients still use the compatibility ports, add:
 
-```text
-http://host.docker.internal:8317
+```bash
+-p 8137:8137 -p 18317:18317
 ```
 
-Do not use `127.0.0.1` from inside a container to reach CPA on the host. Inside the container, `127.0.0.1` means the container itself.
+Because all three ports are equivalent, you can publish `18137` first and migrate clients and reverse proxies gradually.
 
-::: details Advanced: common environment variables
+## Slim: Keep An Existing CPA
 
-## Common Environment Variables
+To keep an existing CPA, use a Slim native package or let the installer generate a CPAMP-only deployment. The first-run wizard offers two choices:
 
-| Variable                     | Default                           | Description                                      |
-| ---------------------------- | --------------------------------- | ------------------------------------------------ |
-| `HTTP_ADDR`                  | `0.0.0.0:18317`                   | Manager Server listen address.                   |
-| `USAGE_DATA_DIR`             | `/data`                           | Data directory.                                  |
-| `USAGE_DB_PATH`              | `/data/usage.sqlite`              | SQLite database path.                            |
-| `CPA_MANAGER_DATA_KEY_PATH`  | `/data/data.key`                  | Data key path.                                   |
-| `CPA_MANAGER_ADMIN_KEY`      | empty                             | Explicit Manager Server admin key.               |
-| `CPA_MANAGER_ADMIN_KEY_FILE` | `/run/secrets/cpa_admin_key`      | Read the admin key from a file.                  |
-| `CPA_MANAGER_DATA_KEY`       | empty                             | Explicit data encryption key.                    |
-| `CPA_MANAGER_DATA_KEY_FILE`  | `/run/secrets/cpa_data_key`       | Read the data encryption key from a file.        |
-| `CPA_UPSTREAM_URL`           | empty                             | Optional environment-managed CPA URL.            |
-| `CPA_MANAGEMENT_KEY`         | empty                             | Optional environment-managed CPA Management Key. |
-| `CPA_MANAGEMENT_KEY_FILE`    | `/run/secrets/cpa_management_key` | Read the CPA Management Key from a file.         |
-| `USAGE_COLLECTOR_MODE`       | `auto`                            | `auto`, `subscribe`, `http`, or `resp`.          |
-| `USAGE_BATCH_SIZE`           | `100`                             | Max collected records per batch.                 |
-| `USAGE_POLL_INTERVAL_MS`     | `500`                             | Idle poll interval.                              |
-| `USAGE_QUERY_LIMIT`          | `50000`                           | Max recent usage events returned.                |
+- Download the latest compatible CPA: CPAMP verifies the signed manifest and SHA-256, installs CPA, switches to Integrated, and enables managed CPAMP/CPA updates.
+- Use an existing CPA: enter the CPA URL and CPA Management Key. CPAMP validates the Management API before moving to the next step.
 
-For the full runtime reference, see [Manager Server Guide](../operations/manager-server.md).
+The Docker Full stack generated by the one-click installer intentionally remains a separated CPA + CPAMP deployment in `installer-managed` mode. The integrated image does not force that stack to replace its CPA or overwrite CPA configuration, auths, or logs.
 
-:::
+## Custom Management Base Path
 
-## Data Persistence And Backup
+The default entry is `/management.html`. After initialization, use “System → Runtime & Updates” to change it dynamically to `/`, `/admin`, `/panel`, or another valid path without restarting CPAMP. The old entry returns 404 immediately after the switch.
 
-Always mount `/data`. Docker defaults:
+You can also lock the path at startup:
+
+```yaml
+environment:
+  CPA_MANAGER_PANEL_BASE_PATH: '/admin'
+```
+
+When configured by environment, the UI is read-only. A hidden path only reduces casual discovery; it is not authentication or access control. Public deployments still need a strong Admin Key, HTTPS, and appropriate firewall or access policies.
+
+The reverse proxy must allow the new path. Read the [reverse proxy guide](./reverse-proxy.md) first.
+
+## Data And Backups
+
+Persist the complete `/data` directory. Important content includes:
 
 ```text
 /data/usage.sqlite
 /data/usage.sqlite-wal
 /data/usage.sqlite-shm
 /data/data.key
+/data/cpa/config.yaml
+/data/cpa/auths/
+/data/cpa/logs/
+/data/runtime/
 ```
 
-Backups must include both SQLite files and `data.key`:
+Example backup:
 
 ```bash
 docker run --rm \
@@ -228,88 +129,56 @@ docker run --rm \
   tar czf /backup/cpa-manager-plus-data-backup.tar.gz -C /data .
 ```
 
-Why `data.key` matters:
+`data.key` decrypts CPA Management Keys stored in SQLite. If it is lost, the CPA connection must be configured again. Do not copy only `usage.sqlite`; preserve WAL/SHM and `data.key` as well.
 
-- `usage.sqlite` stores usage data and encrypted CPAMP configuration.
-- `data.key` decrypts CPA Management Keys saved to SQLite through setup or the panel.
-- If `data.key` is lost, CPA Management Keys saved to SQLite cannot be recovered; save the CPA connection again.
-- If the installer manages the connection through env/secrets, also back up `secrets/` in the install directory.
+## Updates
 
-::: details Advanced: collection protocols and network requirements
+Integrated Full Docker supports managed updates in the UI:
 
-## Collection Paths
+1. The Dashboard version card performs a lightweight check and links to System when an update is found.
+2. “System → Runtime & Updates” shows CPAMP/CPA versions, release notes, compatibility requirements, and update scope.
+3. Update CPAMP, CPA, or both.
+4. The operation view reports progress and automatically attempts rollback on failure. An operation token keeps status polling available while Manager briefly restarts.
 
-When `USAGE_COLLECTOR_MODE=auto`, Manager Server tries these paths in order:
+Only Integrated deployments support managed updates. Separated `installer-managed`, External, and Slim deployments connected to an existing CPA still update images or external CPA through the [update guide](../operations/update.md).
 
-1. RESP Pub/Sub.
-2. HTTP usage queue.
-3. RESP pop fallback.
+Official release images embed the trusted runtime-manifest public key. When building the repository's `docker-compose.manager.yml` from source with `--build`, provide `CPA_MANAGER_RELEASE_PUBLIC_KEY` as a build variable to enable managed updates. Without it, update checks fail closed while gateway, panel, and analytics features remain available. Do not bypass signature verification for development images.
 
-RESP Pub/Sub and RESP pop must connect directly to the CPA API port, usually `8317`. Normal HTTP reverse proxies do not work for RESP. HTTP usage queue can go through an HTTP proxy.
-
-If you see `unsupported RESP prefix 'H'`, the RESP collector is probably connected to an HTTP address. Prefer `auto` or `http`, and confirm CPA is at least `v6.10.8+`.
-
-:::
-
-## Upgrade
-
-Back up `/data` first.
-
-Compose:
+Even with managed runtime updates, periodically refresh the base image for Alpine, CA certificate, and image-layer fixes:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-`docker run`:
+## Common Environment Variables
 
-```bash
-docker pull seakee/cpa-manager-plus:latest
-docker stop cpa-manager-plus
-docker rm cpa-manager-plus
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
-```
+| Variable                      | Default                                    | Purpose                                                                                                     |
+| ----------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `CPA_MANAGER_DEPLOYMENT_MODE` | inferred                                   | Use `integrated` for Full Docker; older deployments infer from their existing connection and bundled binary |
+| `CPA_MANAGER_GATEWAY_ADDRS`   | `0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317` | Equivalent Gateway listeners                                                                                |
+| `CPA_MANAGER_PANEL_BASE_PATH` | `/management.html`                         | Locks the panel entry; the UI becomes read-only                                                             |
+| `USAGE_DATA_DIR`              | `/data`                                    | Persistent data directory                                                                                   |
+| `USAGE_DB_PATH`               | `/data/usage.sqlite`                       | SQLite path                                                                                                 |
+| `CPA_MANAGER_DATA_KEY_PATH`   | `/data/data.key`                           | Encryption key path                                                                                         |
+| `CPA_UPSTREAM_URL`            | empty                                      | External CPA URL; existing deployments infer `installer-managed` when present                               |
+| `CPA_MANAGEMENT_KEY_FILE`     | empty                                      | External CPA Management Key file                                                                            |
+
+Legacy `HTTP_ADDR` still applies when running Manager Server directly. Integrated runtime public listeners are controlled by `CPA_MANAGER_GATEWAY_ADDRS`.
 
 ## Verification
 
-Basic health checks:
-
 ```bash
-curl http://127.0.0.1:18317/health
-curl http://127.0.0.1:18317/usage-service/info
+curl http://127.0.0.1:18137/health
+curl http://127.0.0.1:18137/usage-service/info
+curl http://127.0.0.1:18137/v1/models
 ```
 
-After setup, check collector status:
+After initialization:
 
 ```bash
 curl -H "Authorization: Bearer <CPAMP_ADMIN_KEY>" \
-  http://127.0.0.1:18317/status
+  http://127.0.0.1:18137/status
 ```
 
-Important fields:
-
-```text
-configured
-collector.lastError
-lastConsumedAt
-lastInsertedAt
-eventCount
-```
-
-If the monitoring page is empty, continue with [Request Monitoring Troubleshooting](../troubleshooting/request-monitoring.md).
-
-## What Changed From CPA-Manager
-
-Old CPA-Manager Docker docs used `seakee/cpa-manager` and described an external Usage Service for a CPA-hosted panel. In CPA Manager Plus:
-
-- Image is `seakee/cpa-manager-plus`.
-- Container is usually named `cpa-manager-plus`.
-- Full Docker / Manager Server mode login uses the CPAMP Admin Key, not the CPA Management Key.
-- Setup/panel-saved CPA Management Keys are encrypted with `/data/data.key`; installer env/secret mode reads the key from the install directory.
-- The CPAMP Lightweight Panel does not configure or attach external Manager Server analytics.
+When initialization fails, “Open solution guide” links directly to the matching anchor in [Setup Troubleshooting](../troubleshooting/setup.md).

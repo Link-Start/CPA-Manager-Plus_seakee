@@ -50,11 +50,11 @@
 
 CPA / CLIProxyAPI 可以在 `:8317` 直接托管官方 Management Center，也可以换成 CPAMP 轻量面板。轻量面板不增加额外服务，只替换官方界面；需要持久化可观测性和长期运维时，再部署 CPAMP 完整模式。
 
-| 选择                                                                                                     | 适合谁                                   | 入口                                    |
-| -------------------------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------- |
-| 官方 [CLI Proxy API Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) | 希望继续使用 CPA 项目维护的上游原生 UI   | CPA `:8317/management.html`             |
-| CPAMP 轻量面板                                                                                           | 只替换界面，不增加额外服务或数据库       | CPA `:8317/management.html`             |
-| CPAMP 完整模式                                                                                           | 需要请求历史、成本分析、账号巡检和自动化 | Manager Server `:18317/management.html` |
+| 选择                                                                                                     | 适合谁                                                     | 入口                           |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| 官方 [CLI Proxy API Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) | 希望继续使用 CPA 项目维护的上游原生 UI                     | CPA `:8317/management.html`    |
+| CPAMP 轻量面板                                                                                           | 只替换界面，不增加额外服务或数据库                         | CPA `:8317/management.html`    |
+| CPAMP 完整模式                                                                                           | 一个内置网关，同时提供请求历史、成本分析、账号巡检和自动化 | CPAMP `:18137/management.html` |
 
 详细区别见 [如何选择 CPA 面板](https://seakee.github.io/CPA-Manager-Plus/docs/guide/choosing-a-panel.html)，也可以直接查看 [CPAMP 轻量面板安装指南](https://seakee.github.io/CPA-Manager-Plus/docs/deployment/cpa-panel.html)。
 
@@ -89,13 +89,15 @@ CPA / CLIProxyAPI 可以在 `:8317` 直接托管官方 Management Center，也�
 
 ### 生产运维
 
-- 使用单 Docker 容器，或 Linux、macOS、Windows 的 amd64/arm64 原生包运行；完整栈可以与 CPA 一起部署。
+- 使用单 Docker 容器，或 Linux、macOS、Windows 的 amd64/arm64 原生包运行。Full 包内置 CPA；Slim 可以稍后下载 CPA 或沿用已有 CPA。
+- `18137`、`8137` 和旧版 `18317` 提供相同 Gateway 能力，新部署只需要使用 `18137`。
+- 在“系统”中通过签名清单、健康检查、进度展示和自动回滚更新 CPAMP 与内置 CPA。
 - 请求历史、Manager 配置、账号自动化和模型价格都保存在本地文件，不需要注册账号，也不包含遥测 SDK。
 - 备份 SQLite 时同时保存 `data.key`，才能恢复加密后的 CPA Management Key。
 
 想先了解界面？可以打开[在线演示](https://seakee.github.io/CPA-Manager-Plus/)。演示站只使用虚构数据，不是部署或运行模式，不能连接、管理或监控真实 CPA。
 
-CPAMP 管理和观测经过 CPA / CLIProxyAPI 的流量，本身不是模型代理，也不会独立转发模型请求。
+CPAMP Gateway 会把模型请求转发给内置或已配置的 CPA / CLIProxyAPI，CPA 仍负责 Provider 和协议实现。
 
 ## 快速开始
 
@@ -116,28 +118,24 @@ CPAMP_DRY_RUN=1 bash install-cpamp.sh
 
 升级、修复和管理员密钥恢复行为见 [一键安装脚本](https://seakee.github.io/CPA-Manager-Plus/docs/deployment/installer.html)。
 
-### CPA + CPAMP 一起部署
+### 一体化 CPA + CPAMP
 
 ```yaml
 services:
-  cli-proxy-api:
-    image: eceasy/cli-proxy-api:latest
-    restart: unless-stopped
-    ports:
-      - '8317:8317'
-    volumes:
-      - cpa-data:/app/data
-
   cpa-manager-plus:
     image: seakee/cpa-manager-plus:latest
     restart: unless-stopped
     ports:
-      - '18317:18317'
+      - '18137:18137'
+      # 可选兼容映射：
+      # - '8137:8137'
+      # - '18317:18317'
+    environment:
+      CPA_MANAGER_DEPLOYMENT_MODE: integrated
     volumes:
       - cpa-manager-plus-data:/data
 
 volumes:
-  cpa-data:
   cpa-manager-plus-data:
 ```
 
@@ -145,37 +143,34 @@ volumes:
 docker compose up -d
 ```
 
-打开 `http://<host>:18317/management.html`，从 Manager Server 日志取得 CPAMP 管理员密钥，然后在 setup 填写 CPA 地址和 CPA Management Key。
+打开 `http://<host>:18137/management.html`，输入启动日志中的一次性初始化令牌，再在 UI 中设置或生成 CPAMP 管理密钥。内置 CPA 不需要单独填写地址或 Management Key。
 
-### 仅部署 CPAMP
+### Slim 或沿用已有 CPA
 
-CPA 已经在运行时：
+安装器可以部署 CPAMP-only Slim。首次打开时选择下载最新兼容 CPA 或沿用已有 CPA：
 
 ```bash
-docker run -d \
-  --name cpa-manager-plus \
-  --restart unless-stopped \
-  -p 18317:18317 \
-  -v cpa-manager-plus-data:/data \
-  seakee/cpa-manager-plus:latest
+bash install-cpamp.sh
 ```
 
-推荐 CPA 版本：`v7.1.39+`，HTTP usage queue 至少需要 `v6.10.8+`。
+下载 CPA 后 Slim 会切换为 Integrated，并获得 CPAMP/CPA 托管更新能力；沿用已有 CPA 时会立即验证 Management API，并继续由原部署流程更新该 CPA。
 
 ## 文档
 
-| 任务                                  | 文档                                                                                                                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 选择面板和部署模式                    | [如何选择 CPA 面板](https://seakee.github.io/CPA-Manager-Plus/docs/guide/choosing-a-panel.html)                                                                                       |
-| 不部署额外服务，直接替换官方 UI       | [CPAMP 轻量面板](https://seakee.github.io/CPA-Manager-Plus/docs/deployment/cpa-panel.html)                                                                                            |
-| 安装并完成首次配置                    | [快速开始](https://seakee.github.io/CPA-Manager-Plus/docs/guide/getting-started.html)                                                                                                 |
-| 查看功能、Provider 和模式边界         | [能力矩阵](https://seakee.github.io/CPA-Manager-Plus/docs/reference/capability-matrix.html)                                                                                           |
-| 了解运行端口、密钥和请求流向          | [运行模型](https://seakee.github.io/CPA-Manager-Plus/docs/guide/runtime-model.html)                                                                                                   |
-| 配置 Provider、认证文件、配额和插件   | [面板手册](https://seakee.github.io/CPA-Manager-Plus/docs/manual/ai-providers.html)                                                                                                   |
-| 运维 Manager Server、备份、升级与迁移 | [Manager Server 指南](https://seakee.github.io/CPA-Manager-Plus/docs/operations/manager-server.html)                                                                                  |
-| 备份数据或恢复丢失的管理员密钥        | [备份与恢复](https://seakee.github.io/CPA-Manager-Plus/docs/operations/backup.html)、[重置管理员密钥](https://seakee.github.io/CPA-Manager-Plus/docs/operations/reset-admin-key.html) |
-| 从旧版 CPA-Manager 迁移               | [CPA-Manager 迁移指南](https://seakee.github.io/CPA-Manager-Plus/docs/migration/from-cpa-manager.html)                                                                                |
-| 排查监控为空或队列问题                | [请求监控排障](https://seakee.github.io/CPA-Manager-Plus/docs/troubleshooting/request-monitoring.html)                                                                                |
+| 任务                                   | 文档                                                                                                                                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 选择面板和部署模式                     | [如何选择 CPA 面板](https://seakee.github.io/CPA-Manager-Plus/docs/guide/choosing-a-panel.html)                                                                                       |
+| 不部署额外服务，直接替换官方 UI        | [CPAMP 轻量面板](https://seakee.github.io/CPA-Manager-Plus/docs/deployment/cpa-panel.html)                                                                                            |
+| 安装并完成首次配置                     | [快速开始](https://seakee.github.io/CPA-Manager-Plus/docs/guide/getting-started.html)                                                                                                 |
+| 查看功能、Provider 和模式边界          | [能力矩阵](https://seakee.github.io/CPA-Manager-Plus/docs/reference/capability-matrix.html)                                                                                           |
+| 了解运行端口、密钥和请求流向           | [运行模型](https://seakee.github.io/CPA-Manager-Plus/docs/guide/runtime-model.html)                                                                                                   |
+| 配置 Provider、认证文件、配额和插件    | [面板手册](https://seakee.github.io/CPA-Manager-Plus/docs/manual/ai-providers.html)                                                                                                   |
+| 运维 Manager Server、备份、升级与迁移  | [Manager Server 指南](https://seakee.github.io/CPA-Manager-Plus/docs/operations/manager-server.html)                                                                                  |
+| 备份数据或恢复丢失的管理员密钥         | [备份与恢复](https://seakee.github.io/CPA-Manager-Plus/docs/operations/backup.html)、[重置管理员密钥](https://seakee.github.io/CPA-Manager-Plus/docs/operations/reset-admin-key.html) |
+| 从旧版 CPA-Manager 迁移                | [CPA-Manager 迁移指南](https://seakee.github.io/CPA-Manager-Plus/docs/migration/from-cpa-manager.html)                                                                                |
+| 迁移旧版 Full、Slim、Docker 或原生部署 | [集成运行时迁移](https://seakee.github.io/CPA-Manager-Plus/docs/migration/integrated-runtime.html)                                                                                    |
+| 解决首次初始化和运行时错误             | [初始化故障排查](https://seakee.github.io/CPA-Manager-Plus/docs/troubleshooting/setup.html)                                                                                           |
+| 排查监控为空或队列问题                 | [请求监控排障](https://seakee.github.io/CPA-Manager-Plus/docs/troubleshooting/request-monitoring.html)                                                                                |
 
 ## 数据、隐私与安全
 
@@ -213,6 +208,8 @@ go run ./cmd/cpa-manager-plus
 ```bash
 docker compose -f docker-compose.manager.yml up --build
 ```
+
+正式 Release 镜像会内置可信的 runtime manifest 公钥。本地源码构建如未通过构建变量提供 `CPA_MANAGER_RELEASE_PUBLIC_KEY`，托管更新检测会按安全策略失败；网关、面板和数据分析能力仍可正常使用。
 
 ## 发布
 

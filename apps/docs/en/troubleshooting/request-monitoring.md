@@ -3,14 +3,14 @@
 First confirm that you opened CPAMP Full Mode:
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
 The Lightweight Panel on CPA `:8317/management.html` does not store request history, so Monitoring is unavailable there by design.
 
 ## Check In This Order
 
-1. **Send a real request**: confirm that Codex, Claude Code, or another client actually requested a model through CPA.
+1. **Send a real request**: confirm that Codex, Claude Code, or another client used the CPAMP `18137` Gateway, or directly used the configured external CPA during migration.
 2. **Check the CPA connection**: Dashboard should show CPA as connected with no authentication error.
 3. **Enable Monitoring**: in Manager Server configuration, confirm that request monitoring is enabled.
 4. **Wait for a new request**: Monitoring only shows events collected after it is enabled; expired events cannot be recovered.
@@ -23,15 +23,15 @@ The Lightweight Panel on CPA `:8317/management.html` does not store request hist
 | Dashboard says CPA is disconnected      | CPA URL, CPA Management Key, network, and remote management    |
 | CPA is connected but no requests appear | Client base URL, CPA usage publishing, Monitoring switch       |
 | Data appears intermittently             | Manager Server restarts, queue retention, duplicate collectors |
-| Data stopped after adding a proxy       | Let Manager Server connect directly to CPA `:8317` first       |
+| Data stopped after adding a proxy       | Forward the proxy to CPAMP `18137`; in External mode also check CPAMP-to-CPA connectivity |
 | No new data immediately after upgrade   | Send a new request and check the current connection            |
 
 ## Most Common Fix
 
-1. Confirm that client base URLs point to CPA, not CPAMP.
+1. Prefer the CPAMP `18137` Gateway for Full Mode clients. If clients still reach an external CPA directly, confirm it is the CPA configured in CPAMP.
 2. Enable `usage-statistics-enabled` in CPA configuration.
 3. Enable Monitoring in CPAMP and keep automatic collection mode.
-4. Let Manager Server reach the CPA API port directly.
+4. In Integrated mode, confirm the internal CPA is healthy. In External or installer-managed mode, confirm Manager Server can reach the CPA API port directly.
 5. After restarting, send a new request and refresh Monitoring.
 
 If data is still missing, save CPA logs, Manager Server logs, and System version information for the same time window. Do not share real API keys, Management Keys, or auth files.

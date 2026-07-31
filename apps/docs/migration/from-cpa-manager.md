@@ -11,6 +11,8 @@
 - 完整 Docker 方案的登录凭证从 CPA Management Key 变为 Manager Server 管理员密钥 `cpamp_...`。
 - CPA Management Key 会使用 `/data/data.key` 加密后保存到 SQLite。
 - 旧数据会在首次启动时自动执行必要的兼容迁移。
+- 新的推荐 Gateway 入口是 `18137`；旧 `18317` 可继续映射用于平滑迁移，两个端口能力相同。
+- Full 镜像虽然内置 CPA，但迁移时可以保持 External 模式并继续使用旧数据库中的 CPA 连接。
 
 ## 迁移前检查
 
@@ -24,7 +26,7 @@
    - `usage.sqlite`
    - `usage.sqlite-wal`
    - `usage.sqlite-shm`
-5. 决定管理员密钥策略。推荐迁移时显式设置 `CPA_MANAGER_ADMIN_KEY` 或 `CPA_MANAGER_ADMIN_KEY_FILE`。
+5. 决定管理员密钥策略。推荐使用首次启动日志中的一次性 bootstrap token，在 UI 中设置新密钥；已有自动化也可以继续显式设置 `CPA_MANAGER_ADMIN_KEY` 或 `CPA_MANAGER_ADMIN_KEY_FILE`。
 
 ## Docker Volume 迁移
 
@@ -49,12 +51,14 @@ services:
     image: seakee/cpa-manager-plus:latest
     restart: unless-stopped
     ports:
+      - '18137:18137'
+      # 迁移期间可保留：
       - '18317:18317'
     environment:
-      HTTP_ADDR: '0.0.0.0:18317'
+      CPA_MANAGER_DEPLOYMENT_MODE: 'external'
+      CPA_MANAGER_GATEWAY_ADDRS: '0.0.0.0:18137,0.0.0.0:18317'
       USAGE_DB_PATH: '/data/usage.sqlite'
       CPA_MANAGER_DATA_KEY_PATH: '/data/data.key'
-      CPA_MANAGER_ADMIN_KEY: 'replace-with-a-long-random-admin-key'
       USAGE_COLLECTOR_MODE: 'auto'
     volumes:
       - cpa-manager-data:/data
@@ -75,25 +79,30 @@ cp -a /srv/cpa-manager-data /srv/cpa-manager-data.backup
 docker run -d \
   --name cpa-manager-plus \
   --restart unless-stopped \
+  -p 18137:18137 \
   -p 18317:18317 \
   -v /srv/cpa-manager-data:/data \
-  -e CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key' \
+  -e CPA_MANAGER_DEPLOYMENT_MODE=external \
   seakee/cpa-manager-plus:latest
 ```
 
-启动后打开 `http://<host>:18317/management.html`，使用管理员密钥登录。
+启动日志会输出一次性 bootstrap token。打开 `http://<host>:18137/management.html`，在 UI 中设置符合策略的管理密钥。旧 `http://<host>:18317/management.html` 可暂时继续使用，再逐步迁移反向代理和客户端。
 
 ## 原生包迁移
 
 1. 停止旧 `cpa-manager` 进程。
 2. 备份旧程序目录，尤其是 `data/usage.sqlite*`。
-3. 解压 `cpa-manager-plus_<version>_<os>_<arch>`。
+3. 已有外部 CPA 时优先解压 `_slim` 资产；无后缀资产仍是 Slim 兼容别名。
 4. 将旧 `data` 目录复制到新包目录，或设置 `USAGE_DATA_DIR` / `USAGE_DB_PATH` 指向旧数据目录。
-5. 首次启动时建议设置管理员密钥：
+5. 使用控制脚本或 runtime 子命令启动：
 
 ```bash
-CPA_MANAGER_ADMIN_KEY='replace-with-a-long-random-admin-key' ./cpa-manager-plus
+./cpa-manager-plusctl start
+# 或前台运行：
+./cpa-manager-plus runtime
 ```
+
+6. 从日志取得一次性 bootstrap token，在 `http://<host>:18137/management.html` 中设置 CPAMP 管理密钥。
 
 ## 首次启动后验证
 

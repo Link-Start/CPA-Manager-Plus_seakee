@@ -11,7 +11,7 @@ CPAMP 的请求历史、配置和加密凭证都在本机。备份时最容易�
 - `usage.sqlite-shm`
 - `data.key`
 
-如果部署目录还有自定义配置文件，也应一起备份。使用一键安装脚本时，至少额外备份安装目录中的 `secrets/`；完整安装和 env/secret 管理模式会把 CPA Management Key 放在 `secrets/cpa-management-key`。
+如果部署目录还有自定义配置文件，也应一起备份。Integrated Full 应直接备份完整数据目录，其中还包含 `cpa/config.yaml`、`cpa/auths/`、`cpa/logs/` 和 `runtime/`。使用一键安装脚本时，至少额外备份安装目录中的 `secrets/`；分离式完整安装和 env/secret 管理模式会把 CPA Management Key 放在 `secrets/cpa-management-key`。
 
 ## 为什么必须备份 data.key
 
@@ -77,7 +77,7 @@ Copy-Item -Recurse .\data .\data.backup
 在旧实例仍可访问时导出：
 
 ```bash
-export OLD_CPAMP_URL='http://old-host:18317'
+export OLD_CPAMP_URL='http://old-host:18137'
 export OLD_CPAMP_ADMIN_KEY='cpamp_...'
 
 curl -fsS \
@@ -90,10 +90,10 @@ chmod 600 manager-config.json
 
 `manager-config.json` 可能包含明文 CPA Management Key，应按 secret 管理，不要提交到版本库或发送到 Issue。
 
-然后停止旧实例，使用空目录启动新实例。记录新实例首次启动生成的管理员密钥，再导入：
+然后停止旧实例，使用空目录启动新实例。从日志取得一次性 bootstrap token，在 UI 中设置新的 CPAMP 管理密钥，再导入：
 
 ```bash
-export NEW_CPAMP_URL='http://new-host:18317'
+export NEW_CPAMP_URL='http://new-host:18137'
 export NEW_CPAMP_ADMIN_KEY='cpamp_...'
 
 curl -fsS \

@@ -111,15 +111,15 @@ The lightweight panel does not connect to or read a separately running Manager S
 
 When you need request history, cost analytics, or server-side automation:
 
-1. Start Manager Server with [Docker Deployment](./docker.md) or [Native Packages](./native.md).
+1. Install Full with [Docker Deployment](./docker.md), or install Slim with [Native Packages](./native.md) and choose the existing CPA.
 2. Open:
 
 ```text
-http://<cpamp-host>:18317/management.html
+http://<cpamp-host>:18137/management.html
 ```
 
-3. Complete setup or log in with the CPAMP Admin Key.
-4. Configure the CPA address, CPA Management Key, and request collection.
+3. Use the one-time bootstrap token to initialize CPAMP and create the CPAMP Admin Key.
+4. When Slim uses the existing CPA, enter and immediately validate its URL and CPA Management Key. Bundled Full does not require this step.
 
 The lightweight panel may remain on the CPA port, but full capabilities are available only from the Manager Server panel entry.
 

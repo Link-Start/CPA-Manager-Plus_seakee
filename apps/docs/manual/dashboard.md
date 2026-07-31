@@ -21,6 +21,8 @@ description: 使用 CPA Manager Plus 仪表盘查看 CPA/Manager Server 连接�
 
 仪表盘的数据来自 Manager Server 本地 SQLite 和 CPA 用量队列。这里的成本是 CPAMP 根据请求事件和模型价格算出的估算值，不等同于提供商最终账单。
 
+Integrated/Full 部署检测到 CPAMP 或 CPA 新版本时，版本卡片会出现“查看更新”。它不会在仪表盘直接执行升级，而是跳转到[系统信息](./system.md)顶部的运行时管理面板，供你查看发布说明、进度和回滚结果。外部或分离式部署不会显示此入口。
+
 ## 常用操作
 
 1. 打开仪表盘后先看连接状态和采集器状态。
