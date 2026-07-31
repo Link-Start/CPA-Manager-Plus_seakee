@@ -8,22 +8,70 @@ COPY apps/web ./apps/web
 WORKDIR /app/apps/web
 RUN VERSION=$VERSION npm run build
 
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS cpa-download
+ARG TARGETOS
+ARG TARGETARCH
+ARG CPA_VERSION=""
+ARG CPA_REPOSITORY=router-for-me/CLIProxyAPI
+COPY CPA_VERSION /tmp/CPA_VERSION
+RUN set -eu; \
+    if [ "$TARGETOS" != "linux" ]; then \
+      echo "CPA Docker runtime only supports linux targets" >&2; \
+      exit 1; \
+    fi; \
+    cpa_tag="$CPA_VERSION"; \
+    if [ -z "$cpa_tag" ]; then cpa_tag="$(tr -d '[:space:]' </tmp/CPA_VERSION)"; fi; \
+    if ! printf '%s\n' "$cpa_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then \
+      echo "invalid CPA_VERSION: $cpa_tag" >&2; \
+      exit 1; \
+    fi; \
+    case "$TARGETARCH" in amd64|arm64) ;; *) echo "unsupported CPA target architecture: $TARGETARCH" >&2; exit 1 ;; esac; \
+    cpa_release_version="${cpa_tag#v}"; \
+    asset_arch="$TARGETARCH"; \
+    if [ "$asset_arch" = "arm64" ]; then asset_arch="aarch64"; fi; \
+    asset_name="CLIProxyAPI_${cpa_release_version}_linux_${asset_arch}_no-plugin.tar.gz"; \
+    apk add --no-cache ca-certificates wget; \
+    mkdir -p /out; \
+    wget -qO "/tmp/${asset_name}" "https://github.com/${CPA_REPOSITORY}/releases/download/${cpa_tag}/${asset_name}"; \
+    wget -qO /tmp/checksums.txt "https://github.com/${CPA_REPOSITORY}/releases/download/${cpa_tag}/checksums.txt"; \
+    checksum_line="$(awk -v name="$asset_name" '$2 == name { print; exit }' /tmp/checksums.txt)"; \
+    if [ -z "$checksum_line" ]; then echo "CPA checksum is missing for $asset_name" >&2; exit 1; fi; \
+    printf '%s\n' "$checksum_line" | (cd /tmp && sha256sum -c -); \
+    tar -xOzf "/tmp/${asset_name}" cli-proxy-api >/out/cli-proxy-api; \
+    chmod 0755 /out/cli-proxy-api; \
+    printf '%s\n' "$cpa_tag" >/out/cpa-version
+
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS service-build
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION=dev
+ARG RUNTIME_RELEASE_VERIFIER=""
 WORKDIR /src
 COPY apps/manager-server ./apps/manager-server
 COPY --from=web-build /app/apps/web/dist/index.html ./apps/manager-server/internal/httpapi/web/management.html
+COPY --from=cpa-download /out/cpa-version /tmp/cpa-version
 WORKDIR /src/apps/manager-server
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/cpa-manager-plus ./cmd/cpa-manager-plus
+RUN set -eu; \
+    cpa_version="$(tr -d '[:space:]' </tmp/cpa-version)"; \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
+      -trimpath \
+      -ldflags "-s -w -X github.com/seakee/cpa-manager-plus/apps/manager-server/internal/managedruntime.BuildVersion=${VERSION} -X github.com/seakee/cpa-manager-plus/apps/manager-server/internal/managedruntime.EmbeddedReleasePublicKey=${RUNTIME_RELEASE_VERIFIER} -X github.com/seakee/cpa-manager-plus/apps/manager-server/internal/managedruntime.EmbeddedCPAVersion=${cpa_version}" \
+      -o /out/cpa-manager-plus \
+      ./cmd/cpa-manager-plus
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates wget tzdata
 WORKDIR /app
 COPY --from=service-build /out/cpa-manager-plus /usr/local/bin/cpa-manager-plus
-ENV HTTP_ADDR=0.0.0.0:18317
+COPY --from=cpa-download /out/cli-proxy-api /usr/local/bin/cli-proxy-api
+ENV CPA_MANAGER_GATEWAY_ADDRS=0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317
+ENV CPA_MANAGER_RUNTIME_MANAGER_ADDR=127.0.0.1:18318
+ENV CPA_MANAGER_RUNTIME_CPA_ADDR=127.0.0.1:8317
+ENV CPA_MANAGER_RUNTIME_CONTROL_ADDR=127.0.0.1:18319
+ENV CPA_MANAGER_RUNTIME_CPA_BINARY=/usr/local/bin/cli-proxy-api
 ENV USAGE_DATA_DIR=/data
 ENV USAGE_DB_PATH=/data/usage.sqlite
-EXPOSE 18317
+EXPOSE 8137 18137 18317
 ENTRYPOINT ["cpa-manager-plus"]
+CMD ["runtime"]

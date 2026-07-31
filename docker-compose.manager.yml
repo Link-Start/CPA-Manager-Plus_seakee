@@ -3,16 +3,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.manager-server
+      args:
+        VERSION: "${VERSION:-dev}"
+        CPA_VERSION: "${CPA_VERSION:-}"
+        RUNTIME_RELEASE_VERIFIER: "${CPA_MANAGER_RELEASE_PUBLIC_KEY:-}"
     image: seakee/cpa-manager-plus:latest
     restart: unless-stopped
+    stop_grace_period: 45s
     ports:
+      - "8137:8137"
+      - "18137:18137"
       - "18317:18317"
     environment:
-      HTTP_ADDR: "0.0.0.0:18317"
+      CPA_MANAGER_DEPLOYMENT_MODE: "integrated"
+      CPA_MANAGER_GATEWAY_ADDRS: "0.0.0.0:8137,0.0.0.0:18137,0.0.0.0:18317"
       USAGE_DB_PATH: "/data/usage.sqlite"
       CPA_MANAGER_DATA_KEY_PATH: "/data/data.key"
-      # Optional: set CPA_MANAGER_ADMIN_KEY or CPA_MANAGER_ADMIN_KEY_FILE to provide
-      # a stable admin key. If omitted, the first startup log prints a generated key once.
+      # Optional: set CPA_MANAGER_ADMIN_KEY or CPA_MANAGER_ADMIN_KEY_FILE to keep
+      # an existing managed admin credential. New installs configure it in the UI.
       # Optional: set CPA_MANAGER_DATA_KEY or CPA_MANAGER_DATA_KEY_FILE only when you
       # manage this encryption key outside the /data volume.
       USAGE_COLLECTOR_MODE: "auto"
@@ -25,7 +33,7 @@ services:
     volumes:
       - cpa-manager-plus-data:/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18317/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18137/health"]
       interval: 10s
       timeout: 3s
       retries: 3
