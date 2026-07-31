@@ -1,0 +1,214 @@
+name: Refresh Runtime Manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      cpa_version:
+        description: Optional CPA release tag override, for example v7.2.92
+        required: false
+        type: string
+  schedule:
+    - cron: '23 */6 * * *'
+
+concurrency:
+  group: runtime-manifest-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve stable CPAMP and CPA releases
+        id: versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CPA_RELEASE_REPOSITORY: router-for-me/CLIProxyAPI
+          CPA_VERSION_INPUT: ${{ inputs.cpa_version }}
+          CPA_VERSION_PIN: ${{ vars.CPA_RUNTIME_VERSION }}
+        run: |
+          set -euo pipefail
+          cpamp_version="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          cpa_version="${CPA_VERSION_INPUT}"
+          if [ -z "${cpa_version}" ]; then
+            cpa_version="${CPA_VERSION_PIN}"
+          fi
+          if [ -z "${cpa_version}" ]; then
+            cpa_version="$(gh api "repos/${CPA_RELEASE_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          fi
+          for version in "${cpamp_version}" "${cpa_version}"; do
+            if ! [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid release tag: ${version}" >&2
+              exit 1
+            fi
+          done
+          if [ "$(gh release view "${cpa_version}" --repo "${CPA_RELEASE_REPOSITORY}" --json isDraft --jq '.isDraft')" != "false" ]; then
+            echo "CPA release ${cpa_version} is still a draft" >&2
+            exit 1
+          fi
+          if [ "$(gh release view "${cpa_version}" --repo "${CPA_RELEASE_REPOSITORY}" --json isPrerelease --jq '.isPrerelease')" != "false" ]; then
+            echo "Stable runtime manifest cannot use prerelease CPA ${cpa_version}" >&2
+            exit 1
+          fi
+          {
+            echo "cpamp_version=${cpamp_version}"
+            echo "cpa_version=${cpa_version}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout released CPAMP source for capability detection
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.versions.outputs.cpamp_version }}
+          path: released
+
+      - name: Detect manifest support
+        id: capability
+        run: |
+          if [ -f released/apps/manager-server/cmd/runtime-manifest/main.go ]; then
+            echo "supported=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::warning::Latest stable CPAMP does not support signed runtime manifests yet."
+            echo "supported=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout trusted manifest signer
+        if: steps.capability.outputs.supported == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: signer
+
+      - name: Setup Go
+        if: steps.capability.outputs.supported == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: signer/apps/manager-server/go.sum
+
+      - name: Validate runtime release signing key
+        if: steps.capability.outputs.supported == 'true'
+        working-directory: signer/apps/manager-server
+        env:
+          CPA_MANAGER_RELEASE_PRIVATE_KEY: ${{ secrets.RUNTIME_RELEASE_PRIVATE_KEY }}
+          CPA_MANAGER_RELEASE_PUBLIC_KEY: ${{ vars.RUNTIME_RELEASE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CPA_MANAGER_RELEASE_PUBLIC_KEY}" ]; then
+            echo "RUNTIME_RELEASE_PUBLIC_KEY repository variable is required" >&2
+            exit 1
+          fi
+          derived_public_key="$(go run ./cmd/runtime-manifest public-key)"
+          if [ "${derived_public_key}" != "${CPA_MANAGER_RELEASE_PUBLIC_KEY}" ]; then
+            echo "RUNTIME_RELEASE_PUBLIC_KEY does not match RUNTIME_RELEASE_PRIVATE_KEY" >&2
+            exit 1
+          fi
+
+      - name: Download and verify release assets
+        if: steps.capability.outputs.supported == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CPA_RELEASE_REPOSITORY: router-for-me/CLIProxyAPI
+          CPAMP_VERSION: ${{ steps.versions.outputs.cpamp_version }}
+          CPA_VERSION: ${{ steps.versions.outputs.cpa_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/cpamp dist/cpa
+          gh release download "${CPAMP_VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'cpa-manager-plus_*_slim.tar.gz' \
+            --pattern 'cpa-manager-plus_*_slim.zip' \
+            --pattern 'checksums.txt' \
+            --dir dist/cpamp \
+            --clobber
+          (
+            cd dist/cpamp
+            shopt -s nullglob
+            assets=(cpa-manager-plus_*_slim.tar.gz cpa-manager-plus_*_slim.zip)
+            if [ "${#assets[@]}" -ne 6 ]; then
+              echo "Expected 6 CPAMP Slim assets, found ${#assets[@]}" >&2
+              exit 1
+            fi
+            for asset in "${assets[@]}"; do
+              checksum_line="$(awk -v name="${asset}" '$2 == name { print; exit }' checksums.txt)"
+              if [ -z "${checksum_line}" ]; then
+                echo "Missing CPAMP checksum for ${asset}" >&2
+                exit 1
+              fi
+              printf '%s\n' "${checksum_line}" | sha256sum -c -
+            done
+          )
+          gh release download "${CPA_VERSION}" \
+            --repo "${CPA_RELEASE_REPOSITORY}" \
+            --pattern 'CLIProxyAPI_*.tar.gz' \
+            --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'checksums.txt' \
+            --dir dist/cpa \
+            --clobber
+          (
+            cd dist/cpa
+            sha256sum -c checksums.txt
+          )
+          cpa_release_version="${CPA_VERSION#v}"
+          required_cpa_assets=(
+            "CLIProxyAPI_${cpa_release_version}_linux_amd64_no-plugin.tar.gz"
+            "CLIProxyAPI_${cpa_release_version}_linux_aarch64_no-plugin.tar.gz"
+            "CLIProxyAPI_${cpa_release_version}_darwin_amd64.tar.gz"
+            "CLIProxyAPI_${cpa_release_version}_darwin_aarch64.tar.gz"
+            "CLIProxyAPI_${cpa_release_version}_windows_amd64.zip"
+            "CLIProxyAPI_${cpa_release_version}_windows_aarch64.zip"
+          )
+          for asset in "${required_cpa_assets[@]}"; do
+            if [ ! -f "dist/cpa/${asset}" ]; then
+              echo "Missing required CPA asset: ${asset}" >&2
+              exit 1
+            fi
+          done
+          gh release view "${CPAMP_VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json body \
+            --jq '.body' > cpamp-release-notes.md
+          gh release view "${CPA_VERSION}" \
+            --repo "${CPA_RELEASE_REPOSITORY}" \
+            --json body \
+            --jq '.body' > cpa-release-notes.md
+
+      - name: Generate signed runtime manifest
+        if: steps.capability.outputs.supported == 'true'
+        working-directory: signer/apps/manager-server
+        env:
+          CPA_MANAGER_RELEASE_PRIVATE_KEY: ${{ secrets.RUNTIME_RELEASE_PRIVATE_KEY }}
+          CPA_MANAGER_RELEASE_PUBLIC_KEY: ${{ vars.RUNTIME_RELEASE_PUBLIC_KEY }}
+          CPAMP_VERSION: ${{ steps.versions.outputs.cpamp_version }}
+          CPA_VERSION: ${{ steps.versions.outputs.cpa_version }}
+        run: |
+          set -euo pipefail
+          go run ./cmd/runtime-manifest generate-release \
+            --cpamp-version "${CPAMP_VERSION}" \
+            --cpa-version "${CPA_VERSION}" \
+            --cpamp-assets-dir "${GITHUB_WORKSPACE}/dist/cpamp" \
+            --cpa-assets-dir "${GITHUB_WORKSPACE}/dist/cpa" \
+            --cpamp-release-notes "${GITHUB_WORKSPACE}/cpamp-release-notes.md" \
+            --cpa-release-notes "${GITHUB_WORKSPACE}/cpa-release-notes.md" \
+            --cpa-min-cpamp-version "${CPAMP_VERSION}" \
+            --channel stable \
+            --output "${GITHUB_WORKSPACE}/runtime-manifest.json"
+
+      - name: Replace manifest on the latest stable CPAMP release
+        if: steps.capability.outputs.supported == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CPAMP_VERSION: ${{ steps.versions.outputs.cpamp_version }}
+          CPA_VERSION: ${{ steps.versions.outputs.cpa_version }}
+        run: |
+          set -euo pipefail
+          gh release upload "${CPAMP_VERSION}" runtime-manifest.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+          {
+            echo "### Runtime manifest refreshed"
+            echo "- CPAMP: ${CPAMP_VERSION}"
+            echo "- CPA: ${CPA_VERSION}"
+          } >> "${GITHUB_STEP_SUMMARY}"
