@@ -37,6 +37,7 @@ type Service struct {
 	notifierMu             sync.RWMutex
 	eventsInsertedNotifier func()
 	importSessions         *importSessionManager
+	archive                *archiveManager
 }
 
 const importBatchSize = 256

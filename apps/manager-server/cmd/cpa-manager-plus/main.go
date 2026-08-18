@@ -18,6 +18,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/collector"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/command/adminreset"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/command/derivedmaintenance"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/command/usagecompact"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/config"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/httpapi"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/processlock"
@@ -43,6 +44,17 @@ func main() {
 			defer stop()
 			if err := derivedmaintenance.Run(ctx, os.Args[2:], os.Stdout, os.Stderr); err != nil {
 				log.Printf("cleanup derived data: %v", err)
+				os.Exit(1)
+			}
+			return
+		case "compact-usage":
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if err := usagecompact.Run(ctx, os.Args[2:], os.Stdout, os.Stderr); err != nil {
+				if usagecompact.IsHelp(err) {
+					return
+				}
+				log.Printf("compact usage database: %v", err)
 				os.Exit(1)
 			}
 			return
@@ -149,6 +161,13 @@ func runServer() {
 	if cfg.DashboardHourlyRollupEnabled {
 		usageHourlyAggregateWorker = worker.NewUsageHourlyAggregateWorker(db)
 	}
+	var usageArchiveRetentionWorker *worker.UsageArchiveRetentionWorker
+	if cfg.UsageArchiveRetentionEnabled && cfg.UsageArchiveRetentionDays > 0 && cfg.DashboardHourlyRollupEnabled {
+		usageArchiveRetentionWorker = worker.NewUsageArchiveRetentionWorker(
+			serverApp.AppContext().UsageService,
+			cfg.UsageArchiveRetentionDays,
+		)
+	}
 	serverApp.AppContext().UsageService.SetEventsInsertedNotifier(func() {
 		accountHistoryRollupWorker.Wake()
 		usageDerivedRollupWorker.Wake()
@@ -220,7 +239,17 @@ func runServer() {
 		if usageHourlyAggregateWorker != nil {
 			usageHourlyAggregateWorker.Wake()
 		}
-		go runUsageResponseMetadataBackfill(ctx, db)
+		go func() {
+			if err := waitForUsageResponseMetadataBackfill(ctx, db); err != nil {
+				if ctx.Err() == nil {
+					log.Printf("usage response metadata backfill: %v", err)
+				}
+				return
+			}
+			if usageArchiveRetentionWorker != nil {
+				usageArchiveRetentionWorker.Start(ctx)
+			}
+		}()
 	})
 	if ctx.Err() == nil {
 		usageCacheAccountingMigrationWorker.Start(ctx)
@@ -316,27 +345,58 @@ func newPprofServer(addr string) (*http.Server, error) {
 	}, nil
 }
 
-func runUsageResponseMetadataBackfill(ctx context.Context, db *store.Store) {
+const usageResponseMetadataBackfillRetryDelay = 5 * time.Second
+
+func waitForUsageResponseMetadataBackfill(ctx context.Context, db *store.Store) error {
+	return waitForBackfillReadiness(ctx, usageResponseMetadataBackfillRetryDelay, func(runCtx context.Context) error {
+		return runUsageResponseMetadataBackfill(runCtx, db)
+	})
+}
+
+func waitForBackfillReadiness(ctx context.Context, retryDelay time.Duration, run func(context.Context) error) error {
+	if run == nil {
+		return errors.New("usage response metadata backfill is not configured")
+	}
+	if retryDelay <= 0 {
+		retryDelay = time.Second
+	}
+	for {
+		err := run(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Printf("usage response metadata backfill failed; will retry: %v", err)
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func runUsageResponseMetadataBackfill(ctx context.Context, db *store.Store) error {
 	const batchLimit = 1000
 	total := 0
 	for {
 		updated, err := db.BackfillUsageResponseMetadata(ctx, batchLimit)
 		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("usage response metadata backfill: %v", err)
-			}
-			return
+			return err
 		}
 		if updated == 0 {
 			if total > 0 {
 				log.Printf("usage response metadata backfill completed: updated=%d", total)
 			}
-			return
+			return nil
 		}
 		total += updated
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
