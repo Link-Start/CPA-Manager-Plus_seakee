@@ -14,7 +14,12 @@ import {
   requestDemoCredentialRefresh,
 } from '@/features/demo/demoFixtures';
 import type { AuthFileItem } from '@/types';
-import { DEMO_API_BASE, DEMO_SERVER_VERSION, getDemoServerBuildDate } from './demoMode';
+import {
+  DEMO_API_BASE,
+  DEMO_SERVER_COMMIT,
+  DEMO_SERVER_VERSION,
+  getDemoServerBuildDate,
+} from './demoMode';
 
 type DemoMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -56,6 +61,7 @@ const createAxiosResponse = <T>(
     statusText: 'OK',
     headers: {
       'x-cpa-version': DEMO_SERVER_VERSION,
+      'x-cpa-commit': DEMO_SERVER_COMMIT,
       'x-cpa-build-date': getDemoServerBuildDate(),
       'x-cpa-support-plugin': 'true',
       ...headers,
@@ -371,8 +377,10 @@ const applyDemoAuthFileConfigurationPatch = (
 
   handledKeys.add('disable_cooling');
   if (fields.disable_cooling !== undefined) {
-    if (fields.disable_cooling) next.disable_cooling = true;
-    else delete next.disable_cooling;
+    if (fields.disable_cooling === null) delete next.disable_cooling;
+    else next.disable_cooling = fields.disable_cooling;
+    delete next.disableCooling;
+    delete next['disable-cooling'];
   }
 
   handledKeys.add('request_retry');
@@ -538,11 +546,7 @@ export async function handleDemoApiRequest<T = unknown>(
 
   if (pathname === '/routing/strategy') {
     if (method === 'get') return { strategy: getCurrentDemoRoutingStrategy() } as T;
-    if (
-      method === 'put' &&
-      isDemoConfigurationRecord(data) &&
-      typeof data.value === 'string'
-    ) {
+    if (method === 'put' && isDemoConfigurationRecord(data) && typeof data.value === 'string') {
       updateDemoRoutingStrategy(data.value);
     }
     return ok as T;

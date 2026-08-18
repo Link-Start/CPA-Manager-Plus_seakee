@@ -44,7 +44,7 @@ const makeDraft = (
   note: '',
   headersText: '',
   excludedModelsText: '',
-  disableCooling: false,
+  disableCooling: 'inherit',
   requestRetry: '',
   websockets: false,
   xaiRoutingMode: 'grok-build',

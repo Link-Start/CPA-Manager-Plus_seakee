@@ -11,7 +11,12 @@ import {
   useOpenAIEditDraftStore,
 } from '@/stores';
 import { entriesToModels, modelsToEntries } from '@/components/ui/modelInputListUtils';
-import type { ApiKeyEntry, OpenAIProviderConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type ApiKeyEntry,
+  type OpenAIProviderConfig,
+} from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
@@ -71,6 +76,7 @@ const buildEmptyForm = (): OpenAIFormState => ({
   apiKeyEntries: [buildApiKeyEntry()],
   modelEntries: [{ name: '', alias: '' }],
   testModel: undefined,
+  disableCooling: 'inherit',
 });
 
 const getErrorMessage = (err: unknown) => {
@@ -131,7 +137,7 @@ const buildOpenAIBaseline = (form: OpenAIFormState, testModel: string): OpenAIEd
       : null,
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   headers: normalizeHeaderEntries(form.headers),
   apiKeyEntries: normalizeApiKeyEntries(form.apiKeyEntries),
   models: normalizeModelEntries(form.modelEntries),
@@ -341,7 +347,7 @@ export function AiProvidersOpenAIEditLayout() {
         apiKeyEntries: initialData.apiKeyEntries?.length
           ? initialData.apiKeyEntries
           : [buildApiKeyEntry()],
-        disableCooling: initialData.disableCooling,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
       };
 
       const available = modelEntries.map((entry) => entry.name.trim()).filter(Boolean);
@@ -468,7 +474,7 @@ export function AiProvidersOpenAIEditLayout() {
       baseline.priority !== normalizedPriority ||
       baseline.prefix !== form.prefix.trim() ||
       baseline.baseUrl !== form.baseUrl.trim() ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       baseline.testModel !== normalizedTestModel ||
       isHeadersDirty ||
       isApiKeyEntriesDirty ||
@@ -528,9 +534,7 @@ export function AiProvidersOpenAIEditLayout() {
       if (form.priority !== undefined && Number.isFinite(form.priority)) {
         payload.priority = Math.trunc(form.priority);
       }
-      if (form.disableCooling !== undefined) {
-        payload.disableCooling = form.disableCooling;
-      }
+      payload.disableCooling = coolingPolicyToOverride(form.disableCooling);
       if (initialData?.disabled !== undefined) {
         payload.disabled = initialData.disabled;
       }

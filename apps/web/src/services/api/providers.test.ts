@@ -739,6 +739,55 @@ describe('providersApi v1.16 provider fields', () => {
     ]);
   });
 
+  it('preserves all four transport states and clears an existing override on inherit', async () => {
+    mocks.get.mockResolvedValueOnce({
+      'gemini-api-key': [
+        { 'api-key': 'true', 'disable-cooling': true },
+        { 'api-key': 'false', 'disable-cooling': false },
+        { 'api-key': 'null', 'disable-cooling': null },
+        { 'api-key': 'absent' },
+      ],
+    });
+
+    await expect(providersApi.getGeminiKeys()).resolves.toEqual([
+      expect.objectContaining({ apiKey: 'true', disableCooling: true }),
+      expect.objectContaining({ apiKey: 'false', disableCooling: false }),
+      expect.objectContaining({ apiKey: 'null', disableCooling: null }),
+      expect.not.objectContaining({ disableCooling: expect.anything() }),
+    ]);
+
+    mocks.get.mockResolvedValueOnce({
+      'gemini-api-key': [{ 'api-key': 'old', disable_cooling: true, 'unknown-field': 'keep' }],
+    });
+    mocks.put.mockResolvedValue({});
+    await providersApi.saveGeminiKeys([{ apiKey: 'old', disableCooling: null }]);
+
+    expect(mocks.put).toHaveBeenLastCalledWith('/gemini-api-key', [
+      {
+        'api-key': 'old',
+        'disable-cooling': null,
+        'unknown-field': 'keep',
+      },
+    ]);
+  });
+
+  it('serializes Vertex cooling overrides, including explicit false', async () => {
+    mocks.get.mockResolvedValueOnce({ 'vertex-api-key': [] });
+    mocks.put.mockResolvedValue({});
+
+    await providersApi.saveVertexConfigs([
+      { apiKey: 'vertex-key', baseUrl: 'https://vertex.example.com', disableCooling: false },
+    ]);
+
+    expect(mocks.put).toHaveBeenLastCalledWith('/vertex-api-key', [
+      {
+        'api-key': 'vertex-key',
+        'base-url': 'https://vertex.example.com',
+        'disable-cooling': false,
+      },
+    ]);
+  });
+
   it('preserves model metadata by index when model names change', async () => {
     mocks.get.mockResolvedValueOnce({
       'openai-compatibility': [
@@ -816,6 +865,40 @@ describe('providersApi optimistic provider mutations', () => {
 
     expect(mocks.put).toHaveBeenCalledWith('/codex-api-key', [
       { 'raw-field': 'keep', 'auth-index': 'auth-1', prefix: 'updated' },
+      { 'api-key': 'concurrent-key', priority: 9 },
+    ]);
+  });
+
+  it('clears a Vertex cooling override through the update path without dropping raw fields', async () => {
+    mocks.get.mockResolvedValueOnce({
+      'vertex-api-key': [
+        {
+          'api-key': 'vertex-key',
+          'base-url': 'https://vertex.example.com',
+          disable_cooling: true,
+          'raw-field': 'keep',
+        },
+        { 'api-key': 'concurrent-key', priority: 9 },
+      ],
+    });
+    mocks.put.mockResolvedValue({});
+
+    await providersApi.updateVertexConfig(
+      { apiKey: 'vertex-key', baseUrl: 'https://vertex.example.com' },
+      {
+        apiKey: 'vertex-key',
+        baseUrl: 'https://vertex.example.com',
+        disableCooling: null,
+      }
+    );
+
+    expect(mocks.put).toHaveBeenCalledWith('/vertex-api-key', [
+      {
+        'api-key': 'vertex-key',
+        'base-url': 'https://vertex.example.com',
+        'disable-cooling': null,
+        'raw-field': 'keep',
+      },
       { 'api-key': 'concurrent-key', priority: 9 },
     ]);
   });

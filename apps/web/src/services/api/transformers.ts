@@ -1,10 +1,11 @@
-import type {
-  ApiKeyEntry,
-  CloakConfig,
-  GeminiKeyConfig,
-  ModelAlias,
-  OpenAIProviderConfig,
-  ProviderKeyConfig,
+import {
+  readCoolingOverride,
+  type ApiKeyEntry,
+  type CloakConfig,
+  type GeminiKeyConfig,
+  type ModelAlias,
+  type OpenAIProviderConfig,
+  type ProviderKeyConfig,
 } from '@/types';
 import type { Config } from '@/types/config';
 import { buildHeaderObject } from '@/utils/headers';
@@ -207,9 +208,7 @@ const normalizeProviderKeyConfig = (item: unknown): ProviderKeyConfig | null => 
   if (baseUrl) config.baseUrl = String(baseUrl);
   const websockets = normalizeBoolean(record?.websockets ?? record?.['websockets']);
   if (websockets !== undefined) config.websockets = websockets;
-  const disableCooling = normalizeBoolean(
-    record?.['disable-cooling'] ?? record?.disableCooling ?? record?.disable_cooling
-  );
+  const disableCooling = readCoolingOverride(record);
   if (disableCooling !== undefined) config.disableCooling = disableCooling;
   const experimentalCchSigning = normalizeBoolean(
     record?.['experimental-cch-signing'] ??
@@ -303,9 +302,7 @@ const normalizeGeminiKeyConfig = (item: unknown): GeminiKeyConfig | null => {
     ? (record['proxy-url'] ?? record.proxyUrl ?? record['proxy_url'])
     : undefined;
   if (proxyUrl) config.proxyUrl = String(proxyUrl);
-  const disableCooling = normalizeBoolean(
-    record?.['disable-cooling'] ?? record?.disableCooling ?? record?.disable_cooling
-  );
+  const disableCooling = readCoolingOverride(record);
   if (disableCooling !== undefined) config.disableCooling = disableCooling;
   const models = normalizeModelAliases(record?.models);
   if (models.length) config.models = models;
@@ -349,9 +346,7 @@ const normalizeOpenAIProvider = (provider: unknown): OpenAIProviderConfig | null
 
   const disabled = normalizeBoolean(provider.disabled ?? provider['disabled']);
   if (disabled !== undefined) result.disabled = disabled;
-  const disableCooling = normalizeBoolean(
-    provider['disable-cooling'] ?? provider.disableCooling ?? provider.disable_cooling
-  );
+  const disableCooling = readCoolingOverride(provider);
   if (disableCooling !== undefined) result.disableCooling = disableCooling;
   const prefix = normalizePrefix(provider.prefix ?? provider['prefix']);
   if (prefix) result.prefix = prefix;

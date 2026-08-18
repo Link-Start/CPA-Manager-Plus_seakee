@@ -598,7 +598,7 @@ vi.mock('@/features/authFiles/hooks/useAuthFileConfigurationEditor', () => ({
       note: '',
       headersText: '',
       excludedModelsText: '',
-      disableCooling: false,
+      disableCooling: 'inherit' as const,
       requestRetry: '',
       websockets: false,
       xaiRoutingMode: 'grok-build' as const,

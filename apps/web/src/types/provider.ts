@@ -41,7 +41,7 @@ export interface GeminiKeyConfig {
   headers?: Record<string, string>;
   excludedModels?: string[];
   authIndex?: string;
-  disableCooling?: boolean;
+  disableCooling?: boolean | null;
 }
 
 export interface ProviderKeyConfig {
@@ -57,7 +57,7 @@ export interface ProviderKeyConfig {
   excludedModels?: string[];
   cloak?: CloakConfig;
   authIndex?: string;
-  disableCooling?: boolean;
+  disableCooling?: boolean | null;
   experimentalCchSigning?: boolean;
   rebuildMidSystemMessage?: boolean;
 }
@@ -73,6 +73,6 @@ export interface OpenAIProviderConfig {
   priority?: number;
   testModel?: string;
   authIndex?: string;
-  disableCooling?: boolean;
+  disableCooling?: boolean | null;
   [key: string]: unknown;
 }

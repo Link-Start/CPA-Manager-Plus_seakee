@@ -63,7 +63,7 @@ const CLAUDE_KEY_FIELDS = [
   'rebuild_mid_system_message',
 ] as const;
 const GEMINI_KEY_FIELDS = COOLING_PROVIDER_KEY_FIELDS;
-const VERTEX_KEY_FIELDS = COMMON_PROVIDER_KEY_FIELDS;
+const VERTEX_KEY_FIELDS = COOLING_PROVIDER_KEY_FIELDS;
 
 const OPENAI_PROVIDER_FIELDS = [
   'name',
@@ -628,6 +628,7 @@ const serializeVertexKey = (config: ProviderKeyConfig) => {
   if (config.weight !== undefined) payload.weight = config.weight;
   if (config.prefix?.trim()) payload.prefix = config.prefix.trim();
   if (config.baseUrl) payload['base-url'] = config.baseUrl;
+  if (config.disableCooling !== undefined) payload['disable-cooling'] = config.disableCooling;
   if (config.proxyUrl) payload['proxy-url'] = config.proxyUrl;
   const headers = serializeHeaders(config.headers);
   if (headers) payload.headers = headers;

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { SegmentedTabs } from '@/components/ui/SegmentedTabs';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { IconCode, IconCopy, IconRefreshCw } from '@/components/ui/icons';
 import type { AccountRow } from '@/features/accounts/model/accountRows';
 import { getProviderLabel } from '@/features/accounts/model/accountsPagePresentation';
@@ -377,18 +378,13 @@ export function AccountConfigurationTab({
         <h3 className={styles.configurationSectionTitle}>
           {t('accounts.config_section_advanced')}
         </h3>
-        <div className={styles.configurationToggleRow}>
-          <div>
-            <strong>{t('auth_files.disable_cooling_label')}</strong>
-            <p>{t('accounts.config_disable_cooling_hint')}</p>
-          </div>
-          <ToggleSwitch
-            checked={draft.disableCooling}
-            onChange={(value) => editor.updateField('disableCooling', value)}
-            disabled={disabled}
-            ariaLabel={t('auth_files.disable_cooling_label')}
-          />
-        </div>
+        <CoolingPolicySelect
+          value={draft.disableCooling}
+          onChange={(value) => editor.updateField('disableCooling', value)}
+          translationPrefix="auth_files"
+          disabled={disabled}
+          id="account-cooling-policy"
+        />
         <div className={styles.configurationFieldGrid}>
           <Input
             label={t('accounts.config_request_retry_label')}

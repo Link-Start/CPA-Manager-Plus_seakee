@@ -9,9 +9,14 @@ import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Modal } from '@/components/ui/Modal';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { apiCallApi, getApiCallErrorMessage, modelsApi, providersApi } from '@/services/api';
 import { useConfigStore, useNotificationStore } from '@/stores';
-import type { ProviderKeyConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type ProviderKeyConfig,
+} from '@/types';
 import {
   buildHeaderObject,
   hasHeader,
@@ -68,6 +73,7 @@ const buildEmptyForm = (baseUrl = ''): ProviderFormState => ({
   excludedModels: [],
   modelEntries: [{ name: '', alias: '' }],
   excludedText: '',
+  disableCooling: 'inherit',
 });
 
 const normalizeModelEntries = (entries: ProviderFormState['modelEntries']) =>
@@ -91,7 +97,7 @@ const buildCodexBaseline = (form: ProviderFormState) => ({
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
   websockets: Boolean(form.websockets),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   proxyUrl: String(form.proxyUrl ?? '').trim(),
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeModelEntries(form.modelEntries),
@@ -191,6 +197,7 @@ export function CodexEditDrawer({
     if (initialData) {
       const nextForm: ProviderFormState = {
         ...initialData,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
         websockets: Boolean(initialData.websockets),
         headers: headersToEntries(initialData.headers),
         modelEntries: modelsToEntries(initialData.models),
@@ -234,7 +241,7 @@ export function CodexEditDrawer({
       baseline.prefix !== String(form.prefix ?? '').trim() ||
       baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
       baseline.websockets !== Boolean(form.websockets) ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
       !areKeyValueEntriesEqual(baseline.headers, normalizeHeaderEntries(form.headers)) ||
       !areModelEntriesEqual(baseline.models, normalizeModelEntries(form.modelEntries)) ||
@@ -514,7 +521,7 @@ export function CodexEditDrawer({
         models: entriesToModels(form.modelEntries),
         excludedModels: parseExcludedModels(form.excludedText),
         authIndex: normalizeAuthIndex(form.authIndex) ?? undefined,
-        disableCooling: form.disableCooling,
+        disableCooling: coolingPolicyToOverride(form.disableCooling),
         experimentalCchSigning: form.experimentalCchSigning,
       };
       if (editIndex !== null) {
@@ -836,16 +843,12 @@ export function CodexEditDrawer({
               <div className="hint">{t('ai_providers.codex_websockets_hint')}</div>
             </div>
 
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={disabled || saving}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={disabled || saving}
+              id={`${providerSection}-cooling-policy`}
+            />
 
             <div className="form-group">
               <label>{t('ai_providers.excluded_models_label')}</label>

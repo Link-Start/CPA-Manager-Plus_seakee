@@ -7,7 +7,7 @@ import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { Input } from '@/components/ui/Input';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Select } from '@/components/ui/Select';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { OpenAIKeyTestStatusIndicator, type OpenAIFormApiKeyEntry } from '@/components/providers';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
@@ -575,16 +575,12 @@ export function AiProvidersOpenAIEditPage() {
               removeButtonAriaLabel={t('common.delete')}
               disabled={saving || disableControls || isTestingKeys}
             />
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={saving || disableControls || isTestingKeys}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={saving || disableControls || isTestingKeys}
+              id="openai-page-cooling-policy"
+            />
 
             {/* 模型配置区域 - 统一布局 */}
             <div className={styles.modelConfigSection}>

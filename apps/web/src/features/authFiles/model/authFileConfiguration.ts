@@ -1,4 +1,10 @@
-import type { AuthFileItem } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  readCredentialCoolingOverride,
+  type AuthFileItem,
+  type CoolingPolicy,
+} from '@/types';
 import type { AuthFileFieldsPatch } from '@/services/api/authFiles';
 import {
   normalizeExcludedModels,
@@ -28,7 +34,7 @@ export type AuthFileConfigurationDraft = {
   note: string;
   headersText: string;
   excludedModelsText: string;
-  disableCooling: boolean;
+  disableCooling: CoolingPolicy;
   requestRetry: string;
   websockets: boolean;
   xaiRoutingMode: XaiRoutingMode;
@@ -341,10 +347,7 @@ export const buildAuthFileConfigurationDraft = (
     note: readTrimmedString(record.note),
     headersText: Object.keys(headers).length > 0 ? JSON.stringify(headers, null, 2) : '',
     excludedModelsText: excludedModels.join('\n'),
-    disableCooling:
-      parseDisableCoolingValue(
-        record.disable_cooling ?? record['disable-cooling'] ?? record.disableCooling
-      ) === true,
+    disableCooling: coolingPolicyFromOverride(readCredentialCoolingOverride(record)),
     requestRetry: readIntegerText(
       record.request_retry ?? record['request-retry'] ?? record.requestRetry
     ),
@@ -483,7 +486,7 @@ export const buildAuthFileConfigurationPatch = (
   }
 
   if (draft.disableCooling !== originalDraft.disableCooling) {
-    patch.disable_cooling = draft.disableCooling;
+    patch.disable_cooling = coolingPolicyToOverride(draft.disableCooling);
     tombstoneLegacyAliases(patch, record, ['disableCooling', 'disable-cooling']);
   }
 

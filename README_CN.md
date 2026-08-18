@@ -1,6 +1,9 @@
 <div align="center">
 
-# CPA Manager Plus
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo-white.svg">
+  <img src="logo.svg" alt="CPAMP" width="480">
+</picture>
 
 [![Release](https://img.shields.io/github/v/release/seakee/CPA-Manager-Plus?style=flat-square)](https://github.com/seakee/CPA-Manager-Plus/releases/latest)
 [![License](https://img.shields.io/github/license/seakee/CPA-Manager-Plus?style=flat-square&color=blue)](https://github.com/seakee/CPA-Manager-Plus/blob/main/LICENSE)
@@ -27,7 +30,7 @@
   <tr>
     <td align="center">
       <strong>仪表盘</strong><br>
-      <img src="img/home-zh.png" alt="CPA CLIProxyAPI 管理与可观测性仪表盘" width="420">
+      <img src="img/dashboard-zh.png" alt="CPA CLIProxyAPI 管理与可观测性仪表盘" width="420">
     </td>
     <td align="center">
       <strong>请求监控</strong><br>
@@ -40,8 +43,18 @@
       <img src="img/usage-analytics-zh.png" alt="CPA 按模型和账号拆解用量与成本" width="420">
     </td>
     <td align="center">
-      <strong>账号健康</strong><br>
-      <img src="img/codex-inspection-zh.png" alt="Codex 与 xAI 账号巡检和配额健康" width="420">
+      <strong>凭证管理</strong><br>
+      <img src="img/credential-zh.png" alt="CPA 凭证管理列表、可用状态、用量、配额和操作" width="420">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>凭证健康巡检</strong><br>
+      <img src="img/credential-health-zh.png" alt="CPA 凭证健康巡检状态、历史和结果" width="420">
+    </td>
+    <td align="center">
+      <strong>凭证配额</strong><br>
+      <img src="img/credential-quota-zh.png" alt="CPA 凭证配额用量、当前窗口和预测" width="420">
     </td>
   </tr>
 </table>

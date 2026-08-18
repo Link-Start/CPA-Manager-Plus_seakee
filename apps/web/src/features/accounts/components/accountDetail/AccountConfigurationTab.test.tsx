@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Input } from '@/components/ui/Input';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import type { AccountRow } from '@/features/accounts/model/accountRows';
 import type { UseAuthFileConfigurationEditorResult } from '@/features/authFiles/hooks/useAuthFileConfigurationEditor';
 import type { AuthFileConfigurationDraft } from '@/features/authFiles/model/authFileConfiguration';
@@ -44,7 +45,7 @@ const makeDraft = (
   note: '',
   headersText: '',
   excludedModelsText: '',
-  disableCooling: false,
+  disableCooling: 'inherit',
   requestRetry: '',
   websockets: false,
   xaiRoutingMode: 'grok-build',
@@ -213,6 +214,18 @@ describe('AccountConfigurationTab', () => {
     act(() => saveButton.props.onClick());
     expect(editor.save).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['enabled', 'inherit'] as const)(
+    'forwards the %s cooling policy selection to the credential editor',
+    (policy) => {
+      const editor = makeEditor('codex');
+      const renderer = renderTab(makeRow('codex'), editor);
+
+      act(() => renderer.root.findByType(CoolingPolicySelect).props.onChange(policy));
+
+      expect(editor.updateField).toHaveBeenCalledWith('disableCooling', policy);
+    }
+  );
 
   it('uses a compact hierarchy while keeping field-level guidance', () => {
     const renderer = renderTab(makeRow('codex'), makeEditor('codex'));

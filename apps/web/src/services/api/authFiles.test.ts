@@ -1482,6 +1482,20 @@ describe('authFilesApi patchFieldsForAuthIndexes', () => {
 });
 
 describe('applyAuthFileFieldsPatchToRecord', () => {
+  it('clears legacy cooling aliases when canonical inherit is requested', () => {
+    expect(
+      applyAuthFileFieldsPatchToRecord(
+        {
+          disable_cooling: true,
+          disableCooling: true,
+          'disable-cooling': true,
+          'unknown-field': 'keep',
+        },
+        { disable_cooling: null }
+      )
+    ).toEqual({ 'unknown-field': 'keep' });
+  });
+
   it('applies extended credential configuration fields with source-file cleanup semantics', () => {
     expect(
       applyAuthFileFieldsPatchToRecord(
@@ -1521,6 +1535,7 @@ describe('applyAuthFileFieldsPatchToRecord', () => {
     ).toEqual({
       type: 'xai',
       weight: 0,
+      disable_cooling: false,
     });
   });
 
@@ -1593,6 +1608,7 @@ describe('applyAuthFileFieldsPatchToRecord', () => {
       using_api: false,
       request_retry: 1,
       'excluded-models': ['canonical-model'],
+      disable_cooling: false,
       cloak_mode: 'never',
       cloak_strict_mode: 'false',
       cloak_sensitive_words: 'canonical',

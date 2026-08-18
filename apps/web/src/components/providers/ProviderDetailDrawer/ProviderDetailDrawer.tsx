@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '../CoolingPolicySelect';
 import { IconCheck, IconX } from '@/components/ui/icons';
 import { maskApiKey } from '@/utils/format';
 import { ProviderStatusBar } from '../ProviderStatusBar';
@@ -12,6 +13,7 @@ import {
   type ProviderRecentUsageMap,
 } from '../utils';
 import { getProviderKindIcon, PROVIDER_KIND_LABELS } from '../ProviderTable/kindMeta';
+import { coolingPolicyFromOverride, type CoolingPolicy } from '@/types';
 import type { ProviderRow } from '../ProviderTable/rowData';
 import styles from './ProviderDetailDrawer.module.scss';
 
@@ -28,7 +30,7 @@ interface ProviderDetailDrawerProps {
   onToggle: (row: ProviderRow, enabled: boolean) => void;
   onToggleWebsockets: (row: ProviderRow, enabled: boolean) => void;
   onToggleCloak: (row: ProviderRow, enabled: boolean) => void;
-  onToggleDisableCooling: (row: ProviderRow, enabled: boolean) => void;
+  onToggleDisableCooling: (row: ProviderRow, policy: CoolingPolicy) => void;
 }
 
 interface FieldRowProps {
@@ -74,7 +76,7 @@ export function ProviderDetailDrawer({
       (row.kind === 'codex' || row.kind === 'xai' || row.raw.websockets !== undefined);
     const showCloak =
       supportsProviderKeySwitches && (row.kind === 'claude' || row.raw.cloak !== undefined);
-    const showDisableCooling = row.kind !== 'vertex';
+    const showDisableCooling = true;
     if (!showWebsockets && !showCloak && !showDisableCooling) return null;
 
     return (
@@ -121,17 +123,19 @@ export function ProviderDetailDrawer({
             <div className={styles.quickSwitchRow}>
               <div className={styles.quickSwitchText}>
                 <span className={styles.quickSwitchLabel}>
-                  {t('ai_providers.disable_cooling_label')}
+                  {t('ai_providers.cooling_policy_label')}
                 </span>
                 <span className={styles.quickSwitchHint}>
-                  {t('ai_providers.disable_cooling_hint')}
+                  {t('ai_providers.cooling_policy_hint')}
                 </span>
               </div>
-              <ToggleSwitch
-                checked={Boolean(row.raw.disableCooling)}
+              <CoolingPolicySelect
+                value={coolingPolicyFromOverride(row.raw.disableCooling)}
                 disabled={toggleDisabled}
                 onChange={(value) => onToggleDisableCooling(row, value)}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
+                id="provider-detail-cooling-policy"
+                compact
+                legacyProviderSupported={row.kind !== 'vertex'}
               />
             </div>
           )}

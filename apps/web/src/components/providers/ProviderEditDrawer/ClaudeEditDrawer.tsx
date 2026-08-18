@@ -9,9 +9,14 @@ import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Modal } from '@/components/ui/Modal';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { apiCallApi, getApiCallErrorMessage, modelsApi, providersApi } from '@/services/api';
 import { useConfigStore, useNotificationStore } from '@/stores';
-import type { ProviderKeyConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type ProviderKeyConfig,
+} from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import {
@@ -62,6 +67,7 @@ const buildEmptyForm = (): ProviderFormState => ({
   excludedModels: [],
   modelEntries: [{ name: '', alias: '' }],
   excludedText: '',
+  disableCooling: 'inherit',
 });
 
 const normalizeClaudeModelEntries = (entries: ProviderFormState['modelEntries']) =>
@@ -110,7 +116,7 @@ const buildClaudeBaseline = (form: ProviderFormState) => ({
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
   proxyUrl: String(form.proxyUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   rebuildMidSystemMessage: Boolean(form.rebuildMidSystemMessage),
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeClaudeModelEntries(form.modelEntries),
@@ -215,6 +221,7 @@ export function ClaudeEditDrawer({
     if (initialData) {
       const seededForm: ProviderFormState = {
         ...initialData,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
         headers: headersToEntries(initialData.headers),
         modelEntries: modelsToEntries(initialData.models),
         excludedText: excludedModelsToText(initialData.excludedModels),
@@ -260,7 +267,7 @@ export function ClaudeEditDrawer({
       baseline.prefix !== String(form.prefix ?? '').trim() ||
       baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
       baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       baseline.rebuildMidSystemMessage !== Boolean(form.rebuildMidSystemMessage) ||
       !areKeyValueEntriesEqual(baseline.headers, normalizeHeaderEntries(form.headers)) ||
       !areModelEntriesEqual(baseline.models, normalizeClaudeModelEntries(form.modelEntries)) ||
@@ -598,7 +605,7 @@ export function ClaudeEditDrawer({
         excludedModels: parseExcludedModels(form.excludedText),
         cloak: form.cloak,
         authIndex: normalizeAuthIndex(form.authIndex) ?? undefined,
-        disableCooling: form.disableCooling,
+        disableCooling: coolingPolicyToOverride(form.disableCooling),
         experimentalCchSigning: form.experimentalCchSigning,
         rebuildMidSystemMessage: form.rebuildMidSystemMessage,
       };
@@ -717,16 +724,12 @@ export function ClaudeEditDrawer({
               hint={t('ai_providers.model_discovery_proxy_version_hint')}
               disabled={saving || disabled || isTesting}
             />
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={saving || disabled || isTesting}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={saving || disabled || isTesting}
+              id="claude-drawer-cooling-policy"
+            />
             <div className="form-group">
               <label>{t('ai_providers.rebuild_mid_system_message_label')}</label>
               <ToggleSwitch

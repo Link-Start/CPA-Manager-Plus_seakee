@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
@@ -505,16 +506,12 @@ export function AiProvidersClaudeEditPage() {
               <div className="hint">{t('ai_providers.excluded_models_hint')}</div>
             </div>
 
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={saving || disableControls || isTesting}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={saving || disableControls || isTesting}
+              id="claude-page-cooling-policy"
+            />
             <div className="form-group">
               <label>{t('ai_providers.rebuild_mid_system_message_label')}</label>
               <ToggleSwitch

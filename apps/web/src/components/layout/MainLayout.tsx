@@ -25,7 +25,11 @@ import {
   IconSidebarSystem,
   IconSidebarUsage,
 } from '@/components/ui/icons';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import {
+  CPAMP_SYMBOL_COLOR_PNG_URL,
+  CPAMP_WORDMARK_COLOR_PNG_URL,
+  CPAMP_WORDMARK_ON_DARK_PNG_URL,
+} from '@/assets/brand';
 import {
   useAuthStore,
   useConfigStore,
@@ -266,7 +270,6 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
   const headerRef = useRef<HTMLElement | null>(null);
 
   const fullBrandName = 'CPA Manager Plus';
-  const abbrBrandName = t('title.abbr');
   const isLogsPage = routePathname.startsWith('/logs');
   const isPluginResourcePage = routePathname.startsWith('/plugin-pages');
   const showSidebarLabels = !sidebarCollapsed || sidebarOpen;
@@ -930,12 +933,26 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         >
           <div className="sidebar-brand" title={fullBrandName}>
             <div className="sidebar-brand-main">
-              <img src={INLINE_LOGO_JPEG} alt="CPAMC logo" className="sidebar-brand-logo" />
-              {showSidebarLabels && <span className="sidebar-brand-title">{abbrBrandName}</span>}
+              <img
+                src={CPAMP_SYMBOL_COLOR_PNG_URL}
+                alt={showSidebarLabels ? '' : 'CPA Manager Plus'}
+                className="sidebar-brand-symbol"
+              />
+              {showSidebarLabels && (
+                <>
+                  <img
+                    src={CPAMP_WORDMARK_COLOR_PNG_URL}
+                    alt="CPA Manager Plus"
+                    className="sidebar-brand-wordmark sidebar-brand-wordmark-light"
+                  />
+                  <img
+                    src={CPAMP_WORDMARK_ON_DARK_PNG_URL}
+                    alt="CPA Manager Plus"
+                    className="sidebar-brand-wordmark sidebar-brand-wordmark-dark"
+                  />
+                </>
+              )}
             </div>
-            {!showSidebarLabels && (
-              <span className="sidebar-brand-short">{abbrBrandName.charAt(0) || 'C'}</span>
-            )}
           </div>
 
           <div className="nav-section">

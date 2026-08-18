@@ -10,7 +10,11 @@ import {
   useConfigStore,
   useNotificationStore,
 } from '@/stores';
-import type { ProviderKeyConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type ProviderKeyConfig,
+} from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import type { ModelEntry, ProviderFormState } from '@/components/providers/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
@@ -72,6 +76,7 @@ const buildEmptyForm = (): ProviderFormState => ({
   excludedModels: [],
   modelEntries: [{ name: '', alias: '' }],
   excludedText: '',
+  disableCooling: 'inherit',
 });
 
 const getErrorMessage = (err: unknown) => {
@@ -120,7 +125,7 @@ const buildClaudeBaseline = (form: ProviderFormState): ClaudeEditBaseline => ({
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
   proxyUrl: String(form.proxyUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   rebuildMidSystemMessage: Boolean(form.rebuildMidSystemMessage),
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeClaudeModelEntries(form.modelEntries),
@@ -272,6 +277,7 @@ export function AiProvidersClaudeEditLayout() {
     if (initialData) {
       const seededForm: ProviderFormState = {
         ...initialData,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
         headers: headersToEntries(initialData.headers),
         modelEntries: modelsToEntries(initialData.models),
         excludedText: excludedModelsToText(initialData.excludedModels),
@@ -342,7 +348,7 @@ export function AiProvidersClaudeEditLayout() {
       baseline.prefix !== String(form.prefix ?? '').trim() ||
       baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
       baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       baseline.rebuildMidSystemMessage !== Boolean(form.rebuildMidSystemMessage) ||
       isHeadersDirty ||
       isModelsDirty ||
@@ -459,7 +465,7 @@ export function AiProvidersClaudeEditLayout() {
         excludedModels: parseExcludedModels(form.excludedText),
         cloak: form.cloak,
         authIndex: normalizeAuthIndex(form.authIndex) ?? undefined,
-        disableCooling: form.disableCooling,
+        disableCooling: coolingPolicyToOverride(form.disableCooling),
         experimentalCchSigning: form.experimentalCchSigning,
         rebuildMidSystemMessage: form.rebuildMidSystemMessage,
       };

@@ -8,11 +8,16 @@ import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Modal } from '@/components/ui/Modal';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { OpenAIKeyTestStatusIndicator } from '@/components/providers';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { apiCallApi, getApiCallErrorDetails, modelsApi, providersApi } from '@/services/api';
 import { useConfigStore, useNotificationStore } from '@/stores';
-import type { ApiKeyEntry, OpenAIProviderConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type ApiKeyEntry,
+  type OpenAIProviderConfig,
+} from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { areKeyValueEntriesEqual, areModelEntriesEqual } from '@/utils/compare';
@@ -55,6 +60,7 @@ const buildEmptyForm = (): OpenAIFormState => ({
   apiKeyEntries: [buildApiKeyEntry()],
   modelEntries: [{ name: '', alias: '' }],
   testModel: undefined,
+  disableCooling: 'inherit',
 });
 
 const normalizeModelEntries = (entries: OpenAIFormState['modelEntries']) =>
@@ -106,7 +112,7 @@ const buildOpenAIBaseline = (form: OpenAIFormState) => ({
       : null,
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   headers: normalizeHeaderEntries(form.headers),
   apiKeyEntries: normalizeApiKeyEntries(form.apiKeyEntries),
   models: normalizeModelEntries(form.modelEntries),
@@ -244,7 +250,7 @@ export function OpenAIEditDrawer({
         apiKeyEntries: initialData.apiKeyEntries?.length
           ? initialData.apiKeyEntries
           : [buildApiKeyEntry()],
-        disableCooling: initialData.disableCooling,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
       };
       setForm(seededForm);
       setBaseline(buildOpenAIBaseline(seededForm));
@@ -291,7 +297,7 @@ export function OpenAIEditDrawer({
       baseline.priority !== normalizedPriority ||
       baseline.prefix !== form.prefix.trim() ||
       baseline.baseUrl !== form.baseUrl.trim() ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       !areKeyValueEntriesEqual(baseline.headers, normalizeHeaderEntries(form.headers)) ||
       !areNormalizedApiKeyEntriesEqual(
         baseline.apiKeyEntries,
@@ -660,7 +666,7 @@ export function OpenAIEditDrawer({
       };
       if (form.priority !== undefined && Number.isFinite(form.priority))
         payload.priority = Math.trunc(form.priority);
-      if (form.disableCooling !== undefined) payload.disableCooling = form.disableCooling;
+      payload.disableCooling = coolingPolicyToOverride(form.disableCooling);
       if (initialData?.disabled !== undefined) payload.disabled = initialData.disabled;
       const resolvedTestModel = testModel.trim();
       if (resolvedTestModel) payload.testModel = resolvedTestModel;
@@ -940,16 +946,12 @@ export function OpenAIEditDrawer({
               removeButtonAriaLabel={t('common.delete')}
               disabled={saving || disabled || isTestingKeys}
             />
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={saving || disabled || isTestingKeys}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={saving || disabled || isTestingKeys}
+              id="openai-drawer-cooling-policy"
+            />
 
             <div className={styles.keyEntriesSection}>
               <div className={styles.keyEntriesHeader}>

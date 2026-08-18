@@ -8,13 +8,18 @@ import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Modal } from '@/components/ui/Modal';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { CoolingPolicySelect } from '@/components/providers/CoolingPolicySelect';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { modelsApi, providersApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
-import type { GeminiKeyConfig } from '@/types';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  type GeminiKeyConfig,
+  type CoolingPolicy,
+} from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import {
@@ -48,6 +53,7 @@ const buildEmptyForm = (): GeminiFormState => ({
   modelEntries: [{ name: '', alias: '' }],
   excludedModels: [],
   excludedText: '',
+  disableCooling: 'inherit',
 });
 
 const stripGeminiModelResourceName = (value: string) => {
@@ -76,7 +82,7 @@ type GeminiFormBaseline = {
   prefix: string;
   baseUrl: string;
   proxyUrl: string;
-  disableCooling: boolean;
+  disableCooling: CoolingPolicy;
   headers: ReturnType<typeof normalizeHeaderEntries>;
   models: ReturnType<typeof normalizeModelEntries>;
   excludedModels: string[];
@@ -93,7 +99,7 @@ const buildGeminiBaseline = (form: GeminiFormState): GeminiFormBaseline => ({
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
   proxyUrl: String(form.proxyUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeModelEntries(form.modelEntries),
   excludedModels: parseExcludedModels(form.excludedText ?? ''),
@@ -199,6 +205,7 @@ export function AiProvidersGeminiEditPage() {
       const { headers, models, ...rest } = initialData;
       const nextForm: GeminiFormState = {
         ...rest,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
         headers: headersToEntries(headers),
         modelEntries: modelsToEntries(models).map((entry) => ({
           ...entry,
@@ -466,7 +473,7 @@ export function AiProvidersGeminiEditPage() {
     baseline.prefix !== String(form.prefix ?? '').trim() ||
     baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
     baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
-    baseline.disableCooling !== Boolean(form.disableCooling) ||
+    baseline.disableCooling !== form.disableCooling ||
     isHeadersDirty ||
     isModelsDirty ||
     isExcludedModelsDirty;
@@ -507,7 +514,7 @@ export function AiProvidersGeminiEditPage() {
         models: entriesToModels(normalizedModelEntries),
         excludedModels: parseExcludedModels(form.excludedText),
         authIndex: normalizeAuthIndex(form.authIndex) ?? undefined,
-        disableCooling: form.disableCooling,
+        disableCooling: coolingPolicyToOverride(form.disableCooling),
       };
 
       if (editIndex !== null) {
@@ -657,16 +664,12 @@ export function AiProvidersGeminiEditPage() {
               removeButtonAriaLabel={t('common.delete')}
               disabled={disableControls || saving}
             />
-            <div className="form-group">
-              <label>{t('ai_providers.disable_cooling_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.disableCooling)}
-                onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
-                disabled={disableControls || saving}
-                ariaLabel={t('ai_providers.disable_cooling_label')}
-              />
-              <div className="hint">{t('ai_providers.disable_cooling_hint')}</div>
-            </div>
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={disableControls || saving}
+              id="gemini-page-cooling-policy"
+            />
 
             <div className={styles.modelConfigSection}>
               <div className={styles.modelConfigHeader}>

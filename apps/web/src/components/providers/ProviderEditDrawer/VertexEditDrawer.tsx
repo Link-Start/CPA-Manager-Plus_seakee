@@ -7,11 +7,11 @@ import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { providersApi } from '@/services/api';
 import { useConfigStore, useNotificationStore } from '@/stores';
-import type { ProviderKeyConfig } from '@/types';
+import { coolingPolicyFromOverride, coolingPolicyToOverride, type ProviderKeyConfig } from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { areKeyValueEntriesEqual, areModelEntriesEqual, areStringArraysEqual } from '@/utils/compare';
 import { excludedModelsToText, parseExcludedModels } from '@/components/providers/utils';
-import { CredentialWeightInput, type VertexFormState } from '@/components/providers';
+import { CoolingPolicySelect, CredentialWeightInput, type VertexFormState } from '@/components/providers';
 import {
   getCredentialWeightComparisonValue,
   getCredentialWeightError,
@@ -40,6 +40,7 @@ const buildEmptyForm = (): VertexFormState => ({
   excludedModels: [],
   modelEntries: [{ name: '', alias: '' }],
   excludedText: '',
+  disableCooling: 'inherit',
 });
 
 const normalizeModelEntries = (entries: Array<{ name: string; alias: string }>) =>
@@ -58,6 +59,7 @@ const buildVertexBaseline = (form: VertexFormState) => ({
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
   proxyUrl: String(form.proxyUrl ?? '').trim(),
+  disableCooling: form.disableCooling,
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeModelEntries(form.modelEntries),
   excludedModels: parseExcludedModels(form.excludedText ?? ''),
@@ -123,6 +125,7 @@ export function VertexEditDrawer({ open, editIndex, disabled, onClose, onSaved }
     if (initialData) {
       const nextForm: VertexFormState = {
         ...initialData,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
         headers: headersToEntries(initialData.headers),
         modelEntries: initialData.models?.map((m) => ({ name: m.name, alias: m.alias ?? '' })) ?? [{ name: '', alias: '' }],
         excludedText: excludedModelsToText(initialData.excludedModels),
@@ -149,6 +152,7 @@ export function VertexEditDrawer({ open, editIndex, disabled, onClose, onSaved }
       baseline.prefix !== String(form.prefix ?? '').trim() ||
       baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
       baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
+      baseline.disableCooling !== form.disableCooling ||
       !areKeyValueEntriesEqual(baseline.headers, normalizeHeaderEntries(form.headers)) ||
       !areModelEntriesEqual(baseline.models, normalizeModelEntries(form.modelEntries)) ||
       !areStringArraysEqual(baseline.excludedModels, parseExcludedModels(form.excludedText ?? ''))
@@ -185,6 +189,7 @@ export function VertexEditDrawer({ open, editIndex, disabled, onClose, onSaved }
           return { name, alias };
         }).filter(Boolean) as ProviderKeyConfig['models'],
         excludedModels: parseExcludedModels(form.excludedText),
+        disableCooling: coolingPolicyToOverride(form.disableCooling),
       };
       if (editIndex !== null) {
         await providersApi.updateVertexConfig(configs[editIndex], payload);
@@ -259,6 +264,13 @@ export function VertexEditDrawer({ open, editIndex, disabled, onClose, onSaved }
               valuePlaceholder={t('common.custom_headers_value_placeholder')}
               removeButtonTitle={t('common.delete')} removeButtonAriaLabel={t('common.delete')}
               disabled={disabled || saving} />
+            <CoolingPolicySelect
+              value={form.disableCooling}
+              onChange={(value) => setForm((prev) => ({ ...prev, disableCooling: value }))}
+              disabled={disabled || saving}
+              id="vertex-drawer-cooling-policy"
+              legacyProviderSupported={false}
+            />
             <div className="form-group">
               <label>{t('ai_providers.vertex_models_label')}</label>
               <ModelInputList entries={form.modelEntries}

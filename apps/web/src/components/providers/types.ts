@@ -1,4 +1,4 @@
-import type { ApiKeyEntry, GeminiKeyConfig, ProviderKeyConfig } from '@/types';
+import type { ApiKeyEntry, CoolingPolicy, GeminiKeyConfig, ProviderKeyConfig } from '@/types';
 import type { CredentialWeightInputValue } from '@/utils/credentialWeight';
 import type { HeaderEntry } from '@/utils/headers';
 
@@ -23,28 +23,31 @@ export interface OpenAIFormState {
   testModel?: string;
   modelEntries: ModelEntry[];
   apiKeyEntries: OpenAIFormApiKeyEntry[];
-  disableCooling?: boolean;
+  disableCooling: CoolingPolicy;
 }
 
 export type OpenAIFormApiKeyEntry = Omit<ApiKeyEntry, 'weight'> & {
   weight?: CredentialWeightInputValue;
 };
 
-export type GeminiFormState = Omit<GeminiKeyConfig, 'headers' | 'models' | 'weight'> & {
+export type GeminiFormState = Omit<GeminiKeyConfig, 'headers' | 'models' | 'weight' | 'disableCooling'> & {
+  disableCooling: CoolingPolicy;
   weight?: CredentialWeightInputValue;
   headers: HeaderEntry[];
   modelEntries: ModelEntry[];
   excludedText: string;
 };
 
-export type ProviderFormState = Omit<ProviderKeyConfig, 'headers' | 'weight'> & {
+export type ProviderFormState = Omit<ProviderKeyConfig, 'headers' | 'weight' | 'disableCooling'> & {
+  disableCooling: CoolingPolicy;
   weight?: CredentialWeightInputValue;
   headers: HeaderEntry[];
   modelEntries: ModelEntry[];
   excludedText: string;
 };
 
-export type VertexFormState = Omit<ProviderKeyConfig, 'headers' | 'weight'> & {
+export type VertexFormState = Omit<ProviderKeyConfig, 'headers' | 'weight' | 'disableCooling'> & {
+  disableCooling: CoolingPolicy;
   weight?: CredentialWeightInputValue;
   headers: HeaderEntry[];
   modelEntries: ModelEntry[];

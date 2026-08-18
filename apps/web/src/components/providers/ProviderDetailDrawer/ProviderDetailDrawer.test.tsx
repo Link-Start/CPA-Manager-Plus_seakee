@@ -3,8 +3,18 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { describe, expect, it, vi } from 'vitest';
 import type { OpenAIProviderConfig } from '@/types';
 import type { ProviderRecentUsageMap } from '../utils';
+import { CoolingPolicySelect } from '../CoolingPolicySelect';
 import { buildProviderRows, type ProviderRow } from '../ProviderTable/rowData';
 import { ProviderDetailDrawer } from './ProviderDetailDrawer';
+
+const authState = vi.hoisted(() => ({
+  serverVersion: 'v7.2.93' as string | null,
+  serverCommit: null as string | null,
+}));
+
+vi.mock('@/stores/useAuthStore', () => ({
+  useAuthStore: (selector: (state: typeof authState) => unknown) => selector(authState),
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -12,6 +22,11 @@ vi.mock('react-i18next', () => ({
       ({
         'ai_providers.weight_label': 'Weight',
         'ai_providers.weight_default_label': 'default',
+        'ai_providers.cooling_policy_label': 'Cooling policy',
+        'ai_providers.cooling_policy_inherit': 'Inherit global',
+        'ai_providers.cooling_policy_enabled': 'Enable cooling',
+        'ai_providers.cooling_policy_disabled': 'Disable cooling',
+        'ai_providers.cooling_policy_hint': 'Cooling policy hint',
       })[key] ?? key,
   }),
 }));
@@ -104,5 +119,70 @@ describe('ProviderDetailDrawer', () => {
     rows.forEach((row) => {
       expect(renderDetailText(row)).toContain(expectedWeights.get(row.kind));
     });
+  });
+
+  it.each([
+    [true, 'Disable cooling'],
+    [false, 'Enable cooling'],
+    [null, 'Inherit global'],
+    [undefined, 'Inherit global'],
+  ] as const)('renders the %j provider cooling override as %s', (override, expected) => {
+    authState.serverVersion = 'v7.2.93';
+    const row = buildProviderRows({
+      gemini: [{ apiKey: 'gemini-key', disableCooling: override }],
+      codex: [],
+      claude: [],
+      vertex: [],
+      openai: [],
+      usageByProvider: new Map() as ProviderRecentUsageMap,
+    })[0];
+
+    expect(renderDetailText(row)).toContain(expected);
+  });
+
+  it.each([
+    [undefined, 'disabled'],
+    [undefined, 'enabled'],
+    [true, 'inherit'],
+    [false, 'inherit'],
+    [true, 'enabled'],
+    [false, 'disabled'],
+  ] as const)('forwards the %j -> %s cooling policy transition', (override, nextPolicy) => {
+    authState.serverVersion = 'v7.2.93';
+    const row = buildProviderRows({
+      gemini: [{ apiKey: 'gemini-key', disableCooling: override }],
+      codex: [],
+      claude: [],
+      vertex: [],
+      openai: [],
+      usageByProvider: new Map() as ProviderRecentUsageMap,
+    })[0];
+    const onToggleDisableCooling = vi.fn();
+    let renderer!: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        <ProviderDetailDrawer
+          row={row}
+          open
+          usageByProvider={new Map()}
+          resolvedTheme="light"
+          actionsDisabled={false}
+          toggleDisabled={false}
+          onClose={() => {}}
+          onEdit={() => {}}
+          onDelete={() => {}}
+          onToggle={() => {}}
+          onToggleWebsockets={() => {}}
+          onToggleCloak={() => {}}
+          onToggleDisableCooling={onToggleDisableCooling}
+        />
+      );
+    });
+
+    act(() => renderer.root.findByType(CoolingPolicySelect).props.onChange(nextPolicy));
+    expect(onToggleDisableCooling).toHaveBeenCalledWith(row, nextPolicy);
+
+    act(() => renderer.unmount());
   });
 });

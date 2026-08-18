@@ -8,6 +8,7 @@ import {
   buildRedactedAuthFileConfigurationText,
   getAuthFileConfigurationCapabilities,
   parseAuthFileConfigurationSource,
+  type AuthFileConfigurationDraft,
 } from './authFileConfiguration';
 
 const makeFile = (overrides: Partial<AuthFileItem> = {}): AuthFileItem =>
@@ -142,6 +143,45 @@ describe('parseAuthFileConfigurationSource', () => {
 });
 
 describe('buildAuthFileConfigurationPatch', () => {
+  it.each([
+    [{ disable_cooling: true }, 'disabled'],
+    [{ disable_cooling: false }, 'enabled'],
+    [{ disable_cooling: null }, 'inherit'],
+    [{}, 'inherit'],
+  ] as const)('normalizes %j to the %s policy', (record, expected) => {
+    expect(buildAuthFileConfigurationDraft(record, 'codex').disableCooling).toBe(expected);
+  });
+
+  it.each([
+    [{ disable_cooling: null, 'disable-cooling': true }, 'disabled'],
+    [{ disable_cooling: 'invalid', 'disable-cooling': false }, 'enabled'],
+    [{ disable_cooling: 't' }, 'disabled'],
+    [{ disable_cooling: 'f' }, 'enabled'],
+    [{ disable_cooling: 'yes' }, 'inherit'],
+    [{ disableCooling: true }, 'inherit'],
+  ] as const)('matches CPA credential alias parsing for %j', (record, expected) => {
+    expect(buildAuthFileConfigurationDraft(record, 'codex').disableCooling).toBe(expected);
+  });
+
+  it.each([
+    ['inherit', 'enabled', false],
+    ['inherit', 'disabled', true],
+    ['enabled', 'inherit', null],
+    ['disabled', 'inherit', null],
+    ['enabled', 'disabled', true],
+    ['disabled', 'enabled', false],
+  ] as const)('writes %s -> %s as an explicit CPA override', (from, to, expected) => {
+    const sourceRecord = from === 'inherit' ? {} : { disable_cooling: from === 'disabled' };
+    const original = buildAuthFileConfigurationDraft(sourceRecord, 'codex');
+    const result = buildAuthFileConfigurationPatch(sourceRecord, 'codex', original, {
+      ...original,
+      disableCooling: to,
+    });
+
+    expect(result.errors).toEqual({});
+    expect(result.patch.disable_cooling).toBe(expected);
+  });
+
   it('normalizes stored zero priority to the empty default representation', () => {
     expect(buildAuthFileConfigurationDraft({ priority: 0 }, 'codex').priority).toBe('');
     expect(buildAuthFileConfigurationDraft({ priority: '-0' }, 'codex').priority).toBe('');
@@ -159,7 +199,7 @@ describe('buildAuthFileConfigurationPatch', () => {
       headers: { 'X-Keep': 'one', 'X-Remove': 'two' },
     };
     const original = buildAuthFileConfigurationDraft(record, 'gemini');
-    const next = {
+    const next: AuthFileConfigurationDraft = {
       ...original,
       prefix: 'team',
       priority: '',
@@ -167,7 +207,7 @@ describe('buildAuthFileConfigurationPatch', () => {
       requestRetry: '0',
       excludedModelsText: 'MODEL-B\nmodel-a\nmodel-b',
       headersText: JSON.stringify({ 'X-Keep': 'updated' }),
-      disableCooling: true,
+      disableCooling: 'disabled',
     };
 
     expect(buildAuthFileConfigurationPatch(record, 'gemini', original, next)).toEqual({
