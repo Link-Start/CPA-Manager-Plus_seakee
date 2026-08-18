@@ -1,8 +1,10 @@
 package usage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -17,13 +19,51 @@ import (
 
 const maxUsageImportBytes int64 = 64 * 1024 * 1024
 const maxUsageImportSessionCreateBytes int64 = 64 * 1024
+const maxUsageArchiveRequestBytes int64 = 64 * 1024
 const usageImportSessionsPath = "/v0/management/usage/import-sessions"
+const usageArchivesPath = "/v0/management/usage/archives"
+const usageMaintenancePath = "/v0/management/usage/maintenance"
 
 type Handler struct {
 	App *app.Context
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
+	cleanPath := strings.TrimRight(r.URL.Path, "/")
+	if strings.HasPrefix(cleanPath, usageMaintenancePath) {
+		if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
+			return
+		}
+		if cleanPath != usageMaintenancePath {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodHead:
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			status, err := h.App.UsageService.MaintenanceStatus(r.Context())
+			if err != nil {
+				writeArchiveError(w, err)
+				return
+			}
+			response.JSON(w, http.StatusOK, status)
+		default:
+			response.MethodNotAllowed(w)
+		}
+		return
+	}
+	if strings.HasPrefix(cleanPath, usageArchivesPath) {
+		if !middleware.AuthorizeAdmin(w, r, h.App.AdminAuthService) {
+			return
+		}
+		if _, _, ok := parseArchivePath(r.URL.Path); !ok {
+			http.NotFound(w, r)
+			return
+		}
+		h.handleArchive(w, r)
+		return
+	}
 	if !middleware.AuthorizePanel(w, r, h.App.AdminAuthService) {
 		return
 	}
@@ -31,7 +71,6 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.handleImportSession(w, r, id, action)
 		return
 	}
-	cleanPath := strings.TrimRight(r.URL.Path, "/")
 	if strings.HasPrefix(cleanPath, usageImportSessionsPath+"/") {
 		http.NotFound(w, r)
 		return
@@ -61,6 +100,252 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 	default:
 		response.MethodNotAllowed(w)
+	}
+}
+
+type archiveCutoffRequest struct {
+	CutoffTimestampMS int64 `json:"cutoff_timestamp_ms"`
+}
+
+func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
+	id, action, ok := parseArchivePath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if id == "" && action == "preview" && r.Method == http.MethodPost {
+		var request archiveCutoffRequest
+		if err := decodeSingleJSON(w, r, &request); err != nil {
+			writeArchiveRequestError(w, err)
+			return
+		}
+		preview, err := h.App.UsageService.PreviewArchive(r.Context(), request.CutoffTimestampMS)
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, preview)
+		return
+	}
+	if id == "" && action == "" && r.Method == http.MethodPost {
+		var request archiveCutoffRequest
+		if err := decodeSingleJSON(w, r, &request); err != nil {
+			writeArchiveRequestError(w, err)
+			return
+		}
+		status, err := h.App.UsageService.CreateArchive(r.Context(), request.CutoffTimestampMS)
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusCreated, usagesvc.NewArchiveStatusSummary(status))
+		return
+	}
+	if id == "" && action == "" && r.Method == http.MethodGet {
+		limit, err := parseArchiveLimit(r.URL.Query().Get("limit"))
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		list, err := h.App.UsageService.ListArchives(r.Context(), limit)
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, list)
+		return
+	}
+	if id != "" && action == "" && r.Method == http.MethodGet {
+		status, err := h.App.UsageService.ArchiveStatus(r.Context(), id)
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, usagesvc.NewArchiveStatusSummary(status))
+		return
+	}
+	if id != "" && action != "" && r.Method == http.MethodPost {
+		if err := validateEmptyArchiveBody(w, r); err != nil {
+			writeArchiveRequestError(w, err)
+			return
+		}
+		var (
+			status usagesvc.ArchiveStatus
+			err    error
+		)
+		switch action {
+		case "resume":
+			status, err = h.App.UsageService.ResumeArchive(r.Context(), id)
+		case "verify":
+			status, err = h.App.UsageService.VerifyArchive(r.Context(), id)
+		case "delete":
+			status, err = h.App.UsageService.DeleteArchive(r.Context(), id)
+		default:
+			response.MethodNotAllowed(w)
+			return
+		}
+		if err != nil {
+			writeArchiveError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, usagesvc.NewArchiveStatusSummary(status))
+		return
+	}
+	response.MethodNotAllowed(w)
+}
+
+func parseArchiveLimit(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 20, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 || limit > 100 {
+		return 0, fmt.Errorf("%w: limit must be between 1 and 100", usagesvc.ErrArchiveInvalidRequest)
+	}
+	return limit, nil
+}
+
+func parseArchivePath(path string) (id string, action string, ok bool) {
+	clean := strings.TrimRight(path, "/")
+	if clean == usageArchivesPath {
+		return "", "", true
+	}
+	if clean == usageArchivesPath+"/preview" {
+		return "", "preview", true
+	}
+	if !strings.HasPrefix(clean, usageArchivesPath+"/") {
+		return "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(clean, usageArchivesPath+"/"), "/")
+	if len(parts) == 1 && parts[0] != "" {
+		return parts[0], "", true
+	}
+	if len(parts) == 2 && parts[0] != "" && (parts[1] == "resume" || parts[1] == "verify" || parts[1] == "delete") {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
+}
+
+func decodeSingleJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	if r.ContentLength > maxUsageArchiveRequestBytes {
+		return &http.MaxBytesError{Limit: maxUsageArchiveRequestBytes}
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxUsageArchiveRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateEmptyArchiveBody(w http.ResponseWriter, r *http.Request) error {
+	if r.ContentLength > maxUsageArchiveRequestBytes {
+		return &http.MaxBytesError{Limit: maxUsageArchiveRequestBytes}
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxUsageArchiveRequestBytes))
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(body)) != 0 {
+		return errors.New("usage archive action request body must be empty")
+	}
+	return nil
+}
+
+func writeArchiveRequestError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	code := "usage_archive_invalid_request"
+	message := "invalid usage archive request"
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		status = http.StatusRequestEntityTooLarge
+		code = "usage_archive_request_too_large"
+		message = "usage archive request is too large"
+	}
+	log.Printf("usage archive request rejected: %v", err)
+	response.JSON(w, status, map[string]any{
+		"error": message,
+		"code":  code,
+	})
+}
+
+func writeArchiveError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, usagesvc.ErrArchiveInvalidID), errors.Is(err, usagesvc.ErrArchiveInvalidRequest):
+		status = http.StatusBadRequest
+	case errors.Is(err, usagesvc.ErrArchiveNoEvents):
+		status = http.StatusUnprocessableEntity
+	case errors.Is(err, usagesvc.ErrArchiveMaintenanceLocked),
+		errors.Is(err, usagesvc.ErrArchiveInvalidState),
+		errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete),
+		errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
+		status = http.StatusConflict
+	case errors.Is(err, usagesvc.ErrArchiveNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, usagesvc.ErrArchiveUnavailable):
+		status = http.StatusServiceUnavailable
+	}
+	log.Printf("usage archive API request failed: %v", err)
+	response.JSON(w, status, map[string]any{
+		"error": archiveErrorMessage(err),
+		"code":  archiveErrorCode(err),
+	})
+}
+
+func archiveErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, usagesvc.ErrArchiveInvalidID), errors.Is(err, usagesvc.ErrArchiveInvalidRequest):
+		return "invalid usage archive request"
+	case errors.Is(err, usagesvc.ErrArchiveNoEvents):
+		return "no usage events are eligible for archive"
+	case errors.Is(err, usagesvc.ErrArchiveMaintenanceLocked):
+		return "usage maintenance is already active"
+	case errors.Is(err, usagesvc.ErrArchiveInvalidState):
+		return "usage archive operation is not allowed in the current state"
+	case errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete):
+		return "usage archive coverage is not ready"
+	case errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
+		return "usage archive deletion is not enabled"
+	case errors.Is(err, usagesvc.ErrArchiveNotFound):
+		return "usage archive run was not found"
+	case errors.Is(err, usagesvc.ErrArchiveUnavailable):
+		return "usage archive is unavailable"
+	default:
+		return "usage archive request failed"
+	}
+}
+
+func archiveErrorCode(err error) string {
+	switch {
+	case errors.Is(err, usagesvc.ErrArchiveInvalidID):
+		return "usage_archive_invalid_id"
+	case errors.Is(err, usagesvc.ErrArchiveInvalidRequest):
+		return "usage_archive_invalid_request"
+	case errors.Is(err, usagesvc.ErrArchiveNoEvents):
+		return "usage_archive_no_events"
+	case errors.Is(err, usagesvc.ErrArchiveMaintenanceLocked):
+		return "usage_archive_maintenance_locked"
+	case errors.Is(err, usagesvc.ErrArchiveInvalidState):
+		return "usage_archive_invalid_state"
+	case errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete):
+		return "usage_archive_coverage_incomplete"
+	case errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
+		return "usage_archive_delete_unavailable"
+	case errors.Is(err, usagesvc.ErrArchiveNotFound):
+		return "usage_archive_not_found"
+	case errors.Is(err, usagesvc.ErrArchiveUnavailable):
+		return "usage_archive_unavailable"
+	default:
+		return "request_failed"
 	}
 }
 
