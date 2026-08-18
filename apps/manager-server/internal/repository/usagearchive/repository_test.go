@@ -189,6 +189,13 @@ func TestRepositoryArchiveVerifyResumeAndBoundedDelete(t *testing.T) {
 	if _, err := db.Exec(`delete from usage_archive_runs where id = ?`, followup.ID); err != nil {
 		t.Fatalf("remove verified follow-up fixture: %v", err)
 	}
+	archivedCounts, err := repository.MaintenanceCounts(ctx)
+	if err != nil {
+		t.Fatalf("read archived maintenance counts: %v", err)
+	}
+	if archivedCounts.RawArchivedEventCount != 2 || archivedCounts.RawDeletedEventCount != 0 {
+		t.Fatalf("archived maintenance counts = %#v", archivedCounts)
+	}
 	catchUpDeleteReadiness(t, ctx, db, 10_008)
 	if _, err := repository.BeginDelete(ctx, run.ID, 10_009); err != nil {
 		t.Fatalf("begin delete: %v", err)
@@ -246,7 +253,8 @@ func TestRepositoryArchiveVerifyResumeAndBoundedDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read maintenance counts: %v", err)
 	}
-	if counts.RawEventCount != 1 || counts.RawDeletedEventCount != 2 {
+	if counts.RawEventCount != 1 || counts.RawMinTimestampMS != 3_000 || counts.RawMaxTimestampMS != 3_000 ||
+		counts.RawArchivedEventCount != 0 || counts.RawDeletedEventCount != 2 {
 		t.Fatalf("maintenance counts = %#v", counts)
 	}
 	if _, found, err := repository.ActiveRun(ctx); err != nil || found {
@@ -258,6 +266,19 @@ func TestRepositoryArchiveVerifyResumeAndBoundedDelete(t *testing.T) {
 	}
 	if reimported.Inserted != 0 || reimported.Skipped != 1 {
 		t.Fatalf("reimport result = %#v", reimported)
+	}
+}
+
+func TestRepositoryMaintenanceCountsReturnsZeroRangeWhenEmpty(t *testing.T) {
+	repository := New(openArchiveTestDB(t))
+
+	counts, err := repository.MaintenanceCounts(context.Background())
+	if err != nil {
+		t.Fatalf("read empty maintenance counts: %v", err)
+	}
+	if counts.RawEventCount != 0 || counts.RawMinTimestampMS != 0 || counts.RawMaxTimestampMS != 0 ||
+		counts.RawArchivedEventCount != 0 || counts.RawDeletedEventCount != 0 {
+		t.Fatalf("empty maintenance counts = %#v", counts)
 	}
 }
 

@@ -142,8 +142,11 @@ type MaintenanceLock struct {
 }
 
 type MaintenanceCounts struct {
-	RawEventCount        int64 `json:"raw_event_count"`
-	RawDeletedEventCount int64 `json:"raw_deleted_event_count"`
+	RawEventCount         int64 `json:"raw_event_count"`
+	RawMinTimestampMS     int64 `json:"raw_min_timestamp_ms"`
+	RawMaxTimestampMS     int64 `json:"raw_max_timestamp_ms"`
+	RawArchivedEventCount int64 `json:"raw_archived_event_count"`
+	RawDeletedEventCount  int64 `json:"raw_deleted_event_count"`
 }
 
 type Repository struct {
@@ -285,11 +288,22 @@ func (r *Repository) MaintenanceLock(ctx context.Context) (MaintenanceLock, bool
 
 func (r *Repository) MaintenanceCounts(ctx context.Context) (MaintenanceCounts, error) {
 	var counts MaintenanceCounts
-	if err := r.db.QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&counts.RawEventCount); err != nil {
+	if err := r.db.QueryRowContext(ctx, `select
+		count(*), coalesce(min(timestamp_ms), 0), coalesce(max(timestamp_ms), 0)
+		from usage_events`).Scan(
+		&counts.RawEventCount,
+		&counts.RawMinTimestampMS,
+		&counts.RawMaxTimestampMS,
+	); err != nil {
 		return MaintenanceCounts{}, err
 	}
-	if err := r.db.QueryRowContext(ctx, `select count(*) from usage_archive_event_refs
-		where raw_deleted_at_ms is not null`).Scan(&counts.RawDeletedEventCount); err != nil {
+	if err := r.db.QueryRowContext(ctx, `select
+		coalesce(sum(case when raw_deleted_at_ms is null then 1 else 0 end), 0),
+		coalesce(sum(case when raw_deleted_at_ms is not null then 1 else 0 end), 0)
+		from usage_archive_event_refs`).Scan(
+		&counts.RawArchivedEventCount,
+		&counts.RawDeletedEventCount,
+	); err != nil {
 		return MaintenanceCounts{}, err
 	}
 	return counts, nil

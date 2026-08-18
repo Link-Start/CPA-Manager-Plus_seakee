@@ -175,7 +175,12 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 		)
 		switch action {
 		case "resume":
-			status, err = h.App.UsageService.ResumeArchive(r.Context(), id)
+			expectedStage := strings.TrimSpace(r.URL.Query().Get("expected_stage"))
+			if expectedStage == "" {
+				status, err = h.App.UsageService.ResumeArchive(r.Context(), id)
+			} else {
+				status, err = h.App.UsageService.ResumeArchiveAtStage(r.Context(), id, expectedStage)
+			}
 		case "verify":
 			status, err = h.App.UsageService.VerifyArchive(r.Context(), id)
 		case "delete":

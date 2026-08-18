@@ -295,6 +295,32 @@ func TestUsageMaintenanceUsesLatestRawEventAsAggregateTarget(t *testing.T) {
 	}
 }
 
+func TestUsageMaintenanceStatusIncludesRawEventRange(t *testing.T) {
+	service, st, _, _ := newRawArchiveTestService(t, 1, 1)
+	ctx := context.Background()
+
+	empty, err := service.MaintenanceStatus(ctx)
+	if err != nil {
+		t.Fatalf("read empty maintenance status: %v", err)
+	}
+	if empty.RawEventCount != 0 || empty.RawMinTimestampMS != 0 || empty.RawMaxTimestampMS != 0 ||
+		empty.RawArchivedEventCount != 0 {
+		t.Fatalf("empty maintenance status = %#v", empty)
+	}
+
+	if _, err := st.InsertEvents(ctx, archiveTestServiceEvents(3)); err != nil {
+		t.Fatalf("insert raw range events: %v", err)
+	}
+	populated, err := service.MaintenanceStatus(ctx)
+	if err != nil {
+		t.Fatalf("read populated maintenance status: %v", err)
+	}
+	if populated.RawEventCount != 3 || populated.RawMinTimestampMS != 1_000 || populated.RawMaxTimestampMS != 3_000 ||
+		populated.RawArchivedEventCount != 0 {
+		t.Fatalf("populated maintenance status = %#v", populated)
+	}
+}
+
 func TestUsageArchiveServiceBackfillsMetadataBeforeManualArchive(t *testing.T) {
 	service, _, rawDB, archiveDirectory := newRawArchiveTestService(t, 1, 1)
 	ctx := context.Background()
@@ -822,6 +848,48 @@ func TestUsageArchiveServiceResumesActiveDelete(t *testing.T) {
 	}
 	if completed.Run.Status != usagearchive.StatusCompleted || completed.Run.DeletedEventCount != 3 {
 		t.Fatalf("resumed delete = %#v", completed)
+	}
+}
+
+func TestUsageArchiveServiceStageBoundResumeDoesNotAdvanceLaterDelete(t *testing.T) {
+	service, st, _ := newArchiveTestService(t, 3, 1, archiveTestServiceEvents(3))
+	ctx := context.Background()
+	created, err := service.CreateArchive(ctx, 4_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	if _, err := service.ResumeArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("archive usage: %v", err)
+	}
+	catchUpUsageAggregate(t, st)
+	if _, err := service.VerifyArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("verify archive: %v", err)
+	}
+	deleting, err := st.UsageArchives.BeginDelete(ctx, created.Run.ID, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatalf("begin delete: %v", err)
+	}
+
+	status, err := service.ResumeArchiveAtStage(ctx, created.Run.ID, usagearchive.StatusVerifying)
+	if err != nil {
+		t.Fatalf("stage-bound resume: %v", err)
+	}
+	if status.Run.Status != usagearchive.StatusDeleting || status.Run.DeletedEventCount != 0 {
+		t.Fatalf("stage-bound resume advanced delete = %#v", status.Run)
+	}
+	counts, err := st.UsageArchives.MaintenanceCounts(ctx)
+	if err != nil {
+		t.Fatalf("read maintenance counts: %v", err)
+	}
+	if counts.RawEventCount != 3 || deleting.DeletedEventCount != 0 {
+		t.Fatalf("stage-bound resume deleted raw events: counts=%#v run=%#v", counts, deleting)
+	}
+}
+
+func TestUsageArchiveServiceRejectsInvalidExpectedResumeStage(t *testing.T) {
+	service, _, _ := newArchiveTestService(t, 1, 1, archiveTestServiceEvents(1))
+	if _, err := service.ResumeArchiveAtStage(context.Background(), strings.Repeat("a", 32), "future-stage"); !errors.Is(err, ErrArchiveInvalidRequest) {
+		t.Fatalf("invalid expected stage error = %v", err)
 	}
 }
 

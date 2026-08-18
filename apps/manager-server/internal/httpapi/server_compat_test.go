@@ -816,7 +816,27 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 		t.Fatalf("archive early verify body = %s", verifyEarly.Body.String())
 	}
 
-	resumeRR := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives/"+status.Run.ID+"/resume", " \n\t", testutil.AdminKey)
+	wrongStageResume := testutil.Request(
+		t,
+		handler,
+		http.MethodPost,
+		"/v0/management/usage/archives/"+status.Run.ID+"/resume?expected_stage=deleting",
+		"",
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, wrongStageResume, http.StatusConflict)
+	if !strings.Contains(wrongStageResume.Body.String(), `"code":"usage_archive_invalid_state"`) {
+		t.Fatalf("archive wrong expected stage body = %s", wrongStageResume.Body.String())
+	}
+
+	resumeRR := testutil.Request(
+		t,
+		handler,
+		http.MethodPost,
+		"/v0/management/usage/archives/"+status.Run.ID+"/resume?expected_stage=archiving",
+		" \n\t",
+		testutil.AdminKey,
+	)
 	testutil.RequireStatus(t, resumeRR, http.StatusOK)
 	assertUsageArchivePayloadSanitized(t, resumeRR.Body.String(), cfg.UsageArchiveDir)
 	testutil.DecodeJSON(t, resumeRR, &status)
@@ -854,8 +874,17 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 	assertUsageMaintenancePayloadSanitized(t, maintenanceRR.Body.String(), internalError, cfg.UsageArchiveDir)
 	var maintenance usagesvc.MaintenanceStatus
 	testutil.DecodeJSON(t, maintenanceRR, &maintenance)
-	if maintenance.RawEventCount != 1 || maintenance.RawDeletedEventCount != 2 || maintenance.ActiveRun != nil || maintenance.ActiveLock != nil {
+	wantRemainingTimestampMS := events[2].TimestampMS
+	if maintenance.RawEventCount != 1 || maintenance.RawMinTimestampMS != wantRemainingTimestampMS ||
+		maintenance.RawMaxTimestampMS != wantRemainingTimestampMS || maintenance.RawDeletedEventCount != 2 ||
+		maintenance.RawArchivedEventCount != 0 ||
+		maintenance.ActiveRun != nil || maintenance.ActiveLock != nil {
 		t.Fatalf("completed maintenance status = %#v", maintenance)
+	}
+	for _, field := range []string{`"raw_min_timestamp_ms"`, `"raw_max_timestamp_ms"`, `"raw_archived_event_count"`} {
+		if !strings.Contains(maintenanceRR.Body.String(), field) {
+			t.Fatalf("maintenance status omitted %s: %s", field, maintenanceRR.Body.String())
+		}
 	}
 	if !maintenance.CompactRequiresStoppedServer || maintenance.Storage.PageSize <= 0 || maintenance.Storage.PageCount <= 0 {
 		t.Fatalf("maintenance compact/storage status = %#v", maintenance)

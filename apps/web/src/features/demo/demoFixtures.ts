@@ -322,11 +322,19 @@ export const deleteDemoUsageArchive = (runId: string): UsageArchiveStatus => {
 
 export const getDemoUsageMaintenance = (): UsageMaintenanceStatus => {
   const active = demoUsageArchiveStatuses.find((item) => demoUsageArchiveIsActive(item.run));
+  const dynamicArchived = demoUsageArchiveStatuses.reduce(
+    (sum, item) =>
+      sum + Math.max(0, item.run.archived_event_count - item.run.deleted_event_count),
+    0
+  );
   const dynamicDeleted = demoUsageArchiveStatuses
     .slice(0, Math.max(0, demoUsageArchiveStatuses.length - 2))
     .reduce((sum, item) => sum + item.run.deleted_event_count, 0);
   return {
     raw_event_count: Math.max(0, 184_260 - dynamicDeleted),
+    raw_min_timestamp_ms: now() - 120 * day,
+    raw_max_timestamp_ms: now() - minute,
+    raw_archived_event_count: dynamicArchived,
     raw_deleted_event_count: 62_000 + dynamicDeleted,
     active_run: active ? summarizeDemoUsageArchive(active.run) : undefined,
     migration: {

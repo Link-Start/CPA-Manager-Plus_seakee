@@ -6,32 +6,41 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import {
   usageServiceApi,
   type UsageArchivePreview,
+  type UsageArchiveResumeStage,
   type UsageArchiveRunStatus,
   type UsageArchiveRunSummary,
+  type UsageArchiveSegmentSummary,
+  type UsageArchiveStatus,
   type UsageMaintenanceStatus,
 } from '@/services/api/usageService';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { formatDateTime, formatFileSize } from '@/utils/format';
+import {
+  getArchiveRunPresentationStage,
+  recommendRetentionDays,
+  resolveRawEventRange,
+  resolveRetentionCutoff,
+  retentionPresetDays,
+  toLocalDateTimeValue,
+  type RetentionSelection,
+} from './usageMaintenanceModel';
 import styles from './UsageMaintenancePage.module.scss';
-
-const toLocalDateTimeValue = (timestamp: number) => {
-  const date = new Date(timestamp);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-};
 
 const isUnsupportedError = (error: unknown) => {
   const candidate = error as { status?: number } | null;
   return candidate?.status === 404 || candidate?.status === 405;
 };
 
-const terminalArchiveStatuses = new Set(['completed', 'cancelled']);
-const staticManualArchiveStatuses = new Set(['archived', 'verified']);
-const runIsActive = (run: UsageArchiveRunSummary) =>
-  !terminalArchiveStatuses.has(run.status) &&
-  (run.mode === 'retention' || !staticManualArchiveStatuses.has(run.status));
 const activeRefreshIntervalMs = 5_000;
+const defaultRetentionDays = 30 as const;
+type GuidedArchiveStage =
+  | 'idle'
+  | 'creating'
+  | 'archiving'
+  | 'verifying'
+  | 'complete'
+  | 'attention';
 const archiveProgressStatuses = new Set(['archiving', 'verifying', 'deleting']);
 const archiveStatusTranslationValues = new Set([
   'previewed',
@@ -134,6 +143,30 @@ const isUsageArchiveRunSummary = (value: unknown): value is UsageArchiveRunSumma
 const isUsageArchiveList = (value: unknown): value is { runs: UsageArchiveRunSummary[] } =>
   isRecord(value) && Array.isArray(value.runs) && value.runs.every(isUsageArchiveRunSummary);
 
+const isUsageArchiveSegmentSummary = (value: unknown): value is UsageArchiveSegmentSummary => {
+  if (!isRecord(value)) return false;
+  return (
+    hasString(value, 'run_id') &&
+    hasNumber(value, 'sequence') &&
+    hasString(value, 'status') &&
+    hasNumber(value, 'first_event_id') &&
+    hasNumber(value, 'last_event_id') &&
+    hasNumber(value, 'min_timestamp_ms') &&
+    hasNumber(value, 'max_timestamp_ms') &&
+    hasNumber(value, 'event_count') &&
+    hasNumber(value, 'uncompressed_bytes') &&
+    hasNumber(value, 'compressed_bytes') &&
+    hasNumber(value, 'created_at_ms') &&
+    hasOptionalNumber(value, 'verified_at_ms')
+  );
+};
+
+const isUsageArchiveStatus = (value: unknown): value is UsageArchiveStatus =>
+  isRecord(value) &&
+  isUsageArchiveRunSummary(value.run) &&
+  Array.isArray(value.segments) &&
+  value.segments.every(isUsageArchiveSegmentSummary);
+
 const isUsageMaintenanceLock = (value: unknown) =>
   isRecord(value) &&
   hasString(value, 'run_id') &&
@@ -154,6 +187,9 @@ const isUsageMaintenanceStatus = (value: unknown): value is UsageMaintenanceStat
   if (value.active_lock !== undefined && !isUsageMaintenanceLock(value.active_lock)) return false;
   return (
     hasNumber(value, 'raw_event_count') &&
+    hasOptionalNumber(value, 'raw_min_timestamp_ms') &&
+    hasOptionalNumber(value, 'raw_max_timestamp_ms') &&
+    hasOptionalNumber(value, 'raw_archived_event_count') &&
     hasNumber(value, 'raw_deleted_event_count') &&
     hasString(migration, 'name') &&
     hasString(migration, 'status') &&
@@ -203,6 +239,38 @@ const actionIsDestructive = (run: UsageArchiveRunSummary, action: 'resume' | 've
   (action === 'resume' &&
     (run.status === 'deleting' || (run.status === 'failed' && run.resume_status === 'deleting')));
 
+const actionRequiresMigrationReady = (
+  run: UsageArchiveRunSummary,
+  action: 'resume' | 'verify' | 'delete'
+) => {
+  if (action !== 'resume') return false;
+  const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
+  return resumeStage === 'previewed' || resumeStage === 'archiving';
+};
+
+const resumeExpectedStage = (run: UsageArchiveRunSummary): UsageArchiveResumeStage | null => {
+  const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
+  if (resumeStage === 'previewed' || resumeStage === 'archiving') return 'archiving';
+  if (resumeStage === 'verifying') return 'verifying';
+  if (resumeStage === 'deleting') return 'deleting';
+  return null;
+};
+
+const expectedActionStatuses = (
+  run: UsageArchiveRunSummary,
+  action: 'resume' | 'verify' | 'delete'
+): ReadonlySet<string> => {
+  if (action === 'delete') return new Set(['completed']);
+  if (action === 'verify') return new Set(['verified', 'deleting', 'completed']);
+  const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
+  if (resumeStage === 'previewed' || resumeStage === 'archiving') {
+    return new Set(['archived', 'verifying', 'verified', 'deleting', 'completed']);
+  }
+  if (resumeStage === 'verifying') return new Set(['verified', 'deleting', 'completed']);
+  if (resumeStage === 'deleting') return new Set(['completed']);
+  return new Set();
+};
+
 export function UsageMaintenancePage() {
   const { t, i18n } = useTranslation();
   const availability = usePanelFeatureAvailability();
@@ -212,9 +280,17 @@ export function UsageMaintenancePage() {
   const [maintenance, setMaintenance] = useState<UsageMaintenanceStatus | null>(null);
   const [archives, setArchives] = useState<UsageArchiveRunSummary[]>([]);
   const [preview, setPreview] = useState<UsageArchivePreview | null>(null);
-  const [cutoff, setCutoff] = useState(() =>
-    toLocalDateTimeValue(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const [retentionSelection, setRetentionSelection] =
+    useState<RetentionSelection>(defaultRetentionDays);
+  const [referenceNowMS, setReferenceNowMS] = useState(() => Date.now());
+  const [customCutoff, setCustomCutoff] = useState(() =>
+    toLocalDateTimeValue(Date.now() - defaultRetentionDays * 24 * 60 * 60 * 1000)
   );
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [guidedArchiveStage, setGuidedArchiveStage] = useState<GuidedArchiveStage>('idle');
+  const [guidedArchiveRunId, setGuidedArchiveRunId] = useState<string | null>(null);
+  const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -225,8 +301,22 @@ export function UsageMaintenancePage() {
   const capabilityContextRef = useRef<{ serviceBase: string; managementKey?: string } | null>(null);
   const operationControllerRef = useRef<AbortController | null>(null);
   const operationGenerationRef = useRef(0);
+  const previewControllerRef = useRef<AbortController | null>(null);
+  const previewGenerationRef = useRef(0);
   const operationContextRef = useRef({ serviceBase, managementKey });
   const contextGenerationRef = useRef(0);
+
+  const invalidatePreview = useCallback((resetState = false) => {
+    previewGenerationRef.current += 1;
+    previewControllerRef.current?.abort();
+    previewControllerRef.current = null;
+    if (!mountedRef.current) return;
+    setPreviewLoading(false);
+    if (resetState) {
+      setPreview(null);
+      setPreviewError(null);
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -238,6 +328,9 @@ export function UsageMaintenancePage() {
       operationGenerationRef.current += 1;
       operationControllerRef.current?.abort();
       operationControllerRef.current = null;
+      previewGenerationRef.current += 1;
+      previewControllerRef.current?.abort();
+      previewControllerRef.current = null;
       contextGenerationRef.current += 1;
     };
   }, []);
@@ -313,14 +406,28 @@ export function UsageMaintenancePage() {
     operationContextRef.current = { serviceBase, managementKey };
     capabilityContextRef.current = null;
     invalidateOperation(true);
+    invalidatePreview(false);
+    const nextReferenceNowMS = Date.now();
+    setReferenceNowMS(nextReferenceNowMS);
+    setRetentionSelection(defaultRetentionDays);
+    setCustomCutoff(
+      toLocalDateTimeValue(nextReferenceNowMS - defaultRetentionDays * 24 * 60 * 60 * 1000)
+    );
     setMaintenance(null);
     setArchives([]);
     setPreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+    setGuidedArchiveStage('idle');
+    setGuidedArchiveRunId(null);
     setError(null);
     setUnsupported(false);
     setLoading(Boolean(serviceBase));
-    return () => invalidateOperation(false);
-  }, [invalidateOperation, managementKey, serviceBase]);
+    return () => {
+      invalidateOperation(false);
+      invalidatePreview(false);
+    };
+  }, [invalidateOperation, invalidatePreview, managementKey, serviceBase]);
 
   const load = useCallback(
     async ({ background = false }: { background?: boolean } = {}) => {
@@ -413,40 +520,165 @@ export function UsageMaintenancePage() {
     return () => clearInterval(timer);
   }, [load, serviceBase, shouldPollMaintenance, working]);
 
-  const cutoffTimestamp = useMemo(() => new Date(cutoff).getTime(), [cutoff]);
+  const cutoffTimestamp = useMemo(
+    () => resolveRetentionCutoff(retentionSelection, customCutoff, referenceNowMS),
+    [customCutoff, referenceNowMS, retentionSelection]
+  );
+  const rawEventRange = useMemo(
+    () => (maintenance ? resolveRawEventRange(maintenance) : null),
+    [maintenance]
+  );
+  const recommendedRetentionDays = useMemo(
+    () => (rawEventRange ? recommendRetentionDays(rawEventRange, referenceNowMS) : null),
+    [rawEventRange, referenceNowMS]
+  );
+  const maintenanceLoaded = maintenance !== null;
 
-  const handlePreview = async () => {
-    if (!Number.isFinite(cutoffTimestamp) || cutoffTimestamp <= 0) {
-      showNotification(
-        t('usage_maintenance.invalid_cutoff', { defaultValue: 'Choose a valid cutoff time.' }),
-        'warning'
+  useEffect(() => {
+    if (!maintenanceLoaded || !serviceBase || unsupported) return;
+    previewGenerationRef.current += 1;
+    previewControllerRef.current?.abort();
+    previewControllerRef.current = null;
+    setPreview(null);
+    setPreviewError(null);
+
+    if (!cutoffTimestamp) {
+      setPreviewLoading(false);
+      setPreviewError(
+        t('usage_maintenance.invalid_cutoff', {
+          defaultValue: 'Choose a valid cutoff time that is not in the future.',
+        })
       );
       return;
     }
-    const operation = beginWorking(serviceBase, managementKey);
-    if (!operation) return;
-    try {
-      const result = await usageServiceApi.previewUsageArchive(
-        serviceBase,
-        cutoffTimestamp,
-        managementKey,
-        operation.controller.signal
+
+    const controller = new AbortController();
+    const generation = ++previewGenerationRef.current;
+    previewControllerRef.current = controller;
+    setPreviewLoading(true);
+
+    const previewIsCurrent = () => {
+      const currentContext = operationContextRef.current;
+      return (
+        mountedRef.current &&
+        !controller.signal.aborted &&
+        generation === previewGenerationRef.current &&
+        controller === previewControllerRef.current &&
+        currentContext.serviceBase === serviceBase &&
+        currentContext.managementKey === managementKey
       );
-      if (!operationIsCurrent(operation)) return;
-      if (!isUsageArchivePreview(result)) {
-        setPreview(null);
-        setUnsupported(true);
-        return;
-      }
-      setPreview(result);
-    } catch (cause) {
-      if (operationIsCurrent(operation)) {
+    };
+    const requestPreview = async () => {
+      try {
+        const result = await usageServiceApi.previewUsageArchive(
+          serviceBase,
+          cutoffTimestamp,
+          managementKey,
+          controller.signal
+        );
+        if (!previewIsCurrent()) return;
+        if (!isUsageArchivePreview(result)) {
+          setUnsupported(true);
+          return;
+        }
+        setPreview(result);
+      } catch (cause) {
+        if (!previewIsCurrent()) return;
         if (isUnsupportedError(cause)) setUnsupported(true);
-        else showNotification(cause instanceof Error ? cause.message : String(cause), 'error');
+        else setPreviewError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (previewIsCurrent()) {
+          previewControllerRef.current = null;
+          setPreviewLoading(false);
+        }
       }
-    } finally {
-      finishOperation(operation);
+    };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (retentionSelection === 'custom') {
+      timer = setTimeout(() => void requestPreview(), 250);
+    } else {
+      void requestPreview();
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+      controller.abort();
+      if (controller === previewControllerRef.current) previewControllerRef.current = null;
+    };
+  }, [
+    cutoffTimestamp,
+    maintenanceLoaded,
+    managementKey,
+    previewRefreshToken,
+    retentionSelection,
+    serviceBase,
+    t,
+    unsupported,
+  ]);
+
+  const selectRetention = (selection: RetentionSelection) => {
+    if (working || selection === retentionSelection) return;
+    invalidatePreview(true);
+    setGuidedArchiveStage('idle');
+    setGuidedArchiveRunId(null);
+    setRetentionSelection(selection);
+  };
+
+  const updateCustomCutoff = (value: string) => {
+    if (working) return;
+    invalidatePreview(true);
+    setGuidedArchiveStage('idle');
+    setGuidedArchiveRunId(null);
+    setCustomCutoff(value);
+  };
+
+  const refreshMaintenance = () => {
+    setReferenceNowMS(Date.now());
+    setPreviewRefreshToken((value) => value + 1);
+    void load();
+  };
+
+  const requireArchiveResponse = (
+    value: unknown,
+    expectedRunID?: string,
+    expectedStatuses?: ReadonlySet<string>
+  ) => {
+    if (
+      !isUsageArchiveStatus(value) ||
+      (expectedRunID !== undefined && value.run.id !== expectedRunID) ||
+      (expectedStatuses !== undefined && !expectedStatuses.has(value.run.status))
+    ) {
+      throw new Error(
+        t('usage_maintenance.archive_response_invalid', {
+          defaultValue: 'The server returned an invalid archive task response.',
+        })
+      );
+    }
+    return value;
+  };
+
+  const showConcurrentDeleteWarning = () =>
+    showNotification(
+      t('usage_maintenance.archive_concurrent_delete', {
+        defaultValue:
+          'This task advanced to raw-data deletion in another session. Its latest state is shown in archive history.',
+      }),
+      'warning'
+    );
+
+  const cancelGuidedArchive = () => {
+    if (guidedArchiveStage === 'idle' || guidedArchiveStage === 'complete') return;
+    invalidateOperation(true);
+    setGuidedArchiveStage('idle');
+    setGuidedArchiveRunId(null);
+    showNotification(
+      t('usage_maintenance.archive_prepare_cancelled', {
+        defaultValue:
+          'The request was stopped. If an archive task was created, it remains recoverable in history.',
+      }),
+      'warning'
+    );
+    void load({ background: true });
   };
 
   const createArchive = async (
@@ -454,24 +686,72 @@ export function UsageMaintenancePage() {
     confirmation?: ConfirmationToken
   ) => {
     if (confirmation && !confirmationIsCurrent(confirmation)) return;
+    invalidatePreview(false);
     const operation = beginWorking(serviceBase, managementKey);
     if (!operation) return;
+    setGuidedArchiveStage('creating');
+    setGuidedArchiveRunId(null);
     try {
-      await usageServiceApi.createUsageArchive(
+      const createResponse = await usageServiceApi.createUsageArchive(
         serviceBase,
         previewCutoffTimestamp,
         managementKey,
         operation.controller.signal
       );
       if (!operationIsCurrent(operation)) return;
+      const created = requireArchiveResponse(createResponse, undefined, new Set(['previewed']));
+      const runID = created.run.id;
+      setGuidedArchiveRunId(runID);
+      setGuidedArchiveStage('archiving');
+      const archiveResponse = await usageServiceApi.resumeUsageArchive(
+        serviceBase,
+        runID,
+        managementKey,
+        operation.controller.signal,
+        'archiving'
+      );
+      if (!operationIsCurrent(operation)) return;
+      const archived = requireArchiveResponse(
+        archiveResponse,
+        runID,
+        new Set(['archived', 'verifying', 'verified', 'deleting', 'completed'])
+      );
+      let finalStatus = archived.run.status;
+      if (finalStatus === 'archived' || finalStatus === 'verifying') {
+        setGuidedArchiveStage('verifying');
+        const verifyResponse = await usageServiceApi.verifyUsageArchive(
+          serviceBase,
+          runID,
+          managementKey,
+          operation.controller.signal
+        );
+        if (!operationIsCurrent(operation)) return;
+        finalStatus = requireArchiveResponse(
+          verifyResponse,
+          runID,
+          new Set(['verified', 'deleting', 'completed'])
+        ).run.status;
+      }
+      if (finalStatus === 'deleting' || finalStatus === 'completed') {
+        setGuidedArchiveStage('idle');
+        setGuidedArchiveRunId(null);
+        setPreview(null);
+        showConcurrentDeleteWarning();
+        await load({ background: true });
+        return;
+      }
+      setGuidedArchiveStage('complete');
       setPreview(null);
       showNotification(
-        t('usage_maintenance.create_success', { defaultValue: 'Archive run created.' }),
+        t('usage_maintenance.archive_prepare_success', {
+          defaultValue: 'Archive created and verified. Raw data was not deleted.',
+        }),
         'success'
       );
       await load({ background: true });
     } catch (cause) {
       if (operationIsCurrent(operation)) {
+        setGuidedArchiveStage('attention');
         showNotification(cause instanceof Error ? cause.message : String(cause), 'error');
         await load({ background: true });
       }
@@ -489,12 +769,16 @@ export function UsageMaintenancePage() {
       managementKey,
     };
     showConfirmation({
-      title: t('usage_maintenance.create_confirm_title', { defaultValue: 'Create archive run?' }),
-      message: t('usage_maintenance.create_confirm_message', {
-        defaultValue:
-          'This creates a resumable archive run without deleting raw data. Resume it afterward to write the archive files.',
+      title: t('usage_maintenance.archive_prepare_confirm_title', {
+        defaultValue: 'Archive and verify this data?',
       }),
-      confirmText: t('usage_maintenance.create_confirm_button', { defaultValue: 'Create run' }),
+      message: t('usage_maintenance.archive_prepare_confirm_message', {
+        defaultValue:
+          'The server will create the archive, write its files, and verify them in one guided operation. Raw data will not be deleted.',
+      }),
+      confirmText: t('usage_maintenance.archive_prepare_confirm_button', {
+        defaultValue: 'Archive and verify',
+      }),
       cancelText: t('common.cancel'),
       variant: 'primary',
       onConfirm: () => createArchive(previewCutoffTimestamp, confirmation),
@@ -507,29 +791,73 @@ export function UsageMaintenancePage() {
     confirmation?: ConfirmationToken
   ) => {
     if (confirmation && !confirmationIsCurrent(confirmation)) return;
-    const method =
-      action === 'resume'
-        ? usageServiceApi.resumeUsageArchive
-        : action === 'verify'
-          ? usageServiceApi.verifyUsageArchive
-          : usageServiceApi.deleteUsageArchive;
+    invalidatePreview(false);
+    const expectedResumeStage = action === 'resume' ? resumeExpectedStage(run) : null;
+    if (action === 'resume' && !expectedResumeStage) {
+      showNotification(
+        t('usage_maintenance.archive_response_invalid', {
+          defaultValue: 'The server returned an invalid archive task response.',
+        }),
+        'error'
+      );
+      return;
+    }
     const operation = beginWorking(serviceBase, managementKey);
     if (!operation) return;
     try {
-      await method(serviceBase, run.id, managementKey, operation.controller.signal);
+      const response =
+        action === 'resume'
+          ? await usageServiceApi.resumeUsageArchive(
+              serviceBase,
+              run.id,
+              managementKey,
+              operation.controller.signal,
+              expectedResumeStage ?? undefined
+            )
+          : action === 'verify'
+            ? await usageServiceApi.verifyUsageArchive(
+                serviceBase,
+                run.id,
+                managementKey,
+                operation.controller.signal
+              )
+            : await usageServiceApi.deleteUsageArchive(
+                serviceBase,
+                run.id,
+                managementKey,
+                operation.controller.signal
+              );
       if (!operationIsCurrent(operation)) return;
+      const updated = requireArchiveResponse(response, run.id, expectedActionStatuses(run, action));
+      if (
+        guidedArchiveRunId === run.id ||
+        (guidedArchiveStage === 'attention' && guidedArchiveRunId === null)
+      ) {
+        setGuidedArchiveStage('idle');
+        setGuidedArchiveRunId(null);
+      }
       const destructive = actionIsDestructive(run, action);
-      showNotification(
-        t(`usage_maintenance.${destructive ? 'delete' : action}_success`, {
-          defaultValue: destructive ? 'Logical deletion completed.' : 'Archive run updated.',
-        }),
-        'success'
-      );
+      if (!destructive && (updated.run.status === 'deleting' || updated.run.status === 'completed')) {
+        showConcurrentDeleteWarning();
+      } else {
+        showNotification(
+          t(`usage_maintenance.${destructive ? 'delete' : action}_success`, {
+            defaultValue: destructive ? 'Logical deletion completed.' : 'Archive run updated.',
+          }),
+          'success'
+        );
+      }
       await load({ background: true });
+      if (operationIsCurrent(operation)) {
+        setPreviewRefreshToken((value) => value + 1);
+      }
     } catch (cause) {
       if (operationIsCurrent(operation)) {
         showNotification(cause instanceof Error ? cause.message : String(cause), 'error');
         await load({ background: true });
+        if (operationIsCurrent(operation)) {
+          setPreviewRefreshToken((value) => value + 1);
+        }
       }
     } finally {
       finishOperation(operation);
@@ -550,6 +878,71 @@ export function UsageMaintenancePage() {
     knownValueLabel('migration_status', value, migrationStatusTranslationValues);
   const aggregateStatusLabel = (value: string) =>
     knownValueLabel('aggregate_status', value, aggregateStatusTranslationValues);
+  const guidedStageLabel = (stage: GuidedArchiveStage) =>
+    t(`usage_maintenance.archive_prepare_${stage}`, {
+      defaultValue:
+        stage === 'creating'
+          ? 'Creating archive task'
+          : stage === 'archiving'
+            ? 'Writing archive'
+            : stage === 'verifying'
+              ? 'Verifying archive'
+              : stage === 'complete'
+                ? 'Archive verified'
+                : stage === 'attention'
+                  ? 'Needs attention'
+                  : '',
+    });
+  const archiveStageLabel = (stage: ReturnType<typeof getArchiveRunPresentationStage>) =>
+    t(`usage_maintenance.run_stage_${stage}`, {
+      defaultValue:
+        stage === 'archiving'
+          ? 'Archive in progress'
+          : stage === 'verifying'
+            ? 'Ready for verification'
+            : stage === 'delete_ready'
+              ? 'Archive verified'
+              : stage === 'deleting'
+                ? 'Removing raw data'
+                : stage === 'completed'
+                  ? 'Complete'
+                  : 'Needs attention',
+    });
+  const archiveStepState = (
+    stage: ReturnType<typeof getArchiveRunPresentationStage>,
+    step: 'archive' | 'verify' | 'delete',
+    resumeStatus?: UsageArchiveRunStatus
+  ) => {
+    const order = { archive: 1, verify: 2, delete: 3 } as const;
+    const stageOrder =
+      stage === 'archiving'
+        ? 1
+        : stage === 'verifying'
+          ? 2
+          : stage === 'delete_ready'
+            ? 3
+            : stage === 'deleting'
+              ? 3
+              : stage === 'completed'
+                ? 4
+                : 0;
+    if (stage === 'attention') {
+      const failedOrder =
+        resumeStatus === 'deleting'
+          ? 3
+          : resumeStatus === 'verifying'
+            ? 2
+            : resumeStatus === 'archiving'
+              ? 1
+              : 0;
+      if (failedOrder > order[step]) return 'complete';
+      if (failedOrder === order[step]) return 'current';
+      return 'pending';
+    }
+    if (stageOrder > order[step]) return 'complete';
+    if (stageOrder === order[step]) return 'current';
+    return 'pending';
+  };
 
   const confirmAction = (run: UsageArchiveRunSummary, action: 'resume' | 'verify' | 'delete') => {
     if (!actionIsDestructive(run, action)) {
@@ -581,9 +974,27 @@ export function UsageMaintenancePage() {
     });
   };
 
-  const actionLabel = (action: ReturnType<typeof statusAction>) => {
+  const actionLabel = (run: UsageArchiveRunSummary, action: ReturnType<typeof statusAction>) => {
     if (!action) return '';
-    const fallback = action === 'resume' ? 'Resume' : action === 'verify' ? 'Verify' : 'Delete raw';
+    if (action === 'resume') {
+      const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
+      if (resumeStage === 'verifying') {
+        return t('usage_maintenance.action_resume_verify', {
+          defaultValue: 'Continue verification',
+        });
+      }
+      if (resumeStage === 'deleting') {
+        return t('usage_maintenance.action_resume_delete', {
+          defaultValue: 'Continue deletion',
+        });
+      }
+    }
+    const fallback =
+      action === 'resume'
+        ? 'Continue archive'
+        : action === 'verify'
+          ? 'Verify archive'
+          : 'Delete raw data';
     return t(`usage_maintenance.action_${action}`, { defaultValue: fallback });
   };
   const deleteDisabled = maintenance?.readiness.archive_delete_enabled === false;
@@ -598,6 +1009,30 @@ export function UsageMaintenancePage() {
             'Global catch-up is still pending. The server will verify this run’s exact coverage before deletion.',
         })
       : '';
+  const resolvedCutoffTimestamp = preview?.cutoff_timestamp_ms ?? cutoffTimestamp ?? undefined;
+  const rawRangeSummary =
+    rawEventRange?.kind === 'available'
+      ? `${formatTime(rawEventRange.minTimestampMS)} – ${formatTime(rawEventRange.maxTimestampMS)}`
+      : rawEventRange?.kind === 'empty'
+        ? t('usage_maintenance.raw_range_empty', { defaultValue: 'No raw usage data yet' })
+        : rawEventRange?.kind === 'unavailable'
+          ? t('usage_maintenance.raw_range_unavailable', {
+              defaultValue: 'Time range unavailable on this server version',
+            })
+          : '-';
+  const createBlockedByMaintenance = Boolean(maintenance?.active_run || maintenance?.active_lock);
+  const archiveReadinessPending = maintenance?.readiness.migration_ready === false;
+  const archiveReadinessHint = archiveReadinessPending
+    ? t('usage_maintenance.archive_readiness_pending', {
+        defaultValue:
+          'Archiving becomes available after usage accounting preparation completes. Previewing is still safe.',
+      })
+    : '';
+  const hasArchivedRawEvents = (maintenance?.raw_archived_event_count ?? 0) > 0;
+  const recommendedPresetAvailable =
+    !hasArchivedRawEvents &&
+    recommendedRetentionDays !== null &&
+    recommendedRetentionDays !== retentionSelection;
 
   if (availability.checking || loading) return <LoadingSpinner />;
   if (unsupported) {
@@ -636,7 +1071,7 @@ export function UsageMaintenancePage() {
           </p>
         </div>
         <div className={styles.actions}>
-          <Button variant="secondary" size="sm" onClick={() => void load()} disabled={working}>
+          <Button variant="secondary" size="sm" onClick={refreshMaintenance} disabled={working}>
             {t('common.refresh')}
           </Button>
         </div>
@@ -693,64 +1128,350 @@ export function UsageMaintenancePage() {
       <section className={styles.panel}>
         <div className={styles.panelHeader}>
           <h2 className={styles.panelTitle}>
-            {t('usage_maintenance.archive_title', { defaultValue: 'Archive history' })}
+            {t('usage_maintenance.policy_title', { defaultValue: 'Choose a retention policy' })}
           </h2>
           <span className={styles.muted}>
-            {t('usage_maintenance.archive_hint', {
-              defaultValue: 'Archive first, delete only after verification.',
+            {t('usage_maintenance.policy_hint', {
+              defaultValue: 'Archiving is non-destructive. Raw deletion remains a separate step.',
             })}
           </span>
         </div>
-        <div className={styles.toolbar}>
-          <div className={styles.dateField}>
-            <Input
-              type="datetime-local"
-              label={t('usage_maintenance.cutoff', { defaultValue: 'Archive events before' })}
-              value={cutoff}
-              disabled={working}
-              onChange={(event) => {
-                invalidateOperation(true);
-                setCutoff(event.target.value);
-                setPreview(null);
-              }}
-            />
-          </div>
-          <Button variant="secondary" onClick={() => void handlePreview()} loading={working}>
-            {t('usage_maintenance.preview', { defaultValue: 'Preview' })}
-          </Button>
-        </div>
-        {deleteReadinessHint ? <p className={styles.readinessHint}>{deleteReadinessHint}</p> : null}
-        {preview ? (
-          <div className={styles.preview}>
-            <div className={styles.previewGrid}>
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>
-                  {t('usage_maintenance.preview_events', { defaultValue: 'Eligible events' })}
+        <div className={styles.policyGrid}>
+          <div className={styles.policyControls}>
+            <div className={styles.sectionIntro}>
+              <h3>
+                {t('usage_maintenance.retention_title', {
+                  defaultValue: 'How much recent raw data should stay online?',
+                })}
+              </h3>
+              <p>
+                {t('usage_maintenance.retention_description', {
+                  defaultValue:
+                    'Events older than the selected period are included in the archive preview. Recent events remain in SQLite.',
+                })}
+              </p>
+            </div>
+            <div
+              className={styles.retentionOptions}
+              role="group"
+              aria-label={t('usage_maintenance.retention_group_label', {
+                defaultValue: 'Raw data retention period',
+              })}
+            >
+              {retentionPresetDays.map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  className={`${styles.retentionOption} ${
+                    retentionSelection === days ? styles.retentionOptionActive : ''
+                  }`}
+                  aria-pressed={retentionSelection === days}
+                  disabled={working}
+                  onClick={() => selectRetention(days)}
+                >
+                  <strong>
+                    {t(`usage_maintenance.retention_${days}_label`, {
+                      defaultValue: `Keep ${days} days`,
+                    })}
+                  </strong>
+                  <span>
+                    {t(`usage_maintenance.retention_${days}_hint`, {
+                      defaultValue:
+                        days === 7
+                          ? 'Lowest storage use'
+                          : days === 30
+                            ? 'Recommended default'
+                            : 'More local history',
+                    })}
+                  </span>
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`${styles.retentionOption} ${
+                  retentionSelection === 'custom' ? styles.retentionOptionActive : ''
+                }`}
+                aria-pressed={retentionSelection === 'custom'}
+                disabled={working}
+                onClick={() => selectRetention('custom')}
+              >
+                <strong>
+                  {t('usage_maintenance.retention_custom_label', { defaultValue: 'Custom date' })}
+                </strong>
+                <span>
+                  {t('usage_maintenance.retention_custom_hint', {
+                    defaultValue: 'Choose an exact cutoff',
+                  })}
                 </span>
-                <span className={styles.metricValue}>{preview.event_count.toLocaleString()}</span>
+              </button>
+            </div>
+            {retentionSelection === 'custom' ? (
+              <div className={styles.dateField}>
+                <Input
+                  type="datetime-local"
+                  label={t('usage_maintenance.cutoff', { defaultValue: 'Archive events before' })}
+                  hint={t('usage_maintenance.custom_cutoff_hint', {
+                    defaultValue: 'The cutoff must be in the past.',
+                  })}
+                  max={toLocalDateTimeValue(referenceNowMS)}
+                  value={customCutoff}
+                  disabled={working}
+                  error={!cutoffTimestamp ? (previewError ?? undefined) : undefined}
+                  onChange={(event) => updateCustomCutoff(event.target.value)}
+                />
               </div>
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>
-                  {t('usage_maintenance.preview_bytes', { defaultValue: 'Estimated size' })}
+            ) : null}
+            <div className={styles.policyFacts}>
+              <div className={styles.policyFact}>
+                <span>
+                  {t('usage_maintenance.raw_range_label', {
+                    defaultValue: 'Current raw data range',
+                  })}
                 </span>
-                <span className={styles.metricValue}>
-                  {formatFileSize(preview.estimated_bytes)}
-                </span>
+                <strong>{rawRangeSummary}</strong>
+                {maintenance ? (
+                  <small>
+                    {t('usage_maintenance.raw_range_count', {
+                      defaultValue: '{{count}} raw events',
+                      count: maintenance.raw_event_count.toLocaleString(i18n.language),
+                    })}
+                  </small>
+                ) : null}
               </div>
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>
-                  {t('usage_maintenance.preview_range', { defaultValue: 'Timestamp range' })}
+              <div className={styles.policyFact}>
+                <span>
+                  {t('usage_maintenance.resolved_cutoff_label', {
+                    defaultValue: 'Resolved archive cutoff',
+                  })}
                 </span>
-                <span className={styles.metricValue}>
-                  {formatTime(preview.min_timestamp_ms)} – {formatTime(preview.max_timestamp_ms)}
-                </span>
+                <strong>{formatTime(resolvedCutoffTimestamp)}</strong>
+                <small>
+                  {t('usage_maintenance.resolved_cutoff_hint', {
+                    defaultValue: 'Older events are archived; newer events stay online.',
+                  })}
+                </small>
               </div>
             </div>
-            <Button onClick={confirmCreate} disabled={working || preview.event_count <= 0}>
-              {t('usage_maintenance.create', { defaultValue: 'Create archive run' })}
-            </Button>
           </div>
-        ) : null}
+          <div className={styles.impactCard} aria-live="polite">
+            <div className={styles.impactHeader}>
+              <div>
+                <span className={styles.impactEyebrow}>
+                  {t('usage_maintenance.preview', { defaultValue: 'Impact preview' })}
+                </span>
+                <h3>
+                  {t('usage_maintenance.preview_title', {
+                    defaultValue: 'What will be archived',
+                  })}
+                </h3>
+              </div>
+              {previewLoading ? (
+                <span className={styles.previewLoading}>
+                  <span className="loading-spinner" aria-hidden="true" />
+                  {t('usage_maintenance.preview_loading', { defaultValue: 'Calculating…' })}
+                </span>
+              ) : null}
+            </div>
+            {guidedArchiveStage !== 'idle' ? (
+              <div className={styles.guidedProgress} aria-live="polite">
+                <div className={styles.guidedProgressHeader}>
+                  <strong>{guidedStageLabel(guidedArchiveStage)}</strong>
+                  {guidedArchiveRunId ? (
+                    <span className={styles.muted}>
+                      {t('usage_maintenance.archive_task_label', {
+                        defaultValue: 'Task {{runId}}',
+                        runId: guidedArchiveRunId,
+                      })}
+                    </span>
+                  ) : null}
+                </div>
+                <div className={styles.guidedSteps}>
+                  {(['archive', 'verify', 'delete'] as const).map((step) => {
+                    const state =
+                      guidedArchiveStage === 'complete'
+                        ? step === 'delete'
+                          ? 'current'
+                          : 'complete'
+                        : guidedArchiveStage === 'attention'
+                          ? 'pending'
+                          : step === 'archive'
+                            ? guidedArchiveStage === 'creating' ||
+                              guidedArchiveStage === 'archiving'
+                              ? 'current'
+                              : 'complete'
+                            : step === 'verify'
+                              ? guidedArchiveStage === 'verifying'
+                                ? 'current'
+                                : 'pending'
+                              : 'pending';
+                    return (
+                      <div
+                        key={step}
+                        className={`${styles.guidedStep} ${styles[`guidedStep_${state}`]}`}
+                      >
+                        <span className={styles.guidedStepMarker}>
+                          {state === 'complete' ? '✓' : ''}
+                        </span>
+                        <span>
+                          {t(`usage_maintenance.guided_step_${step}`, {
+                            defaultValue:
+                              step === 'archive'
+                                ? 'Archive'
+                                : step === 'verify'
+                                  ? 'Verify'
+                                  : 'Optional delete',
+                          })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {guidedArchiveStage !== 'complete' ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={cancelGuidedArchive}
+                    disabled={guidedArchiveStage === 'attention'}
+                  >
+                    {t('usage_maintenance.archive_prepare_stop', { defaultValue: 'Stop waiting' })}
+                  </Button>
+                ) : (
+                  <p className={styles.guidedNote}>
+                    {t('usage_maintenance.archive_prepare_no_delete', {
+                      defaultValue:
+                        'Raw events are unchanged. Delete them only from the separate action.',
+                    })}
+                  </p>
+                )}
+              </div>
+            ) : null}
+            {previewError && cutoffTimestamp ? (
+              <div className={styles.previewError}>
+                <p>{previewError}</p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPreviewRefreshToken((value) => value + 1)}
+                  disabled={working}
+                >
+                  {t('usage_maintenance.preview_retry', { defaultValue: 'Retry calculation' })}
+                </Button>
+              </div>
+            ) : null}
+            {!previewLoading && !previewError && preview?.event_count === 0 ? (
+              <div className={styles.emptyImpact}>
+                <strong>
+                  {t('usage_maintenance.preview_empty_title', {
+                    defaultValue: 'No events match this retention policy',
+                  })}
+                </strong>
+                <p>
+                  {rawEventRange?.kind === 'empty'
+                    ? t('usage_maintenance.preview_empty_no_data', {
+                        defaultValue:
+                          'There is no raw usage data to archive yet. Import or collect events first.',
+                      })
+                    : hasArchivedRawEvents
+                      ? t('usage_maintenance.preview_empty_archived', {
+                          defaultValue:
+                            'Some older raw events are already protected by an archive. Review archive history before changing the retention period.',
+                        })
+                    : recommendedPresetAvailable
+                      ? t('usage_maintenance.preview_empty_recommendation', {
+                          defaultValue:
+                            'The oldest raw event is {{oldest}}. Keep {{days}} days to include older events while preserving recent data.',
+                          oldest:
+                            rawEventRange?.kind === 'available'
+                              ? formatTime(rawEventRange.minTimestampMS)
+                              : '-',
+                          days: recommendedRetentionDays,
+                        })
+                      : rawEventRange?.kind === 'available'
+                        ? t('usage_maintenance.preview_empty_recent', {
+                            defaultValue:
+                              'All raw events are newer than the standard retention presets. Use a custom date only if you intentionally want to archive recent data.',
+                          })
+                        : t('usage_maintenance.preview_empty_generic', {
+                            defaultValue:
+                              'Try a shorter retention period or choose a custom cutoff after the oldest event.',
+                          })}
+                </p>
+                {recommendedPresetAvailable ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => selectRetention(recommendedRetentionDays)}
+                    disabled={working}
+                  >
+                    {t('usage_maintenance.use_recommended_retention', {
+                      defaultValue: 'Keep {{days}} days',
+                      days: recommendedRetentionDays,
+                    })}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {!previewLoading && !previewError && preview && preview.event_count > 0 ? (
+              <>
+                <div className={styles.previewGrid}>
+                  <div className={styles.metric}>
+                    <span className={styles.metricLabel}>
+                      {t('usage_maintenance.preview_events', { defaultValue: 'Eligible events' })}
+                    </span>
+                    <span className={styles.metricValue}>
+                      {preview.event_count.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.metricLabel}>
+                      {t('usage_maintenance.preview_bytes', { defaultValue: 'Estimated size' })}
+                    </span>
+                    <span className={styles.metricValue}>
+                      {formatFileSize(preview.estimated_bytes)}
+                    </span>
+                  </div>
+                  <div className={styles.metric}>
+                    <span className={styles.metricLabel}>
+                      {t('usage_maintenance.preview_range', { defaultValue: 'Timestamp range' })}
+                    </span>
+                    <span className={styles.metricValue}>
+                      {formatTime(preview.min_timestamp_ms)} –{' '}
+                      {formatTime(preview.max_timestamp_ms)}
+                    </span>
+                  </div>
+                </div>
+                {createBlockedByMaintenance ? (
+                  <p className={styles.busyHint}>
+                    {t('usage_maintenance.create_blocked_active', {
+                      defaultValue:
+                        'Finish or recover the active maintenance task before starting another archive.',
+                    })}
+                  </p>
+                ) : archiveReadinessPending ? (
+                  <p className={styles.busyHint}>{archiveReadinessHint}</p>
+                ) : null}
+                <Button
+                  onClick={confirmCreate}
+                  disabled={working || createBlockedByMaintenance || archiveReadinessPending}
+                  fullWidth
+                >
+                  {t('usage_maintenance.create', { defaultValue: 'Archive and verify' })}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        {deleteReadinessHint ? <p className={styles.readinessHint}>{deleteReadinessHint}</p> : null}
+        <div className={styles.historyHeader}>
+          <div>
+            <h3>{t('usage_maintenance.archive_title', { defaultValue: 'Archive history' })}</h3>
+            <p>
+              {t('usage_maintenance.archive_hint', {
+                defaultValue: 'Archive first, delete only after verification.',
+              })}
+            </p>
+          </div>
+        </div>
         <div className={styles.runList}>
           {archives.length === 0 ? (
             <p className={styles.muted}>
@@ -760,17 +1481,27 @@ export function UsageMaintenancePage() {
           {archives.map((run) => {
             const action = statusAction(run.status);
             const destructive = action ? actionIsDestructive(run, action) : false;
+            const waitingForMigration = Boolean(
+              action && archiveReadinessPending && actionRequiresMigrationReady(run, action)
+            );
+            const presentationStage = getArchiveRunPresentationStage(run);
             return (
               <div className={styles.run} key={run.id}>
                 <div className={styles.runMain}>
                   <div className={styles.runTitle}>
-                    <span>{run.id}</span>
                     <span
-                      className={`${styles.badge} ${runIsActive(run) ? styles.badgeActive : ''}`}
+                      className={`${styles.badge} ${
+                        presentationStage !== 'completed' ? styles.badgeActive : ''
+                      } ${presentationStage === 'attention' ? styles.badgeAttention : ''}`}
                     >
-                      {archiveStatusLabel(run.status)}
+                      {archiveStageLabel(presentationStage)}
                     </span>
-                    <span className={styles.badge}>{archiveModeLabel(run.mode)}</span>
+                    <strong>
+                      {t('usage_maintenance.run_title', {
+                        defaultValue: 'Archive before {{cutoff}}',
+                        cutoff: formatTime(run.cutoff_timestamp_ms),
+                      })}
+                    </strong>
                   </div>
                   <div className={styles.runMeta}>
                     <span>
@@ -780,17 +1511,80 @@ export function UsageMaintenancePage() {
                     <span>{formatFileSize(run.estimated_bytes)}</span>
                     <span>{formatTime(run.created_at_ms)}</span>
                   </div>
+                  <div
+                    className={styles.runSteps}
+                    aria-label={t('usage_maintenance.run_steps_label', {
+                      defaultValue: 'Archive workflow progress',
+                    })}
+                  >
+                    {(['archive', 'verify', 'delete'] as const).map((step) => {
+                      const state = archiveStepState(presentationStage, step, run.resume_status);
+                      return (
+                        <span
+                          key={step}
+                          className={`${styles.runStep} ${styles[`runStep_${state}`]}`}
+                        >
+                          <span className={styles.runStepMarker}>
+                            {state === 'complete' ? '✓' : ''}
+                          </span>
+                          {t(`usage_maintenance.guided_step_${step}`, {
+                            defaultValue:
+                              step === 'archive'
+                                ? 'Archive'
+                                : step === 'verify'
+                                  ? 'Verify'
+                                  : 'Optional delete',
+                          })}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <details className={styles.technicalDetails}>
+                    <summary>
+                      {t('usage_maintenance.technical_details', {
+                        defaultValue: 'Technical details',
+                      })}
+                    </summary>
+                    <div className={styles.technicalGrid}>
+                      <span>
+                        {t('usage_maintenance.technical_run_id', { defaultValue: 'Task ID' })}
+                      </span>
+                      <strong>{run.id}</strong>
+                      <span>
+                        {t('usage_maintenance.technical_status', { defaultValue: 'Server status' })}
+                      </span>
+                      <strong>{archiveStatusLabel(run.status)}</strong>
+                      <span>{t('usage_maintenance.technical_mode', { defaultValue: 'Mode' })}</span>
+                      <strong>{archiveModeLabel(run.mode)}</strong>
+                      {run.resume_status ? (
+                        <>
+                          <span>
+                            {t('usage_maintenance.technical_resume_status', {
+                              defaultValue: 'Resume stage',
+                            })}
+                          </span>
+                          <strong>{archiveStatusLabel(run.resume_status)}</strong>
+                        </>
+                      ) : null}
+                    </div>
+                  </details>
                 </div>
                 <div className={styles.runActions}>
                   {action ? (
                     <Button
                       size="xs"
                       variant={destructive ? 'danger' : 'secondary'}
-                      disabled={working || (destructive && deleteDisabled)}
-                      title={destructive ? deleteReadinessHint || undefined : undefined}
+                      disabled={working || waitingForMigration || (destructive && deleteDisabled)}
+                      title={
+                        waitingForMigration
+                          ? archiveReadinessHint
+                          : destructive
+                            ? deleteReadinessHint || undefined
+                            : undefined
+                      }
                       onClick={() => confirmAction(run, action)}
                     >
-                      {actionLabel(action)}
+                      {actionLabel(run, action)}
                     </Button>
                   ) : null}
                 </div>
@@ -800,36 +1594,61 @@ export function UsageMaintenancePage() {
         </div>
       </section>
 
-      <section className={styles.notice}>
-        <h2>
-          {t('usage_maintenance.compact_title', { defaultValue: 'Physical compact (offline CLI)' })}
-        </h2>
-        <p>
-          {t('usage_maintenance.compact_description', {
-            defaultValue:
-              'VACUUM is deliberately unavailable online. Stop Manager Server before compacting the SQLite file.',
-          })}
-        </p>
-        <ul>
-          <li>
-            {t('usage_maintenance.compact_backup', {
+      <details className={`${styles.notice} ${styles.advancedSection}`}>
+        <summary>
+          <span>
+            {t('usage_maintenance.compact_advanced_summary', {
+              defaultValue: 'Advanced: reclaim physical SQLite space',
+            })}
+          </span>
+          <span className={styles.badge}>
+            {t('usage_maintenance.compact_offline_badge', {
+              defaultValue: 'Requires stopped server',
+            })}
+          </span>
+        </summary>
+        <div className={styles.advancedContent}>
+          <p>
+            {t('usage_maintenance.compact_description', {
               defaultValue:
-                'Back up usage.sqlite, usage.sqlite-wal, usage.sqlite-shm, data.key, and the usage-archives directory together.',
+                'Logical deletion does not shrink the SQLite file. Stop Manager Server before running the offline compaction command.',
             })}
-          </li>
-          <li>
-            {t('usage_maintenance.compact_command', {
-              defaultValue: 'Run: cpa-manager-plus compact-usage --db-path /path/to/usage.sqlite',
-            })}
-          </li>
-          <li>
-            {t('usage_maintenance.compact_restore', {
-              defaultValue:
-                'Restore the complete backup set before troubleshooting a failed checkpoint or integrity check.',
-            })}
-          </li>
-        </ul>
-      </section>
+          </p>
+          {maintenance ? (
+            <div className={styles.compactFacts}>
+              <span>
+                {t('usage_maintenance.compact_reclaimable', {
+                  defaultValue: 'Currently reclaimable',
+                })}
+              </span>
+              <strong>{formatFileSize(maintenance.storage.reclaimable_bytes)}</strong>
+              <span>
+                {t('usage_maintenance.compact_total_size', { defaultValue: 'Database set size' })}
+              </span>
+              <strong>{formatFileSize(maintenance.storage.total_bytes)}</strong>
+            </div>
+          ) : null}
+          <ul>
+            <li>
+              {t('usage_maintenance.compact_backup', {
+                defaultValue:
+                  'Back up usage.sqlite, usage.sqlite-wal, usage.sqlite-shm, data.key, and the usage-archives directory together.',
+              })}
+            </li>
+            <li>
+              {t('usage_maintenance.compact_command', {
+                defaultValue: 'Run: cpa-manager-plus compact-usage --db-path /path/to/usage.sqlite',
+              })}
+            </li>
+            <li>
+              {t('usage_maintenance.compact_restore', {
+                defaultValue:
+                  'Restore the complete backup set before troubleshooting a failed checkpoint or integrity check.',
+              })}
+            </li>
+          </ul>
+        </div>
+      </details>
     </div>
   );
 }

@@ -124,8 +124,16 @@ const archive = (
   has_error: status === 'failed',
 });
 
+const archiveStatus = (run = archive('previewed', 'created-run')) => ({
+  run,
+  segments: [],
+});
+
 const maintenance = (overrides: Partial<UsageMaintenanceStatus> = {}): UsageMaintenanceStatus => ({
   raw_event_count: 10,
+  raw_min_timestamp_ms: 1_690_000_000_000,
+  raw_max_timestamp_ms: 1_700_000_000_000,
+  raw_archived_event_count: 0,
   raw_deleted_event_count: 2,
   migration: {
     name: 'usage_cache_accounting_v2',
@@ -184,6 +192,7 @@ const renderResolvedPage = async (status = maintenance(), runs: UsageArchiveRunS
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
   });
   return renderer;
 };
@@ -195,10 +204,26 @@ beforeEach(() => {
   mocks.availability.managerServiceBase = 'http://manager-a.local:18317';
   mocks.managementKey = 'management-key-a';
   mocks.probeUsageMaintenance.mockResolvedValue(undefined);
-  mocks.createUsageArchive.mockResolvedValue({});
-  mocks.resumeUsageArchive.mockResolvedValue({});
-  mocks.verifyUsageArchive.mockResolvedValue({});
-  mocks.deleteUsageArchive.mockResolvedValue({});
+  mocks.previewUsageArchive.mockImplementation((_base: string, cutoffTimestampMS: number) =>
+    Promise.resolve({
+      cutoff_timestamp_ms: cutoffTimestampMS,
+      target_event_id: 100,
+      event_count: 7,
+      estimated_bytes: 2_048,
+      min_timestamp_ms: cutoffTimestampMS - 1_000,
+      max_timestamp_ms: cutoffTimestampMS - 1,
+    })
+  );
+  mocks.createUsageArchive.mockResolvedValue(archiveStatus());
+  mocks.resumeUsageArchive.mockImplementation((_base: string, runId: string) =>
+    Promise.resolve(archiveStatus(archive('archived', runId)))
+  );
+  mocks.verifyUsageArchive.mockImplementation((_base: string, runId: string) =>
+    Promise.resolve(archiveStatus(archive('verified', runId)))
+  );
+  mocks.deleteUsageArchive.mockImplementation((_base: string, runId: string) =>
+    Promise.resolve(archiveStatus(archive('completed', runId)))
+  );
 });
 
 afterEach(() => {
@@ -206,67 +231,364 @@ afterEach(() => {
 });
 
 describe('UsageMaintenancePage', () => {
-  it('invalidates a preview when cutoff changes and creates with the preview cutoff', async () => {
+  it('automatically previews the default and selected retention policy before the guided archive workflow', async () => {
     const renderer = await renderResolvedPage();
-    const firstCutoff = '2026-07-01T12:00';
-    const secondCutoff = '2026-07-02T12:00';
-    const expectedCutoff = new Date(firstCutoff).getTime();
-    mocks.previewUsageArchive.mockResolvedValue({
-      cutoff_timestamp_ms: expectedCutoff,
-      target_event_id: 100,
-      event_count: 7,
-      estimated_bytes: 2_048,
-    });
+    expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(1);
+    const defaultCutoff = mocks.previewUsageArchive.mock.calls[0][1] as number;
 
-    const input = renderer.root.findByType('input');
-    act(() => input.props.onChange({ target: { value: firstCutoff } }));
     await act(async () => {
-      findButtons(renderer, 'Preview')[0].props.onClick();
+      findButtons(renderer, 'Keep 7 days')[0].props.onClick();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(findButtons(renderer, 'Create archive run')).toHaveLength(1);
+    expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(2);
+    const selectedCutoff = mocks.previewUsageArchive.mock.calls[1][1] as number;
+    expect(selectedCutoff).toBeGreaterThan(defaultCutoff);
+    expect(findButtons(renderer, 'Archive and verify')).toHaveLength(1);
 
-    act(() => findButtons(renderer, 'Create archive run')[0].props.onClick());
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
     const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
       onConfirm: () => Promise<void>;
     };
-    act(() => input.props.onChange({ target: { value: secondCutoff } }));
-    expect(findButtons(renderer, 'Create archive run')).toHaveLength(0);
-
     await act(async () => {
       await confirmation.onConfirm();
     });
     expect(mocks.createUsageArchive).toHaveBeenCalledWith(
       'http://manager-a.local:18317',
-      expectedCutoff,
+      selectedCutoff,
       'management-key-a',
       expect.any(AbortSignal)
     );
+    expect(mocks.resumeUsageArchive).toHaveBeenCalledWith(
+      'http://manager-a.local:18317',
+      'created-run',
+      'management-key-a',
+      expect.any(AbortSignal),
+      'archiving'
+    );
+    expect(mocks.verifyUsageArchive).toHaveBeenCalledWith(
+      'http://manager-a.local:18317',
+      'created-run',
+      'management-key-a',
+      expect.any(AbortSignal)
+    );
+    expect(mocks.createUsageArchive.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.resumeUsageArchive.mock.invocationCallOrder[0]
+    );
+    expect(mocks.resumeUsageArchive.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.verifyUsageArchive.mock.invocationCallOrder[0]
+    );
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    expect(getText(renderer.root)).toContain('Archive verified');
+    act(() => renderer.unmount());
+  });
+
+  it('keeps a recoverable task visible when guided archive writing fails', async () => {
+    const failedRun = {
+      ...archive('failed', 'resume-failed-run'),
+      resume_status: 'archiving',
+    };
+    const renderer = await renderResolvedPage();
+    mocks.resumeUsageArchive.mockRejectedValueOnce(new Error('archive write failed'));
+    mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance({ active_run: failedRun }));
+    mocks.listUsageArchives.mockResolvedValueOnce({ runs: [failedRun] });
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.createUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.resumeUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.verifyUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith('archive write failed', 'error');
+    expect(getText(renderer.root)).toContain('resume-failed-run');
+    expect(getText(renderer.root)).toContain('Needs attention');
+    expect(findButtons(renderer, 'Continue archive')).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
+
+  it('explains and blocks archive creation until accounting migration is ready', async () => {
+    const renderer = await renderResolvedPage(
+      maintenance({
+        readiness: {
+          migration_ready: false,
+          hourly_aggregate_ready: true,
+          archive_delete_enabled: true,
+        },
+      })
+    );
+
+    const createButton = findButtons(renderer, 'Archive and verify')[0];
+    expect(createButton.props.disabled).toBe(true);
+    expect(getText(renderer.root)).toContain(
+      'Archiving becomes available after usage accounting preparation completes.'
+    );
+    expect(mocks.createUsageArchive).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('keeps a recoverable task visible when archive verification fails', async () => {
+    const failedRun = {
+      ...archive('failed', 'verify-failed-run'),
+      resume_status: 'verifying',
+    };
+    const renderer = await renderResolvedPage();
+    mocks.verifyUsageArchive.mockRejectedValueOnce(new Error('archive verification failed'));
+    mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance({ active_run: failedRun }));
+    mocks.listUsageArchives.mockResolvedValueOnce({ runs: [failedRun] });
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.resumeUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.verifyUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith('archive verification failed', 'error');
+    expect(getText(renderer.root)).toContain('verify-failed-run');
+    expect(getText(renderer.root)).toContain('Needs attention');
+    expect(findButtons(renderer, 'Continue verification')).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
+
+  it('does not continue a guided workflow when the create response is malformed', async () => {
+    const renderer = await renderResolvedPage();
+    mocks.createUsageArchive.mockResolvedValueOnce({
+      run: archive('previewed', 'malformed-create-run'),
+    });
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.resumeUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.verifyUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The server returned an invalid archive task response.',
+      'error'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('does not report success when a guided action returns a malformed response', async () => {
+    const renderer = await renderResolvedPage();
+    mocks.verifyUsageArchive.mockResolvedValueOnce({});
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.resumeUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.verifyUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The server returned an invalid archive task response.',
+      'error'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      'Archive created and verified. Raw data was not deleted.',
+      'success'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('aborts the active guided request when the user stops waiting', async () => {
+    const renderer = await renderResolvedPage();
+    const resume = deferred<unknown>();
+    let resumeSignal: AbortSignal | undefined;
+    mocks.resumeUsageArchive.mockImplementationOnce(
+      (_base: string, _runId: string, _key: string, signal: AbortSignal) => {
+        resumeSignal = signal;
+        return resume.promise;
+      }
+    );
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let guidedPromise!: Promise<void>;
+    await act(async () => {
+      guidedPromise = confirmation.onConfirm();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(resumeSignal).toBeDefined();
+    expect(findButtons(renderer, 'Stop waiting')).toHaveLength(1);
+    act(() => findButtons(renderer, 'Stop waiting')[0].props.onClick());
+    expect(resumeSignal?.aborted).toBe(true);
+    expect(findButtons(renderer, 'Stop waiting')).toHaveLength(0);
+
+    await act(async () => {
+      resume.resolve({});
+      await guidedPromise;
+    });
+    expect(mocks.verifyUsageArchive).not.toHaveBeenCalled();
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('does not promise a recoverable task when creation is stopped before its result is known', async () => {
+    const renderer = await renderResolvedPage();
+    const createRequest = deferred<unknown>();
+    let createSignal: AbortSignal | undefined;
+    mocks.createUsageArchive.mockImplementationOnce(
+      (_base: string, _cutoff: number, _key: string, signal: AbortSignal) => {
+        createSignal = signal;
+        return createRequest.promise;
+      }
+    );
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let guidedPromise!: Promise<void>;
+    await act(async () => {
+      guidedPromise = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+
+    expect(createSignal).toBeDefined();
+    act(() => findButtons(renderer, 'Stop waiting')[0].props.onClick());
+    expect(createSignal?.aborted).toBe(true);
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The request was stopped. If an archive task was created, it remains recoverable in history.',
+      'warning'
+    );
+
+    await act(async () => {
+      createRequest.resolve(archiveStatus());
+      await guidedPromise;
+    });
+    expect(mocks.resumeUsageArchive).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('explains a zero-result preview and recommends a usable preset', async () => {
+    const nowMS = Date.now();
+    mocks.previewUsageArchive.mockResolvedValueOnce({
+      cutoff_timestamp_ms: nowMS - 30 * 24 * 60 * 60 * 1000,
+      target_event_id: 0,
+      event_count: 0,
+      estimated_bytes: 0,
+    });
+    const renderer = await renderResolvedPage(
+      maintenance({
+        raw_min_timestamp_ms: nowMS - 20 * 24 * 60 * 60 * 1000,
+        raw_max_timestamp_ms: nowMS - 24 * 60 * 60 * 1000,
+      })
+    );
+
+    expect(getText(renderer.root)).toContain('No events match this retention policy');
+    const sevenDayButtons = findButtons(renderer, 'Keep 7 days');
+    expect(sevenDayButtons).toHaveLength(2);
+    await act(async () => {
+      sevenDayButtons[1].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(2);
+    expect(mocks.previewUsageArchive.mock.calls[1][1]).toBeGreaterThan(
+      mocks.previewUsageArchive.mock.calls[0][1]
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('does not recommend an already-archived raw range when the preview is empty', async () => {
+    const nowMS = Date.now();
+    mocks.previewUsageArchive.mockResolvedValueOnce({
+      cutoff_timestamp_ms: nowMS - 30 * 24 * 60 * 60 * 1000,
+      target_event_id: 0,
+      event_count: 0,
+      estimated_bytes: 0,
+    });
+    const renderer = await renderResolvedPage(
+      maintenance({
+        raw_min_timestamp_ms: nowMS - 20 * 24 * 60 * 60 * 1000,
+        raw_max_timestamp_ms: nowMS - 24 * 60 * 60 * 1000,
+        raw_archived_event_count: 5,
+      })
+    );
+
+    expect(getText(renderer.root)).toContain('already protected by an archive');
+    expect(findButtons(renderer, 'Keep 7 days')).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
+
+  it('accepts maintenance payloads from servers that do not expose the raw time range', async () => {
+    const renderer = await renderResolvedPage(
+      maintenance({
+        raw_min_timestamp_ms: undefined,
+        raw_max_timestamp_ms: undefined,
+        raw_archived_event_count: undefined,
+      })
+    );
+    expect(getText(renderer.root)).toContain('Time range unavailable on this server version');
+    expect(getText(renderer.root)).not.toContain('older than the usage maintenance API');
+    act(() => renderer.unmount());
+  });
+
+  it('debounces custom cutoffs and refuses a future date before requesting a preview', async () => {
+    vi.useFakeTimers();
+    const renderer = await renderResolvedPage();
+    const initialPreviewCalls = mocks.previewUsageArchive.mock.calls.length;
+
+    act(() => findButtons(renderer, 'Custom date')[0].props.onClick());
+    const input = renderer.root.findByType('input');
+    act(() => input.props.onChange({ target: { value: '2999-01-01T00:00' } }));
+    act(() => vi.advanceTimersByTime(300));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(initialPreviewCalls);
+    expect(getText(renderer.root)).toContain('not in the future');
+
+    act(() => input.props.onChange({ target: { value: '2026-01-01T00:00' } }));
+    act(() => vi.advanceTimersByTime(300));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(initialPreviewCalls + 1);
     act(() => renderer.unmount());
   });
 
   it('reloads persisted previewed state without polling when the create response is lost', async () => {
     vi.useFakeTimers();
-    const renderer = await renderResolvedPage();
     const previewCutoff = 1_700_000_000_000;
-    mocks.previewUsageArchive.mockResolvedValue({
+    mocks.previewUsageArchive.mockResolvedValueOnce({
       cutoff_timestamp_ms: previewCutoff,
       target_event_id: 100,
       event_count: 7,
       estimated_bytes: 2_048,
     });
+    const renderer = await renderResolvedPage();
     const active = archive('previewed', 'persisted-after-timeout');
     mocks.createUsageArchive.mockRejectedValueOnce(new Error('create response lost'));
     mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance({ active_run: active }));
     mocks.listUsageArchives.mockResolvedValueOnce({ runs: [active] });
 
-    await act(async () => {
-      findButtons(renderer, 'Preview')[0].props.onClick();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    act(() => findButtons(renderer, 'Create archive run')[0].props.onClick());
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
     const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
       onConfirm: () => Promise<void>;
     };
@@ -388,24 +710,19 @@ describe('UsageMaintenancePage', () => {
     });
     const renderer = await renderResolvedPage();
 
-    await act(async () => {
-      findButtons(renderer, 'Preview')[0].props.onClick();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
     expect(getText(renderer.root)).toContain('older than the usage maintenance API');
-    expect(findButtons(renderer, 'Create archive run')).toHaveLength(0);
+    expect(findButtons(renderer, 'Archive and verify')).toHaveLength(0);
     expect(mocks.showNotification).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 
-  it('offers Resume for verifying and deleting runs', async () => {
+  it('offers stage-specific continuation actions for verifying and deleting runs', async () => {
     const renderer = await renderResolvedPage(maintenance(), [
       archive('verifying'),
       archive('deleting'),
     ]);
-    expect(findButtons(renderer, 'Resume')).toHaveLength(2);
+    expect(findButtons(renderer, 'Continue verification')).toHaveLength(1);
+    expect(findButtons(renderer, 'Continue deletion')).toHaveLength(1);
     act(() => renderer.unmount());
   });
 
@@ -428,10 +745,11 @@ describe('UsageMaintenancePage', () => {
     );
     const verifiedBadges = renderer.root
       .findAllByType('span')
-      .filter((node) => getText(node) === 'translated:usage_maintenance.run_status_verified');
+      .filter((node) => getText(node) === 'Archive verified');
     expect(verifiedBadges).toHaveLength(2);
-    expect(verifiedBadges[0].props.className).not.toContain('badgeActive');
-    expect(verifiedBadges[1].props.className).toContain('badgeActive');
+    expect(verifiedBadges.every((badge) => badge.props.className.includes('badgeActive'))).toBe(
+      true
+    );
     act(() => renderer.unmount());
   });
 
@@ -463,6 +781,137 @@ describe('UsageMaintenancePage', () => {
     act(() => renderer.unmount());
   });
 
+  it('validates the resulting stage of a separate history action before reporting success', async () => {
+    const run = archive('verified', 'wrong-delete-stage-run');
+    const renderer = await renderResolvedPage(maintenance(), [run]);
+    mocks.deleteUsageArchive.mockResolvedValueOnce(archiveStatus(run));
+
+    act(() => findButtons(renderer, 'Delete raw')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.deleteUsageArchive).toHaveBeenCalledTimes(1);
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The server returned an invalid archive task response.',
+      'error'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      'Logical deletion completed.',
+      'success'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('accepts and warns about a delete completed concurrently with verification', async () => {
+    const run = archive('archived', 'concurrent-verify-run');
+    const renderer = await renderResolvedPage(maintenance(), [run]);
+    mocks.verifyUsageArchive.mockResolvedValueOnce(archiveStatus(archive('completed', run.id)));
+
+    await act(async () => {
+      findButtons(renderer, 'Verify archive')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'This task advanced to raw-data deletion in another session. Its latest state is shown in archive history.',
+      'warning'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalledWith('Archive run updated.', 'success');
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      'The server returned an invalid archive task response.',
+      'error'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('binds a resume request to its displayed stage before accepting a concurrent delete', async () => {
+    const run = { ...archive('failed', 'stale-resume-run'), resume_status: 'verifying' };
+    const renderer = await renderResolvedPage(maintenance(), [run]);
+    mocks.resumeUsageArchive.mockResolvedValueOnce(
+      archiveStatus(archive('completed', run.id))
+    );
+
+    await act(async () => {
+      findButtons(renderer, 'Continue verification')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.resumeUsageArchive).toHaveBeenCalledWith(
+      'http://manager-a.local:18317',
+      run.id,
+      'management-key-a',
+      expect.any(AbortSignal),
+      'verifying'
+    );
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'This task advanced to raw-data deletion in another session. Its latest state is shown in archive history.',
+      'warning'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalledWith('Archive run updated.', 'success');
+    act(() => renderer.unmount());
+  });
+
+  it('clears stale guided status after the same task is continued from history', async () => {
+    const failedRun = {
+      ...archive('failed', 'created-run'),
+      resume_status: 'verifying',
+    };
+    const verifiedRun = archive('verified', failedRun.id);
+    const renderer = await renderResolvedPage();
+    mocks.verifyUsageArchive.mockRejectedValueOnce(new Error('archive verification failed'));
+    mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance({ active_run: failedRun }));
+    mocks.listUsageArchives.mockResolvedValueOnce({ runs: [failedRun] });
+
+    act(() => findButtons(renderer, 'Archive and verify')[0].props.onClick());
+    const createConfirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await createConfirmation.onConfirm();
+    });
+    expect(getText(renderer.root)).toContain('Needs attention');
+
+    mocks.resumeUsageArchive.mockResolvedValueOnce(archiveStatus(verifiedRun));
+    mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance({ active_run: verifiedRun }));
+    mocks.listUsageArchives.mockResolvedValueOnce({ runs: [verifiedRun] });
+    await act(async () => {
+      findButtons(renderer, 'Continue verification')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getText(renderer.root)).not.toContain('Needs attention');
+    expect(getText(renderer.root)).toContain('Archive verified');
+    act(() => renderer.unmount());
+  });
+
+  it('recalculates the impact preview after a history action changes maintenance state', async () => {
+    const run = archive('verified', 'refresh-preview-run');
+    const renderer = await renderResolvedPage(maintenance(), [run]);
+    const initialPreviewCalls = mocks.previewUsageArchive.mock.calls.length;
+
+    act(() => findButtons(renderer, 'Delete raw')[0].props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.previewUsageArchive.mock.calls.length).toBeGreaterThan(initialPreviewCalls);
+    act(() => renderer.unmount());
+  });
+
   it('requires destructive confirmation before resuming delete stages', async () => {
     const deletingRun = { ...archive('deleting', 'deleting-run'), deleted_event_count: 3 };
     const failedDeletingRun = {
@@ -471,7 +920,10 @@ describe('UsageMaintenancePage', () => {
       deleted_event_count: 4,
     };
     const renderer = await renderResolvedPage(maintenance(), [deletingRun, failedDeletingRun]);
-    const resumeButtons = findButtons(renderer, 'Resume');
+    mocks.resumeUsageArchive.mockImplementation((_base: string, runId: string) =>
+      Promise.resolve(archiveStatus(archive('completed', runId)))
+    );
+    const resumeButtons = findButtons(renderer, 'Continue deletion');
     expect(resumeButtons).toHaveLength(2);
     expect(resumeButtons.every((button) => button.props.className.includes('btn-danger'))).toBe(
       true
@@ -499,14 +951,16 @@ describe('UsageMaintenancePage', () => {
       'http://manager-a.local:18317',
       deletingRun.id,
       'management-key-a',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      'deleting'
     );
     expect(mocks.resumeUsageArchive).toHaveBeenNthCalledWith(
       2,
       'http://manager-a.local:18317',
       failedDeletingRun.id,
       'management-key-a',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      'deleting'
     );
     expect(mocks.showNotification).toHaveBeenCalledWith('Logical deletion completed.', 'success');
     act(() => renderer.unmount());
@@ -522,7 +976,10 @@ describe('UsageMaintenancePage', () => {
         archive_delete_enabled: true,
       },
     });
-    const renderer = await renderResolvedPage(pending, [archive('verified')]);
+    const renderer = await renderResolvedPage(pending, [
+      archive('verified'),
+      { ...archive('failed', 'pending-archive-run'), resume_status: 'archiving' },
+    ]);
     let deleteButton = findButtons(renderer, 'Delete raw')[0];
     expect(deleteButton.props.disabled).toBe(false);
     expect(deleteButton.props.title).toContain('exact coverage');
@@ -533,6 +990,13 @@ describe('UsageMaintenancePage', () => {
       'translated:usage_maintenance.aggregate_status_catching_up'
     );
     expect(getText(renderer.root)).toContain('Hourly aggregate');
+    const pendingArchiveButton = findButtons(renderer, 'Continue archive').find(
+      (button) => button.props.title
+    );
+    expect(pendingArchiveButton?.props.disabled).toBe(true);
+    expect(String(pendingArchiveButton?.props.title)).toContain(
+      'usage accounting preparation completes'
+    );
 
     act(() => renderer.unmount());
     const clearingRenderer = await renderResolvedPage(
@@ -566,7 +1030,7 @@ describe('UsageMaintenancePage', () => {
     deleteButton = findButtons(disabledRenderer, 'Delete raw')[0];
     expect(deleteButton.props.disabled).toBe(true);
     expect(deleteButton.props.title).toContain('disabled');
-    const destructiveResumeButtons = findButtons(disabledRenderer, 'Resume');
+    const destructiveResumeButtons = findButtons(disabledRenderer, 'Continue deletion');
     expect(destructiveResumeButtons).toHaveLength(2);
     expect(destructiveResumeButtons.every((button) => button.props.disabled)).toBe(true);
     expect(
@@ -655,15 +1119,24 @@ describe('UsageMaintenancePage', () => {
 
   it('aborts and ignores a pending preview when base and key change', async () => {
     const previewRequest = deferred<UsageArchivePreview>();
-    mocks.previewUsageArchive.mockImplementationOnce(() => previewRequest.promise);
+    mocks.previewUsageArchive.mockImplementation((base: string) =>
+      base.includes('manager-a')
+        ? previewRequest.promise
+        : Promise.resolve({
+            cutoff_timestamp_ms: 1_700_000_000_000,
+            target_event_id: 0,
+            event_count: 0,
+            estimated_bytes: 0,
+          })
+    );
     const renderer = await renderResolvedPage();
-    act(() => findButtons(renderer, 'Preview')[0].props.onClick());
     const oldSignal = mocks.previewUsageArchive.mock.calls[0][3] as AbortSignal;
 
     mocks.availability.managerServiceBase = 'http://manager-b.local:18317';
     mocks.managementKey = 'management-key-b';
     await act(async () => {
       renderer.update(<UsageMaintenancePage />);
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -678,8 +1151,7 @@ describe('UsageMaintenancePage', () => {
       });
       await Promise.resolve();
     });
-    expect(findButtons(renderer, 'Create archive run')).toHaveLength(0);
-    expect(findButtons(renderer, 'Preview')[0].props.disabled).toBe(false);
+    expect(findButtons(renderer, 'Archive and verify')).toHaveLength(0);
     expect(mocks.showNotification).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
@@ -689,7 +1161,7 @@ describe('UsageMaintenancePage', () => {
     const oldResume = deferred<unknown>();
     mocks.resumeUsageArchive.mockImplementationOnce(() => oldResume.promise);
     const renderer = await renderResolvedPage(maintenance({ active_run: oldRun }), [oldRun]);
-    act(() => findButtons(renderer, 'Resume')[0].props.onClick());
+    act(() => findButtons(renderer, 'Continue archive')[0].props.onClick());
     const oldSignal = mocks.resumeUsageArchive.mock.calls[0][3] as AbortSignal;
 
     mocks.availability.managerServiceBase = 'http://manager-b.local:18317';
@@ -708,9 +1180,14 @@ describe('UsageMaintenancePage', () => {
 
     const newPreview = deferred<UsageArchivePreview>();
     mocks.previewUsageArchive.mockImplementationOnce(() => newPreview.promise);
-    act(() => findButtons(renderer, 'Preview')[0].props.onClick());
-    const newSignal = mocks.previewUsageArchive.mock.calls[0][3] as AbortSignal;
-    expect(findButtons(renderer, 'Preview')[0].props.disabled).toBe(true);
+    await act(async () => {
+      findButtons(renderer, 'Keep 7 days')[0].props.onClick();
+      await Promise.resolve();
+    });
+    const newSignal = mocks.previewUsageArchive.mock.calls[
+      mocks.previewUsageArchive.mock.calls.length - 1
+    ][3] as AbortSignal;
+    expect(getText(renderer.root)).toContain('Calculating…');
 
     await act(async () => {
       oldResume.resolve({});
@@ -718,7 +1195,7 @@ describe('UsageMaintenancePage', () => {
       await Promise.resolve();
     });
     expect(newSignal.aborted).toBe(false);
-    expect(findButtons(renderer, 'Preview')[0].props.disabled).toBe(true);
+    expect(getText(renderer.root)).toContain('Calculating…');
     expect(mocks.getUsageMaintenance).toHaveBeenCalledTimes(2);
     expect(mocks.showNotification).not.toHaveBeenCalled();
 
@@ -731,7 +1208,7 @@ describe('UsageMaintenancePage', () => {
       });
       await Promise.resolve();
     });
-    expect(findButtons(renderer, 'Create archive run')).toHaveLength(1);
+    expect(findButtons(renderer, 'Archive and verify')).toHaveLength(1);
     act(() => renderer.unmount());
   });
 
@@ -768,12 +1245,7 @@ describe('UsageMaintenancePage', () => {
       estimated_bytes: 2_048,
     });
     const createRenderer = await renderResolvedPage();
-    await act(async () => {
-      findButtons(createRenderer, 'Preview')[0].props.onClick();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    act(() => findButtons(createRenderer, 'Create archive run')[0].props.onClick());
+    act(() => findButtons(createRenderer, 'Archive and verify')[0].props.onClick());
     const createConfirmation = mocks.showConfirmation.mock.calls[0][0] as {
       onConfirm: () => Promise<void>;
     };
@@ -865,7 +1337,7 @@ describe('UsageMaintenancePage', () => {
     mocks.resumeUsageArchive.mockImplementationOnce(() => resumeFailure.promise);
     const failedRenderer = await renderResolvedPage(maintenance({ active_run: active }), [active]);
     act(() => {
-      findButtons(failedRenderer, 'Resume')[0].props.onClick();
+      findButtons(failedRenderer, 'Continue verification')[0].props.onClick();
     });
     act(() => vi.advanceTimersByTime(5_000));
     expect(mocks.getUsageMaintenance).toHaveBeenCalledTimes(1);

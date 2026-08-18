@@ -149,6 +149,9 @@ type MaintenanceReadiness struct {
 
 type MaintenanceStatus struct {
 	RawEventCount                int64                       `json:"raw_event_count"`
+	RawMinTimestampMS            int64                       `json:"raw_min_timestamp_ms"`
+	RawMaxTimestampMS            int64                       `json:"raw_max_timestamp_ms"`
+	RawArchivedEventCount        int64                       `json:"raw_archived_event_count"`
 	RawDeletedEventCount         int64                       `json:"raw_deleted_event_count"`
 	ActiveRun                    *ArchiveRunSummary          `json:"active_run,omitempty"`
 	ActiveLock                   *MaintenanceLockSummary     `json:"active_lock,omitempty"`
@@ -374,8 +377,11 @@ func (s *Service) MaintenanceStatus(ctx context.Context) (MaintenanceStatus, err
 
 	aggregateTargetEventID := max(aggregate.TargetEventID, latestEventID)
 	status := MaintenanceStatus{
-		RawEventCount:        counts.RawEventCount,
-		RawDeletedEventCount: counts.RawDeletedEventCount,
+		RawEventCount:         counts.RawEventCount,
+		RawMinTimestampMS:     counts.RawMinTimestampMS,
+		RawMaxTimestampMS:     counts.RawMaxTimestampMS,
+		RawArchivedEventCount: counts.RawArchivedEventCount,
+		RawDeletedEventCount:  counts.RawDeletedEventCount,
 		Migration: MaintenanceMigrationSummary{
 			Name:          migration.Name,
 			Status:        migration.Status,
@@ -434,25 +440,57 @@ func (s *Service) ResumeArchive(ctx context.Context, runID string) (ArchiveStatu
 	}
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	status, err := manager.status(ctx, runID)
+	return manager.resumeLocked(ctx, runID, "")
+}
+
+func (s *Service) ResumeArchiveAtStage(ctx context.Context, runID, expectedStage string) (ArchiveStatus, error) {
+	if archiveResumeStageOrder(expectedStage) == 0 {
+		return ArchiveStatus{}, fmt.Errorf("%w: invalid expected archive resume stage %q", ErrArchiveInvalidRequest, expectedStage)
+	}
+	manager, err := s.requireArchiveManager()
 	if err != nil {
 		return ArchiveStatus{}, err
 	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.resumeLocked(ctx, runID, expectedStage)
+}
+
+func (m *archiveManager) resumeLocked(ctx context.Context, runID, expectedStage string) (ArchiveStatus, error) {
+	status, err := m.status(ctx, runID)
+	if err != nil {
+		return ArchiveStatus{}, err
+	}
+	if expectedStage != "" {
+		currentStageOrder := archiveRunResumeStageOrder(status.Run)
+		expectedStageOrder := archiveResumeStageOrder(expectedStage)
+		if currentStageOrder > expectedStageOrder {
+			return status, nil
+		}
+		if currentStageOrder == 0 || currentStageOrder < expectedStageOrder {
+			return ArchiveStatus{}, fmt.Errorf(
+				"%w: cannot resume expected %s stage from %s",
+				ErrArchiveInvalidState,
+				expectedStage,
+				status.Run.Status,
+			)
+		}
+	}
 	switch status.Run.Status {
 	case usagearchive.StatusPreviewed, usagearchive.StatusArchiving:
-		return manager.archiveLocked(ctx, status.Run.ID)
+		return m.archiveLocked(ctx, status.Run.ID)
 	case usagearchive.StatusVerifying:
-		return manager.verifyLocked(ctx, status.Run.ID)
+		return m.verifyLocked(ctx, status.Run.ID)
 	case usagearchive.StatusDeleting:
-		return manager.deleteLocked(ctx, status.Run.ID)
+		return m.deleteLocked(ctx, status.Run.ID)
 	case usagearchive.StatusFailed:
 		switch status.Run.ResumeStatus {
 		case usagearchive.StatusArchiving:
-			return manager.archiveLocked(ctx, status.Run.ID)
+			return m.archiveLocked(ctx, status.Run.ID)
 		case usagearchive.StatusVerifying:
-			return manager.verifyLocked(ctx, status.Run.ID)
+			return m.verifyLocked(ctx, status.Run.ID)
 		case usagearchive.StatusDeleting:
-			return manager.deleteLocked(ctx, status.Run.ID)
+			return m.deleteLocked(ctx, status.Run.ID)
 		default:
 			return ArchiveStatus{}, fmt.Errorf("%w: failed run has invalid resume status %q", ErrArchiveInvalidState, status.Run.ResumeStatus)
 		}
@@ -460,6 +498,36 @@ func (s *Service) ResumeArchive(ctx context.Context, runID string) (ArchiveStatu
 		return status, nil
 	default:
 		return ArchiveStatus{}, fmt.Errorf("%w: cannot resume run in %s", ErrArchiveInvalidState, status.Run.Status)
+	}
+}
+
+func archiveResumeStageOrder(stage string) int {
+	switch stage {
+	case usagearchive.StatusArchiving:
+		return 1
+	case usagearchive.StatusVerifying:
+		return 2
+	case usagearchive.StatusDeleting:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func archiveRunResumeStageOrder(run store.UsageArchiveRun) int {
+	switch run.Status {
+	case usagearchive.StatusPreviewed, usagearchive.StatusArchiving:
+		return archiveResumeStageOrder(usagearchive.StatusArchiving)
+	case usagearchive.StatusArchived, usagearchive.StatusVerifying:
+		return archiveResumeStageOrder(usagearchive.StatusVerifying)
+	case usagearchive.StatusVerified, usagearchive.StatusDeleting:
+		return archiveResumeStageOrder(usagearchive.StatusDeleting)
+	case usagearchive.StatusCompleted:
+		return 4
+	case usagearchive.StatusFailed:
+		return archiveResumeStageOrder(run.ResumeStatus)
+	default:
+		return 0
 	}
 }
 

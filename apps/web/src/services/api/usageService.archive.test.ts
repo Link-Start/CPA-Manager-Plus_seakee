@@ -6,7 +6,11 @@ vi.mock('@/features/demo/demoMode', async (importOriginal) => ({
   isDemoMode: () => false,
 }));
 
-import { getUsageServiceErrorCode, usageServiceApi } from './usageService';
+import {
+  getUsageServiceErrorCode,
+  usageServiceApi,
+  type UsageMaintenanceStatus,
+} from './usageService';
 
 const head = vi.spyOn(axios, 'head');
 const get = vi.spyOn(axios, 'get');
@@ -125,6 +129,54 @@ describe('usage maintenance capability probe', () => {
     );
   });
 
+  it('returns the optional raw event time range from maintenance status', async () => {
+    const data = {
+      raw_event_count: 2,
+      raw_min_timestamp_ms: 1_000,
+      raw_max_timestamp_ms: 2_000,
+      raw_archived_event_count: 1,
+      raw_deleted_event_count: 0,
+      migration: {
+        name: 'usage_cache_accounting_v2',
+        status: 'completed',
+        last_event_id: 2,
+        target_event_id: 2,
+        processed_rows: 2,
+        changed_rows: 0,
+        updated_at_ms: 2_000,
+      },
+      hourly_aggregate: {
+        name: 'hourly_core',
+        schema_version: 1,
+        status: 'ready',
+        coverage_event_id: 2,
+        target_event_id: 2,
+        updated_at_ms: 2_000,
+      },
+      readiness: {
+        migration_ready: true,
+        hourly_aggregate_ready: true,
+        archive_delete_enabled: true,
+      },
+      storage: {
+        page_size: 4_096,
+        page_count: 10,
+        freelist_count: 0,
+        reclaimable_bytes: 0,
+        database_bytes: 40_960,
+        wal_bytes: 0,
+        shm_bytes: 0,
+        total_bytes: 40_960,
+      },
+      compact_requires_stopped_server: true,
+    } satisfies UsageMaintenanceStatus;
+    get.mockResolvedValue({ ...responseWithStatus(200), data });
+
+    await expect(
+      usageServiceApi.getUsageMaintenance('http://manager.local:18317', 'admin-key')
+    ).resolves.toEqual(data);
+  });
+
   it('preserves stable archive error codes for UI handling', () => {
     for (const code of [
       'usage_archive_invalid_id',
@@ -150,7 +202,8 @@ describe('usage maintenance capability probe', () => {
       'http://manager.local:18317',
       'run/id',
       'admin-key',
-      signal
+      signal,
+      'archiving'
     );
     await usageServiceApi.verifyUsageArchive(
       'http://manager.local:18317',
@@ -177,5 +230,8 @@ describe('usage maintenance capability probe', () => {
         })
       );
     }
+    expect(post.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ params: { expected_stage: 'archiving' } })
+    );
   });
 });

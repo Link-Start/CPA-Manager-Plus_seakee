@@ -518,6 +518,8 @@ export type UsageArchiveRunStatus =
   | 'cancelled'
   | string;
 
+export type UsageArchiveResumeStage = 'archiving' | 'verifying' | 'deleting';
+
 export interface UsageArchivePreview {
   cutoff_timestamp_ms: number;
   target_event_id: number;
@@ -587,6 +589,9 @@ export interface UsageMaintenanceLock {
 
 export interface UsageMaintenanceStatus {
   raw_event_count: number;
+  raw_min_timestamp_ms?: number;
+  raw_max_timestamp_ms?: number;
+  raw_archived_event_count?: number;
   raw_deleted_event_count: number;
   active_run?: UsageArchiveRunSummary;
   active_lock?: UsageMaintenanceLock;
@@ -2713,7 +2718,8 @@ const runUsageArchiveAction = async (
   runId: string,
   action: 'resume' | 'verify' | 'delete',
   managementKey?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  expectedStage?: UsageArchiveResumeStage
 ): Promise<UsageArchiveStatus> =>
   withUsageServiceError(async () => {
     const response = await axios.post<UsageArchiveStatus>(
@@ -2722,6 +2728,7 @@ const runUsageArchiveAction = async (
       {
         timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
         headers: authHeaders(managementKey),
+        params: expectedStage ? { expected_stage: expectedStage } : undefined,
         signal,
       }
     );
@@ -3585,12 +3592,13 @@ export const usageServiceApi = {
     base: string,
     runId: string,
     managementKey?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    expectedStage?: UsageArchiveResumeStage
   ): Promise<UsageArchiveStatus> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return resumeDemoUsageArchive(runId);
     }
-    return runUsageArchiveAction(base, runId, 'resume', managementKey, signal);
+    return runUsageArchiveAction(base, runId, 'resume', managementKey, signal, expectedStage);
   },
 
   verifyUsageArchive: async (
