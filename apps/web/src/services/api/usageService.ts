@@ -1,6 +1,8 @@
 import axios from 'axios';
 import type { UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import {
+  createDemoUsageArchive,
+  deleteDemoUsageArchive,
   getDemoAccountActionCandidates,
   getDemoAccountHistory,
   getDemoAccountWindowUsage,
@@ -15,9 +17,15 @@ import {
   getDemoModelPrices,
   getDemoMonitoringAnalytics,
   getDemoQuotaCooldowns,
+  getDemoUsageArchive,
+  getDemoUsageArchives,
+  getDemoUsageMaintenance,
   getDemoUsagePayload,
   getDemoUsageServiceInfo,
   getDemoUsageServiceStatus,
+  previewDemoUsageArchive,
+  resumeDemoUsageArchive,
+  verifyDemoUsageArchive,
 } from '@/features/demo/demoFixtures';
 import { isDemoMode } from '@/features/demo/demoMode';
 import { hasCodexInspectionStableIdentity } from '@/features/monitoring/model/codexInspectionOwnership';
@@ -59,6 +67,16 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'usage_import_session_quota_exceeded',
   'usage_import_session_limit_exceeded',
   'usage_import_session_unavailable',
+  'usage_archive_invalid_id',
+  'usage_archive_invalid_request',
+  'usage_archive_request_too_large',
+  'usage_archive_no_events',
+  'usage_archive_maintenance_locked',
+  'usage_archive_invalid_state',
+  'usage_archive_coverage_incomplete',
+  'usage_archive_delete_unavailable',
+  'usage_archive_not_found',
+  'usage_archive_unavailable',
 ]);
 
 export interface UsageServiceApiError extends Error {
@@ -486,6 +504,125 @@ export interface UsageImportSession {
   retryable?: boolean;
   error?: string;
   result?: UsageImportResponse;
+}
+
+export type UsageArchiveRunStatus =
+  | 'previewed'
+  | 'archiving'
+  | 'archived'
+  | 'verifying'
+  | 'verified'
+  | 'deleting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | string;
+
+export interface UsageArchivePreview {
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  event_count: number;
+  estimated_bytes: number;
+  min_timestamp_ms?: number;
+  max_timestamp_ms?: number;
+}
+
+// Public archive DTO. Deliberately excludes archive paths, formats, digests,
+// schema metadata, and raw internal errors.
+export interface UsageArchiveRunSummary {
+  id: string;
+  mode: 'manual' | 'retention' | string;
+  status: UsageArchiveRunStatus;
+  resume_status?: UsageArchiveRunStatus;
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  event_count: number;
+  estimated_bytes: number;
+  last_archived_event_id: number;
+  archived_event_count: number;
+  archived_uncompressed_bytes: number;
+  archived_compressed_bytes: number;
+  last_deleted_event_id: number;
+  deleted_event_count: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  started_at_ms?: number;
+  archived_at_ms?: number;
+  verified_at_ms?: number;
+  delete_started_at_ms?: number;
+  completed_at_ms?: number;
+  has_error: boolean;
+}
+
+export interface UsageArchiveSegmentSummary {
+  run_id: string;
+  sequence: number;
+  status: string;
+  first_event_id: number;
+  last_event_id: number;
+  min_timestamp_ms: number;
+  max_timestamp_ms: number;
+  event_count: number;
+  uncompressed_bytes: number;
+  compressed_bytes: number;
+  created_at_ms: number;
+  verified_at_ms?: number;
+}
+
+export interface UsageArchiveStatus {
+  run: UsageArchiveRunSummary;
+  segments: UsageArchiveSegmentSummary[];
+}
+
+export interface UsageArchiveList {
+  runs: UsageArchiveRunSummary[];
+}
+
+export interface UsageMaintenanceLock {
+  run_id: string;
+  operation: string;
+  acquired_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UsageMaintenanceStatus {
+  raw_event_count: number;
+  raw_deleted_event_count: number;
+  active_run?: UsageArchiveRunSummary;
+  active_lock?: UsageMaintenanceLock;
+  migration: {
+    name: string;
+    status: string;
+    last_event_id: number;
+    target_event_id: number;
+    processed_rows: number;
+    changed_rows: number;
+    updated_at_ms: number;
+  };
+  hourly_aggregate: {
+    name: string;
+    schema_version: number;
+    status: string;
+    coverage_event_id: number;
+    target_event_id: number;
+    updated_at_ms: number;
+  };
+  readiness: {
+    migration_ready: boolean;
+    hourly_aggregate_ready: boolean;
+    archive_delete_enabled: boolean;
+  };
+  storage: {
+    page_size: number;
+    page_count: number;
+    freelist_count: number;
+    reclaimable_bytes: number;
+    database_bytes: number;
+    wal_bytes: number;
+    shm_bytes: number;
+    total_bytes: number;
+  };
+  compact_requires_stopped_server: true;
 }
 
 const demoUsageImportSessions = new Map<string, UsageImportSession>();
@@ -1826,9 +1963,37 @@ export interface MonitoringAnalyticsEventsResponse {
   total_count?: number;
 }
 
+export interface MonitoringAnalyticsCoverageRange {
+  scope: 'rolling_30m' | 'drilldown_preview' | string;
+  from_ms: number;
+  to_ms: number;
+  raw_event_count?: number;
+  raw_deleted_event_count: number;
+  min_deleted_timestamp_ms?: number;
+  max_deleted_timestamp_ms?: number;
+}
+
+export interface MonitoringAnalyticsCoverage {
+  scope: 'time_range' | string;
+  mode: 'raw' | 'mixed' | 'aggregate_only' | string;
+  raw_complete: boolean;
+  core_aggregate_used: boolean;
+  raw_event_count?: number;
+  raw_deleted_event_count: number;
+  min_deleted_timestamp_ms: number;
+  max_deleted_timestamp_ms: number;
+  comparison_raw_event_count?: number;
+  comparison_raw_deleted_event_count?: number;
+  comparison_min_deleted_timestamp_ms?: number;
+  comparison_max_deleted_timestamp_ms?: number;
+  auxiliary_ranges?: MonitoringAnalyticsCoverageRange[];
+  fidelity_limitations: string[];
+}
+
 export interface MonitoringAnalyticsResponse {
   generated_at_ms: number;
   granularity: 'hour' | 'day' | string;
+  coverage?: MonitoringAnalyticsCoverage;
   summary?: MonitoringAnalyticsSummary;
   summary_comparison?: MonitoringAnalyticsSummaryComparison;
   timeline?: MonitoringAnalyticsTimelinePoint[];
@@ -1854,6 +2019,7 @@ export interface MonitoringAnalyticsResponse {
 const USAGE_SERVICE_TIMEOUT_MS = 30 * 1000;
 const USAGE_SERVICE_TRANSFER_TIMEOUT_MS = 60 * 1000;
 const USAGE_IMPORT_CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
+const USAGE_ARCHIVE_OPERATION_TIMEOUT_MS = 0;
 const CODEX_INSPECTION_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 export const USAGE_SERVICE_ID = 'cpa-manager-plus';
 export const LEGACY_USAGE_SERVICE_ID = 'cpa-manager';
@@ -2541,6 +2707,26 @@ const getDemoModelPriceSyncResponse = (models?: string[]): ModelPriceSyncRespons
     sourceResults: [{ source: 'demo', models: Object.keys(selectedPrices).length, skipped: 0 }],
   };
 };
+
+const runUsageArchiveAction = async (
+  base: string,
+  runId: string,
+  action: 'resume' | 'verify' | 'delete',
+  managementKey?: string,
+  signal?: AbortSignal
+): Promise<UsageArchiveStatus> =>
+  withUsageServiceError(async () => {
+    const response = await axios.post<UsageArchiveStatus>(
+      buildUrl(base, `/v0/management/usage/archives/${encodeURIComponent(runId)}/${action}`),
+      undefined,
+      {
+        timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+        headers: authHeaders(managementKey),
+        signal,
+      }
+    );
+    return response.data;
+  });
 
 export const usageServiceApi = {
   getInfo: async (base: string): Promise<UsageServiceInfo> => {
@@ -3298,6 +3484,177 @@ export const usageServiceApi = {
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
+
+  previewUsageArchive: async (
+    base: string,
+    cutoffTimestampMs: number,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchivePreview> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return previewDemoUsageArchive(cutoffTimestampMs);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageArchivePreview>(
+        buildUrl(base, '/v0/management/usage/archives/preview'),
+        { cutoff_timestamp_ms: cutoffTimestampMs },
+        {
+          timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  createUsageArchive: async (
+    base: string,
+    cutoffTimestampMs: number,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return createDemoUsageArchive(cutoffTimestampMs);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageArchiveStatus>(
+        buildUrl(base, '/v0/management/usage/archives'),
+        { cutoff_timestamp_ms: cutoffTimestampMs },
+        {
+          timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  listUsageArchives: async (
+    base: string,
+    managementKey?: string,
+    limit = 20,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveList> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageArchives(limit);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageArchiveList>(
+        buildUrl(base, '/v0/management/usage/archives'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          params: { limit },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageArchive(runId);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageArchiveStatus>(
+        buildUrl(base, `/v0/management/usage/archives/${encodeURIComponent(runId)}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  resumeUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return resumeDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'resume', managementKey, signal);
+  },
+
+  verifyUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return verifyDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'verify', managementKey, signal);
+  },
+
+  deleteUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return deleteDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'delete', managementKey, signal);
+  },
+
+  probeUsageMaintenance: async (
+    base: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    if (__DEMO_SITE__ && isDemoMode()) return;
+    return withUsageServiceError(async () => {
+      const response = await axios.head(buildUrl(base, '/v0/management/usage/maintenance'), {
+        timeout: USAGE_SERVICE_TIMEOUT_MS,
+        headers: authHeaders(managementKey),
+        signal,
+      });
+      if (response.status !== 204) {
+        const error = new Error(
+          'This Manager Server does not support usage maintenance.'
+        ) as UsageServiceApiError;
+        error.status = response.status;
+        error.code = 'usage_archive_unavailable';
+        throw error;
+      }
+    });
+  },
+
+  getUsageMaintenance: async (
+    base: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageMaintenanceStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageMaintenance();
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageMaintenanceStatus>(
+        buildUrl(base, '/v0/management/usage/maintenance'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
         }
       );
       return response.data;
