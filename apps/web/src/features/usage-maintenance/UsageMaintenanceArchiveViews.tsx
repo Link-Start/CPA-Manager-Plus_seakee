@@ -486,24 +486,10 @@ export function UsageMaintenanceOverviewView({
               <Button fullWidth variant="secondary" onClick={() => onNavigate('transfer')}>
                 {t('usage_maintenance.transfer_title', { defaultValue: 'Import / export usage' })}
               </Button>
-              <Button
-                fullWidth
-                variant="secondary"
-                disabled
-                title={t('usage_maintenance.phase_pending', {
-                  defaultValue: 'This view is added in the next implementation phase.',
-                })}
-              >
+              <Button fullWidth variant="secondary" onClick={() => onNavigate('advanced')}>
                 {t('usage_maintenance.advanced_title', { defaultValue: 'Advanced maintenance' })}
               </Button>
-              <Button
-                fullWidth
-                variant="ghost"
-                disabled
-                title={t('usage_maintenance.phase_pending', {
-                  defaultValue: 'This view is added in the next implementation phase.',
-                })}
-              >
+              <Button fullWidth variant="ghost" onClick={() => onNavigate('diagnostics')}>
                 {t('usage_maintenance.diagnostics_title', { defaultValue: 'Diagnostics' })}
               </Button>
             </div>

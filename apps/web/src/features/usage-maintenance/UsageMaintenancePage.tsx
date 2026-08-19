@@ -38,6 +38,11 @@ import {
 import { UsageMaintenanceCreateView, type GuidedArchiveStage } from './UsageMaintenanceCreateView';
 import { UsageMaintenanceDeleteConfirmation } from './UsageMaintenanceDeleteConfirmation';
 import { UsageMaintenanceTransferView } from './UsageMaintenanceTransferView';
+import {
+  COMPACT_USAGE_COMMAND,
+  UsageMaintenanceAdvancedView,
+  UsageMaintenanceDiagnosticsView,
+} from './UsageMaintenanceCapabilityViews';
 import styles from './UsageMaintenancePage.module.scss';
 
 const isUnsupportedError = (error: unknown) => {
@@ -1227,6 +1232,26 @@ export function UsageMaintenancePage() {
     setView(nextView);
   };
 
+  const copyCompactCommand = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(COMPACT_USAGE_COMMAND);
+      showNotification(
+        t('usage_maintenance.advanced_copy_success', {
+          defaultValue: 'Offline compact command copied.',
+        }),
+        'success'
+      );
+    } catch {
+      showNotification(
+        t('usage_maintenance.advanced_copy_failed', {
+          defaultValue: 'The command could not be copied. Select it manually from the code block.',
+        }),
+        'warning'
+      );
+    }
+  }, [showNotification, t]);
+
   const openRun = (run: UsageArchiveRunSummary) => {
     const isActive =
       maintenance?.active_run?.id === run.id || archiveProgressStatuses.has(run.status);
@@ -1374,6 +1399,38 @@ export function UsageMaintenancePage() {
           serviceBase={serviceBase}
           managementKey={managementKey}
           onBack={() => navigateTo('overview')}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'advanced') {
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageMaintenanceAdvancedView
+          maintenance={maintenance}
+          working={working}
+          onBack={() => navigateTo('overview')}
+          onRefresh={refreshMaintenance}
+          onCopyCommand={() => void copyCompactCommand()}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'diagnostics') {
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageMaintenanceDiagnosticsView
+          maintenance={maintenance}
+          working={working}
+          onBack={() => navigateTo('overview')}
+          onRefresh={refreshMaintenance}
+          onOpenActive={() => {
+            if (maintenance.active_run) openRun(maintenance.active_run);
+          }}
         />
       </div>
     );

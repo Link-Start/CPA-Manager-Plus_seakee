@@ -257,6 +257,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('UsageMaintenancePage', () => {
@@ -279,6 +280,104 @@ describe('UsageMaintenancePage', () => {
     expect(text).not.toContain('78%');
     expect(findButtons(renderer, 'Create archive task')).toHaveLength(1);
     expect(mocks.previewUsageArchive).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('opens the offline advanced maintenance view from the overview', async () => {
+    const renderer = await renderOverviewPage();
+
+    await act(async () => {
+      findButtons(renderer, 'Advanced maintenance')[0].props.onClick();
+      await Promise.resolve();
+    });
+
+    const text = getText(renderer.root);
+    expect(text).toContain('Advanced maintenance / offline compact');
+    expect(text).toContain('usage.sqlite-wal');
+    expect(text).toContain('the browser never executes it.');
+    expect(text).toContain('Not exposed by API');
+
+    vi.stubGlobal('navigator', {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('clipboard denied')) },
+    });
+    await act(async () => {
+      findButtons(renderer, 'Copy command')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The command could not be copied. Select it manually from the code block.',
+      'warning'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('keeps the last capability snapshot visible and surfaces refresh failures', async () => {
+    const renderer = await renderOverviewPage();
+
+    await act(async () => {
+      findButtons(renderer, 'Diagnostics')[0].props.onClick();
+      await Promise.resolve();
+    });
+    mocks.getUsageMaintenance.mockRejectedValueOnce(new Error('maintenance snapshot failed'));
+
+    await act(async () => {
+      findButtons(renderer, 'Refresh')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getText(renderer.root)).toContain('maintenance snapshot failed');
+    expect(getText(renderer.root)).toContain('Usage maintenance / diagnostics');
+    act(() => renderer.unmount());
+  });
+
+  it('opens diagnostics with real coverage, readiness, storage, and lock state', async () => {
+    const activeRun = archive('archiving', 'diagnostic-active-run');
+    const renderer = await renderOverviewPage(
+      maintenance({
+        active_run: activeRun,
+        active_lock: {
+          run_id: activeRun.id,
+          operation: 'archiving',
+          acquired_at_ms: 1_700_000_000_000,
+          updated_at_ms: 1_700_000_001_000,
+        },
+        migration_coverage: {
+          status: 'running',
+          watermark_event_id: 78,
+          target_event_id: 100,
+          complete: false,
+        },
+        hourly_aggregate_coverage: {
+          status: 'catching_up',
+          watermark_event_id: 92,
+          target_event_id: 100,
+          complete: false,
+        },
+        readiness: {
+          migration_ready: false,
+          hourly_aggregate_ready: false,
+          archive_delete_enabled: true,
+        },
+      })
+    );
+
+    await act(async () => {
+      findButtons(renderer, 'Diagnostics')[0].props.onClick();
+      await Promise.resolve();
+    });
+
+    const text = getText(renderer.root);
+    expect(text).toContain('Usage maintenance / diagnostics');
+    expect(text).toContain('78%');
+    expect(text).toContain('92%');
+    expect(text).toContain('diagnostic-active-run');
+    expect(text).toContain('Raw deletion remains gated');
+    expect(text).toContain('Offline compact only');
+    expect(text).not.toContain('raw_json');
+    expect(text).not.toContain('fail_body');
     act(() => renderer.unmount());
   });
 
