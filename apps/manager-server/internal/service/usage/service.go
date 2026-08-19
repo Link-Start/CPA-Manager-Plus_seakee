@@ -38,6 +38,7 @@ type Service struct {
 	eventsInsertedNotifier func()
 	importSessions         *importSessionManager
 	archive                *archiveManager
+	archiveJobs            *archiveJobRunner
 }
 
 const importBatchSize = 256
@@ -146,6 +147,14 @@ func (s *Service) GetImportSession(ctx context.Context, id string) (ImportSessio
 		return ImportSession{}, err
 	}
 	return manager.Get(ctx, id)
+}
+
+func (s *Service) ListImportSessions(ctx context.Context, options ImportSessionListOptions) (ImportSessionList, error) {
+	manager, err := s.requireImportSessionManager()
+	if err != nil {
+		return ImportSessionList{}, err
+	}
+	return manager.List(ctx, options)
 }
 
 func (s *Service) WriteImportSessionChunk(

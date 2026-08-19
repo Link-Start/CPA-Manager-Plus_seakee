@@ -136,9 +136,6 @@ func runServer() {
 		log.Printf("recover codex inspection runs: %v", err)
 	}
 	cancelRecovery()
-	if err := serverApp.AppContext().UsageService.StartImportSessionCleanup(ctx); err != nil {
-		log.Fatalf("start usage import session cleanup: %v", err)
-	}
 	automationSettingsService := serverApp.AppContext().AccountProcessingPolicyService
 	runtimeSettings := automationSettingsService.RuntimeSettings(ctx)
 	rateLimitAutoDisableWorker := worker.NewRateLimitAutoDisableWorkerWithMutationCoordinator(
@@ -215,6 +212,12 @@ func runServer() {
 	codexInspectionWorker := worker.NewCodexInspectionWorker(serverApp.AppContext().Store, serverApp.AppContext().CodexInspectionService)
 	serverResult := make(chan error, 1)
 	go serveHTTPServer(server, listener, stop, serverResult)
+	if err := serverApp.AppContext().UsageService.StartImportSessionCleanup(ctx); err != nil {
+		log.Printf("[startup] start usage import session cleanup: %v", err)
+	}
+	if err := serverApp.AppContext().UsageService.StartArchiveJobs(ctx); err != nil {
+		log.Printf("[startup] start usage archive jobs: %v", err)
+	}
 
 	if err := db.RunDerivedStartupMaintenance(ctx); err != nil && ctx.Err() == nil {
 		log.Printf("[startup] post-listen index preparation failed; continuing without blocking background workers: %v", err)

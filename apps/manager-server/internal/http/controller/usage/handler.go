@@ -142,12 +142,12 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id == "" && action == "" && r.Method == http.MethodGet {
-		limit, err := parseArchiveLimit(r.URL.Query().Get("limit"))
+		options, err := parseArchiveListOptions(r)
 		if err != nil {
 			writeArchiveError(w, err)
 			return
 		}
-		list, err := h.App.UsageService.ListArchives(r.Context(), limit)
+		list, err := h.App.UsageService.ListArchivePage(r.Context(), options)
 		if err != nil {
 			writeArchiveError(w, err)
 			return
@@ -169,22 +169,23 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 			writeArchiveRequestError(w, err)
 			return
 		}
+		wait, err := parseArchiveWait(r)
+		if err != nil {
+			writeArchiveRequestError(w, err)
+			return
+		}
 		var (
 			status usagesvc.ArchiveStatus
-			err    error
+			queued bool
 		)
 		switch action {
 		case "resume":
 			expectedStage := strings.TrimSpace(r.URL.Query().Get("expected_stage"))
-			if expectedStage == "" {
-				status, err = h.App.UsageService.ResumeArchive(r.Context(), id)
-			} else {
-				status, err = h.App.UsageService.ResumeArchiveAtStage(r.Context(), id, expectedStage)
-			}
+			status, queued, err = h.App.UsageService.SubmitArchiveResume(r.Context(), id, expectedStage, wait)
 		case "verify":
-			status, err = h.App.UsageService.VerifyArchive(r.Context(), id)
+			status, queued, err = h.App.UsageService.SubmitArchiveVerification(r.Context(), id, wait)
 		case "delete":
-			status, err = h.App.UsageService.DeleteArchive(r.Context(), id)
+			status, queued, err = h.App.UsageService.SubmitArchiveDeletion(r.Context(), id, wait)
 		default:
 			response.MethodNotAllowed(w)
 			return
@@ -193,10 +194,52 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 			writeArchiveError(w, err)
 			return
 		}
-		response.JSON(w, http.StatusOK, usagesvc.NewArchiveStatusSummary(status))
+		responseStatus := http.StatusOK
+		if queued && !wait {
+			responseStatus = http.StatusAccepted
+			w.Header().Set("Location", usageArchivesPath+"/"+id)
+			w.Header().Set("Retry-After", "2")
+		}
+		response.JSON(w, responseStatus, usagesvc.NewArchiveStatusSummary(status))
 		return
 	}
 	response.MethodNotAllowed(w)
+}
+
+func parseArchiveWait(r *http.Request) (bool, error) {
+	background := strings.TrimSpace(r.URL.Query().Get("background"))
+	wait := strings.TrimSpace(r.URL.Query().Get("wait"))
+	if background != "" && wait != "" {
+		return false, errors.New("usage archive action must not set both background and wait")
+	}
+	if background != "" {
+		value, err := strconv.ParseBool(background)
+		if err != nil {
+			return false, errors.New("usage archive background flag is invalid")
+		}
+		return !value, nil
+	}
+	if wait != "" {
+		value, err := strconv.ParseBool(wait)
+		if err != nil {
+			return false, errors.New("usage archive wait flag is invalid")
+		}
+		return value, nil
+	}
+	return true, nil
+}
+
+func parseArchiveListOptions(r *http.Request) (usagesvc.ArchiveListOptions, error) {
+	limit, err := parseArchiveLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		return usagesvc.ArchiveListOptions{}, err
+	}
+	return usagesvc.ArchiveListOptions{
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Mode:   strings.TrimSpace(r.URL.Query().Get("mode")),
+		Limit:  limit,
+		Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
+	}, nil
 }
 
 func parseArchiveLimit(raw string) (int, error) {
@@ -364,6 +407,8 @@ func (h *Handler) handleImportSession(w http.ResponseWriter, r *http.Request, id
 	switch {
 	case id == "" && action == "" && r.Method == http.MethodPost:
 		h.createImportSession(w, r)
+	case id == "" && action == "" && r.Method == http.MethodGet:
+		h.listImportSessions(w, r)
 	case id != "" && action == "" && r.Method == http.MethodGet:
 		h.getImportSession(w, r, id)
 	case id != "" && action == "" && r.Method == http.MethodDelete:
@@ -374,6 +419,31 @@ func (h *Handler) handleImportSession(w http.ResponseWriter, r *http.Request, id
 		h.completeImportSession(w, r, id)
 	default:
 		response.MethodNotAllowed(w)
+	}
+}
+
+func (h *Handler) listImportSessions(w http.ResponseWriter, r *http.Request) {
+	limit, err := parseArchiveLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeImportSessionError(w, newImportSessionRequestError(err))
+		return
+	}
+	list, err := h.App.UsageService.ListImportSessions(r.Context(), usagesvc.ImportSessionListOptions{
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Limit:  limit,
+		Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
+	})
+	if err != nil {
+		writeImportSessionError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, list)
+}
+
+func newImportSessionRequestError(_ error) error {
+	return &usagesvc.ImportSessionError{
+		Code:    usagesvc.ImportSessionErrorInvalidRequest,
+		Message: "invalid usage import session request",
 	}
 }
 
@@ -404,7 +474,7 @@ func (h *Handler) createImportSession(w http.ResponseWriter, r *http.Request) {
 		writeImportSessionError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusCreated, session)
+	response.JSON(w, http.StatusCreated, usagesvc.NewImportSessionSummary(session))
 }
 
 func (h *Handler) getImportSession(w http.ResponseWriter, r *http.Request, id string) {
@@ -413,7 +483,7 @@ func (h *Handler) getImportSession(w http.ResponseWriter, r *http.Request, id st
 		writeImportSessionError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, session)
+	response.JSON(w, http.StatusOK, usagesvc.NewImportSessionSummary(session))
 }
 
 func (h *Handler) writeImportSessionChunk(w http.ResponseWriter, r *http.Request, id string) {
@@ -434,7 +504,7 @@ func (h *Handler) writeImportSessionChunk(w http.ResponseWriter, r *http.Request
 		writeImportSessionError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, session)
+	response.JSON(w, http.StatusOK, usagesvc.NewImportSessionSummary(session))
 }
 
 func (h *Handler) completeImportSession(w http.ResponseWriter, r *http.Request, id string) {
@@ -447,7 +517,7 @@ func (h *Handler) completeImportSession(w http.ResponseWriter, r *http.Request, 
 	if session.Status == usagesvc.ImportSessionStatusProcessing {
 		status = http.StatusAccepted
 	}
-	response.JSON(w, status, session)
+	response.JSON(w, status, usagesvc.NewImportSessionSummary(session))
 }
 
 func (h *Handler) cancelImportSession(w http.ResponseWriter, r *http.Request, id string) {
@@ -460,7 +530,7 @@ func (h *Handler) cancelImportSession(w http.ResponseWriter, r *http.Request, id
 	if session.Status == usagesvc.ImportSessionStatusProcessing {
 		status = http.StatusAccepted
 	}
-	response.JSON(w, status, session)
+	response.JSON(w, status, usagesvc.NewImportSessionSummary(session))
 }
 
 func parseImportSessionPath(path string) (id string, action string, ok bool) {
@@ -486,6 +556,7 @@ func parseImportSessionPath(path string) (id string, action string, ok bool) {
 func writeImportSessionError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := usagesvc.ImportSessionErrorUnavailable
+	message := "usage import session request failed"
 	var sessionErr *usagesvc.ImportSessionError
 	if errors.As(err, &sessionErr) {
 		code = sessionErr.Code
@@ -503,9 +574,15 @@ func writeImportSessionError(w http.ResponseWriter, err error) {
 		case usagesvc.ImportSessionErrorLimitExceeded:
 			status = http.StatusTooManyRequests
 		}
+		if status < http.StatusInternalServerError {
+			message = sessionErr.Message
+		}
+	}
+	if status >= http.StatusInternalServerError {
+		log.Printf("usage import session API request failed: %v", err)
 	}
 	response.JSON(w, status, map[string]any{
-		"error": err.Error(),
+		"error": message,
 		"code":  code,
 	})
 }

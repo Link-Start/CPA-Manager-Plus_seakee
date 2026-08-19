@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -69,6 +70,7 @@ type ArchiveRunSummary struct {
 	Mode                      string `json:"mode"`
 	Status                    string `json:"status"`
 	ResumeStatus              string `json:"resume_status,omitempty"`
+	RequestedStage            string `json:"requested_stage,omitempty"`
 	CutoffTimestampMS         int64  `json:"cutoff_timestamp_ms"`
 	TargetEventID             int64  `json:"target_event_id"`
 	EventCount                int64  `json:"event_count"`
@@ -112,7 +114,17 @@ type ArchiveStatusSummary struct {
 }
 
 type ArchiveList struct {
-	Runs []ArchiveRunSummary `json:"runs"`
+	Runs         []ArchiveRunSummary `json:"runs"`
+	Total        int64               `json:"total"`
+	StatusCounts map[string]int64    `json:"status_counts"`
+	NextCursor   string              `json:"next_cursor,omitempty"`
+}
+
+type ArchiveListOptions struct {
+	Status string
+	Mode   string
+	Limit  int
+	Cursor string
 }
 
 type MaintenanceMigrationSummary struct {
@@ -147,6 +159,13 @@ type MaintenanceReadiness struct {
 	ArchiveDeleteEnabled bool `json:"archive_delete_enabled"`
 }
 
+type MaintenanceCoverageSummary struct {
+	Status           string `json:"status"`
+	WatermarkEventID int64  `json:"watermark_event_id"`
+	TargetEventID    int64  `json:"target_event_id"`
+	Complete         bool   `json:"complete"`
+}
+
 type MaintenanceStatus struct {
 	RawEventCount                int64                       `json:"raw_event_count"`
 	RawMinTimestampMS            int64                       `json:"raw_min_timestamp_ms"`
@@ -158,6 +177,8 @@ type MaintenanceStatus struct {
 	Migration                    MaintenanceMigrationSummary `json:"migration"`
 	HourlyAggregate              MaintenanceAggregateSummary `json:"hourly_aggregate"`
 	Readiness                    MaintenanceReadiness        `json:"readiness"`
+	MigrationCoverage            MaintenanceCoverageSummary  `json:"migration_coverage"`
+	HourlyAggregateCoverage      MaintenanceCoverageSummary  `json:"hourly_aggregate_coverage"`
 	Storage                      store.SQLitePageStats       `json:"storage"`
 	CompactRequiresStoppedServer bool                        `json:"compact_requires_stopped_server"`
 }
@@ -225,6 +246,7 @@ type archiveFileInspection struct {
 func WithArchive(config ArchiveConfig) Option {
 	return func(service *Service) {
 		service.archive = newArchiveManager(service.store, config)
+		service.archiveJobs = newArchiveJobRunner(service)
 	}
 }
 
@@ -320,25 +342,99 @@ func (s *Service) ArchiveStatus(ctx context.Context, runID string) (ArchiveStatu
 }
 
 func (s *Service) ListArchives(ctx context.Context, limit int) (ArchiveList, error) {
+	return s.ListArchivePage(ctx, ArchiveListOptions{Limit: limit})
+}
+
+func (s *Service) ListArchivePage(ctx context.Context, options ArchiveListOptions) (ArchiveList, error) {
 	manager, err := s.requireArchiveManager()
 	if err != nil {
 		return ArchiveList{}, err
 	}
-	if limit <= 0 {
-		limit = 20
+	if options.Limit <= 0 {
+		options.Limit = 20
 	}
-	if limit > maxArchiveListLimit {
+	if options.Limit > maxArchiveListLimit {
 		return ArchiveList{}, fmt.Errorf("%w: limit must be between 1 and %d", ErrArchiveInvalidRequest, maxArchiveListLimit)
 	}
-	runs, err := manager.store.ListUsageArchiveRuns(ctx, limit)
+	if !validArchiveStatusFilter(options.Status) {
+		return ArchiveList{}, fmt.Errorf("%w: unsupported archive status filter", ErrArchiveInvalidRequest)
+	}
+	if !validArchiveModeFilter(options.Mode) {
+		return ArchiveList{}, fmt.Errorf("%w: unsupported archive mode filter", ErrArchiveInvalidRequest)
+	}
+	createdAtMS, id, err := decodeArchiveListCursor(options.Cursor)
 	if err != nil {
 		return ArchiveList{}, err
 	}
-	summaries := make([]ArchiveRunSummary, 0, len(runs))
-	for _, run := range runs {
+	result, err := manager.store.ListUsageArchiveRuns(ctx, store.UsageArchiveRunListFilter{
+		Status:            options.Status,
+		Mode:              options.Mode,
+		Limit:             options.Limit,
+		BeforeCreatedAtMS: createdAtMS,
+		BeforeID:          id,
+	})
+	if err != nil {
+		return ArchiveList{}, err
+	}
+	summaries := make([]ArchiveRunSummary, 0, len(result.Runs))
+	for _, run := range result.Runs {
 		summaries = append(summaries, summarizeArchiveRun(run))
 	}
-	return ArchiveList{Runs: summaries}, nil
+	nextCursor := ""
+	if result.HasMore && len(result.Runs) > 0 {
+		last := result.Runs[len(result.Runs)-1]
+		nextCursor = encodeArchiveListCursor(last.CreatedAtMS, last.ID)
+	}
+	return ArchiveList{
+		Runs:         summaries,
+		Total:        result.Total,
+		StatusCounts: result.StatusCounts,
+		NextCursor:   nextCursor,
+	}, nil
+}
+
+func validArchiveStatusFilter(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "", usagearchive.StatusPreviewed, usagearchive.StatusArchiving, usagearchive.StatusArchived,
+		usagearchive.StatusVerifying, usagearchive.StatusVerified, usagearchive.StatusDeleting,
+		usagearchive.StatusCompleted, usagearchive.StatusFailed, usagearchive.StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func validArchiveModeFilter(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "", usagearchive.RunModeManual, usagearchive.RunModeRetention:
+		return true
+	default:
+		return false
+	}
+}
+
+func encodeArchiveListCursor(createdAtMS int64, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(createdAtMS, 10) + ":" + id))
+}
+
+func decodeArchiveListCursor(cursor string) (int64, string, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return 0, "", nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, "", fmt.Errorf("%w: invalid archive cursor", ErrArchiveInvalidRequest)
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 || !validArchiveRunID(parts[1]) {
+		return 0, "", fmt.Errorf("%w: invalid archive cursor", ErrArchiveInvalidRequest)
+	}
+	createdAtMS, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || createdAtMS <= 0 {
+		return 0, "", fmt.Errorf("%w: invalid archive cursor", ErrArchiveInvalidRequest)
+	}
+	return createdAtMS, parts[1], nil
 }
 
 func (s *Service) MaintenanceStatus(ctx context.Context) (MaintenanceStatus, error) {
@@ -406,6 +502,21 @@ func (s *Service) MaintenanceStatus(ctx context.Context) (MaintenanceStatus, err
 				usageaggregate.IsCurrentStructureRevision(aggregate.StructureRevision) &&
 				aggregate.CoverageEventID >= aggregateTargetEventID,
 			ArchiveDeleteEnabled: manager.config.AggregateReadsEnabled,
+		},
+		MigrationCoverage: MaintenanceCoverageSummary{
+			Status:           migration.Status,
+			WatermarkEventID: migration.LastEventID,
+			TargetEventID:    migration.TargetEventID,
+			Complete:         migration.Status == datamigration.StatusCompleted,
+		},
+		HourlyAggregateCoverage: MaintenanceCoverageSummary{
+			Status:           aggregate.Status,
+			WatermarkEventID: aggregate.CoverageEventID,
+			TargetEventID:    aggregateTargetEventID,
+			Complete: aggregate.SchemaVersion == usageaggregate.SchemaVersion &&
+				aggregate.Status == "ready" &&
+				usageaggregate.IsCurrentStructureRevision(aggregate.StructureRevision) &&
+				aggregate.CoverageEventID >= aggregateTargetEventID,
 		},
 		Storage:                      pageStats,
 		CompactRequiresStoppedServer: true,
@@ -601,6 +712,7 @@ func summarizeArchiveRun(run store.UsageArchiveRun) ArchiveRunSummary {
 		Mode:                      run.Mode,
 		Status:                    run.Status,
 		ResumeStatus:              run.ResumeStatus,
+		RequestedStage:            run.RequestedStage,
 		CutoffTimestampMS:         run.CutoffTimestampMS,
 		TargetEventID:             run.TargetEventID,
 		EventCount:                run.EventCount,

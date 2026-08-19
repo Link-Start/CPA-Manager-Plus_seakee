@@ -56,7 +56,16 @@ func newCompatHandler(t *testing.T, cfg config.Config, setup *store.Setup) (http
 		}
 	}
 	manager := collector.NewManager(cfg, db)
-	return New(cfg, db, manager).Handler(), db
+	server := New(cfg, db, manager)
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	t.Cleanup(cancelWorkers)
+	if err := server.AppContext().UsageService.StartImportSessionCleanup(workerCtx); err != nil {
+		t.Fatalf("start import session cleanup: %v", err)
+	}
+	if err := server.AppContext().UsageService.StartArchiveJobs(workerCtx); err != nil {
+		t.Fatalf("start archive jobs: %v", err)
+	}
+	return server.Handler(), db
 }
 
 type staticDatabaseMaintenanceStatus struct {
@@ -571,6 +580,23 @@ func TestServerCompatUsageImportSessionRoutes(t *testing.T) {
 	if session.Status != usagesvc.ImportSessionStatusCompleted || session.Result == nil || session.Result.Added != 1 {
 		t.Fatalf("completed session = %#v", session)
 	}
+	listRR := testutil.Request(
+		t,
+		handler,
+		http.MethodGet,
+		"/v0/management/usage/import-sessions?limit=1&status=completed",
+		"",
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, listRR, http.StatusOK)
+	var list usagesvc.ImportSessionList
+	testutil.DecodeJSON(t, listRR, &list)
+	if list.Total != 1 || len(list.Sessions) != 1 || list.Sessions[0].ID != session.ID ||
+		list.StatusCounts[usagesvc.ImportSessionStatusCompleted] != 1 ||
+		list.MaxSessions != cfg.UsageImportMaxSessions || list.ChunkSizeBytes != cfg.UsageImportChunkBytes ||
+		list.DiskQuotaBytes != cfg.UsageImportDiskQuotaBytes || list.TTLSeconds != int64(cfg.UsageImportSessionTTL/time.Second) {
+		t.Fatalf("import session list = %#v", list)
+	}
 
 	malformedRR := testutil.Request(
 		t,
@@ -802,6 +828,11 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 	if !strings.Contains(invalidID.Body.String(), `"code":"usage_archive_invalid_id"`) {
 		t.Fatalf("archive invalid ID body = %s", invalidID.Body.String())
 	}
+	invalidActionID := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives/not-a-run-id/verify?background=true", "", testutil.AdminKey)
+	testutil.RequireStatus(t, invalidActionID, http.StatusBadRequest)
+	if !strings.Contains(invalidActionID.Body.String(), `"code":"usage_archive_invalid_id"`) {
+		t.Fatalf("archive invalid action ID body = %s", invalidActionID.Body.String())
+	}
 	missingID := strings.Repeat("b", 32)
 	missing := testutil.Request(t, handler, http.MethodGet, "/v0/management/usage/archives/"+missingID, "", testutil.AdminKey)
 	testutil.RequireStatus(t, missing, http.StatusNotFound)
@@ -833,13 +864,27 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 		t,
 		handler,
 		http.MethodPost,
-		"/v0/management/usage/archives/"+status.Run.ID+"/resume?expected_stage=archiving",
+		"/v0/management/usage/archives/"+status.Run.ID+"/resume?expected_stage=archiving&background=true",
 		" \n\t",
 		testutil.AdminKey,
 	)
-	testutil.RequireStatus(t, resumeRR, http.StatusOK)
+	testutil.RequireStatus(t, resumeRR, http.StatusAccepted)
 	assertUsageArchivePayloadSanitized(t, resumeRR.Body.String(), cfg.UsageArchiveDir)
 	testutil.DecodeJSON(t, resumeRR, &status)
+	if resumeRR.Header().Get("Location") != "/v0/management/usage/archives/"+status.Run.ID ||
+		resumeRR.Header().Get("Retry-After") != "2" || status.Run.RequestedStage != usagearchive.StatusArchiving {
+		t.Fatalf("queued archive response = headers=%v status=%#v", resumeRR.Header(), status)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		statusRR := testutil.Request(t, handler, http.MethodGet, "/v0/management/usage/archives/"+status.Run.ID, "", testutil.AdminKey)
+		testutil.RequireStatus(t, statusRR, http.StatusOK)
+		testutil.DecodeJSON(t, statusRR, &status)
+		if status.Run.Status == usagearchive.StatusArchived && status.Run.RequestedStage == "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if status.Run.Status != usagearchive.StatusArchived || len(status.Segments) == 0 {
 		t.Fatalf("archived status = %#v", status)
 	}
@@ -865,7 +910,8 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 	assertUsageArchivePayloadSanitized(t, listRR.Body.String(), internalError, cfg.UsageArchiveDir)
 	var list usagesvc.ArchiveList
 	testutil.DecodeJSON(t, listRR, &list)
-	if len(list.Runs) != 1 || list.Runs[0].ID != status.Run.ID || list.Runs[0].Status != usagearchive.StatusCompleted {
+	if len(list.Runs) != 1 || list.Runs[0].ID != status.Run.ID || list.Runs[0].Status != usagearchive.StatusCompleted ||
+		list.Total != 1 || list.StatusCounts[usagearchive.StatusCompleted] != 1 || list.NextCursor != "" {
 		t.Fatalf("archive list = %#v", list)
 	}
 
@@ -898,6 +944,13 @@ func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {
 		testutil.RequireStatus(t, invalid, http.StatusBadRequest)
 		if !strings.Contains(invalid.Body.String(), `"code":"usage_archive_invalid_request"`) || strings.Contains(invalid.Body.String(), "between 1 and 100") {
 			t.Fatalf("invalid limit %s body = %s", limit, invalid.Body.String())
+		}
+	}
+	for _, query := range []string{"status=future", "mode=future", "cursor=invalid"} {
+		invalid := testutil.Request(t, handler, http.MethodGet, "/v0/management/usage/archives?"+query, "", testutil.AdminKey)
+		testutil.RequireStatus(t, invalid, http.StatusBadRequest)
+		if !strings.Contains(invalid.Body.String(), `"code":"usage_archive_invalid_request"`) {
+			t.Fatalf("invalid archive list query %s body = %s", query, invalid.Body.String())
 		}
 	}
 	method := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/maintenance", "", testutil.AdminKey)

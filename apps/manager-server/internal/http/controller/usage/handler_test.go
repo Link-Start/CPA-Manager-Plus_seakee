@@ -126,6 +126,52 @@ func TestParseArchiveLimit(t *testing.T) {
 	}
 }
 
+func TestParseArchiveWait(t *testing.T) {
+	for _, test := range []struct {
+		query string
+		wait  bool
+		ok    bool
+	}{
+		{wait: true, ok: true},
+		{query: "background=true", wait: false, ok: true},
+		{query: "background=false", wait: true, ok: true},
+		{query: "wait=false", wait: false, ok: true},
+		{query: "wait=true", wait: true, ok: true},
+		{query: "background=invalid"},
+		{query: "wait=invalid"},
+		{query: "background=true&wait=false"},
+	} {
+		request := httptest.NewRequest(http.MethodPost, usageArchivesPath+"/run/resume?"+test.query, nil)
+		wait, err := parseArchiveWait(request)
+		if test.ok && (err != nil || wait != test.wait) {
+			t.Errorf("parseArchiveWait(%q) = (%t, %v), want %t", test.query, wait, err, test.wait)
+		}
+		if !test.ok && err == nil {
+			t.Errorf("parseArchiveWait(%q) error = nil", test.query)
+		}
+	}
+}
+
+func TestWriteImportSessionErrorSanitizesUnavailableFailures(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeImportSessionError(recorder, &usagesvc.ImportSessionError{
+		Code:    usagesvc.ImportSessionErrorUnavailable,
+		Message: "validate usage import session directory /private/secret",
+	})
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"error":"usage import session request failed"`) ||
+		!strings.Contains(body, `"code":"usage_import_session_unavailable"`) {
+		t.Fatalf("sanitized unavailable body = %s", body)
+	}
+	if strings.Contains(body, "/private/secret") || strings.Contains(body, "validate usage import session directory") {
+		t.Fatalf("unavailable body leaked internal details: %s", body)
+	}
+}
+
 func TestArchiveErrorCodeDoesNotDependOnInternalErrorText(t *testing.T) {
 	for _, message := range []string{
 		"invalid admin key from an internal dependency",
