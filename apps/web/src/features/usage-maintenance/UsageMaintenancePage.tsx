@@ -35,6 +35,8 @@ import {
   UsageArchiveRunView,
   UsageMaintenanceOverviewView,
 } from './UsageMaintenanceArchiveViews';
+import { UsageMaintenanceCreateView, type GuidedArchiveStage } from './UsageMaintenanceCreateView';
+import { UsageMaintenanceDeleteConfirmation } from './UsageMaintenanceDeleteConfirmation';
 import styles from './UsageMaintenancePage.module.scss';
 
 const isUnsupportedError = (error: unknown) => {
@@ -44,13 +46,6 @@ const isUnsupportedError = (error: unknown) => {
 
 const activeRefreshIntervalMs = 5_000;
 const defaultRetentionDays = 30 as const;
-type GuidedArchiveStage =
-  | 'idle'
-  | 'creating'
-  | 'archiving'
-  | 'verifying'
-  | 'complete'
-  | 'attention';
 const archiveProgressStatuses = new Set(['archiving', 'verifying', 'deleting']);
 const archiveStatusTranslationValues = new Set([
   'previewed',
@@ -710,7 +705,7 @@ export function UsageMaintenancePage() {
   const maintenanceLoaded = maintenance !== null;
 
   useEffect(() => {
-    if (!maintenanceLoaded || !serviceBase || unsupported) return;
+    if (!maintenanceLoaded || !serviceBase || unsupported || view !== 'create') return;
     previewGenerationRef.current += 1;
     previewControllerRef.current?.abort();
     previewControllerRef.current = null;
@@ -789,6 +784,7 @@ export function UsageMaintenancePage() {
     serviceBase,
     t,
     unsupported,
+    view,
   ]);
 
   const selectRetention = (selection: RetentionSelection) => {
@@ -1042,6 +1038,9 @@ export function UsageMaintenancePage() {
         await load({ background: true });
         if (operationIsCurrent(operation)) {
           setPreviewRefreshToken((value) => value + 1);
+          if (selectedRunId === run.id) {
+            setSelectedArchiveRefreshToken((value) => value + 1);
+          }
         }
       }
     } finally {
@@ -1128,30 +1127,30 @@ export function UsageMaintenancePage() {
     if (stageOrder === order[step]) return 'current';
     return 'pending';
   };
-
   const confirmAction = (run: UsageArchiveRunSummary, action: 'resume' | 'verify' | 'delete') => {
     if (!actionIsDestructive(run, action)) {
       void runAction(run, action);
       return;
     }
-    const remainingEventCount = Math.max(0, run.event_count - run.deleted_event_count);
     const confirmation = {
       generation: contextGenerationRef.current,
       serviceBase,
       managementKey,
     };
     showConfirmation({
-      title: t('usage_maintenance.delete_confirm_title', { defaultValue: 'Delete raw events?' }),
-      message: t('usage_maintenance.delete_confirm_message', {
-        defaultValue:
-          'Run {{runId}} will delete up to {{remainingEventCount}} remaining raw events ({{totalEventCount}} total archived) before {{cutoff}}. Archive files remain untouched.',
-        runId: run.id,
-        remainingEventCount: remainingEventCount.toLocaleString(i18n.language),
-        totalEventCount: run.event_count.toLocaleString(i18n.language),
-        cutoff: formatTime(run.cutoff_timestamp_ms),
+      title: t('usage_maintenance.delete_confirm_title', {
+        defaultValue: 'Delete online raw data?',
       }),
+      width: 720,
+      message: (
+        <UsageMaintenanceDeleteConfirmation
+          run={run}
+          deletionEnabled={maintenance?.readiness.archive_delete_enabled === true}
+        />
+      ),
       confirmText: t('usage_maintenance.delete_confirm_button', {
-        defaultValue: 'Delete raw rows',
+        defaultValue: 'Delete {{count}} raw rows',
+        count: Math.max(0, run.event_count - run.deleted_event_count).toLocaleString(i18n.language),
       }),
       cancelText: t('common.cancel'),
       variant: 'danger',
@@ -1218,7 +1217,6 @@ export function UsageMaintenancePage() {
     !hasArchivedRawEvents &&
     recommendedRetentionDays !== null &&
     recommendedRetentionDays !== retentionSelection;
-
   const navigateTo = (nextView: UsageMaintenanceView) => {
     if (nextView !== 'detail' && nextView !== 'active') {
       setSelectedRunId(null);
@@ -1305,6 +1303,39 @@ export function UsageMaintenancePage() {
           onRefresh={refreshMaintenance}
           onNavigate={navigateTo}
           onOpenRun={openRun}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'create') {
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageMaintenanceCreateView
+          maintenance={maintenance}
+          preview={preview}
+          previewLoading={previewLoading}
+          previewError={previewError}
+          retentionSelection={retentionSelection}
+          customCutoff={customCutoff}
+          referenceNowMS={referenceNowMS}
+          resolvedCutoffTimestamp={resolvedCutoffTimestamp}
+          rawEventRange={rawEventRange ?? { kind: 'empty' }}
+          recommendedRetentionDays={recommendedRetentionDays}
+          guidedArchiveStage={guidedArchiveStage}
+          guidedArchiveRunId={guidedArchiveRunId}
+          working={working}
+          createBlockedByMaintenance={createBlockedByMaintenance}
+          archiveReadinessPending={archiveReadinessPending}
+          archiveReadinessHint={archiveReadinessHint}
+          onBack={() => navigateTo('overview')}
+          onRefresh={refreshMaintenance}
+          onSelectRetention={selectRetention}
+          onUpdateCustomCutoff={updateCustomCutoff}
+          onRetryPreview={() => setPreviewRefreshToken((value) => value + 1)}
+          onCreate={confirmCreate}
+          onStopWaiting={cancelGuidedArchive}
         />
       </div>
     );

@@ -713,7 +713,7 @@ export function UsageArchiveHistoryView({
                         {action ? (
                           <button
                             type="button"
-                            className={`${styles.linkButton} ${action === 'delete' || run.resume_status === 'deleting' ? styles.dangerLink : ''}`}
+                            className={`${styles.linkButton} ${action === 'delete' || run.status === 'deleting' || run.resume_status === 'deleting' ? styles.dangerLink : ''}`}
                             disabled={working || actionDisabled(run, action)}
                             title={actionTitle(run, action)}
                             onClick={() => onAction(run, action)}
