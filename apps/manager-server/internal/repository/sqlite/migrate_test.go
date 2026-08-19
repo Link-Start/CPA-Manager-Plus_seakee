@@ -85,6 +85,30 @@ func TestUsageHourlyAggregateMigrationContractMatchesRepository(t *testing.T) {
 	}
 }
 
+func TestUsageArchiveRunMigrationAddsRequestedStageColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage-archive-requested-stage.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`alter table usage_archive_runs drop column requested_stage`); err != nil {
+		_ = db.Close()
+		t.Fatalf("remove requested stage column fixture: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy sqlite: %v", err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen migrated sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	columns := migrationTableColumns(t, db, "usage_archive_runs")
+	if !columns["requested_stage"] {
+		t.Fatalf("usage archive run columns = %#v", columns)
+	}
+}
+
 func TestUsageArchiveMigrationIsAdditiveAndStartupBoundedWithLargeLedger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage-archive-large-ledger.sqlite")
 	db, err := Open(path)

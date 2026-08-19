@@ -108,6 +108,8 @@ type UsageMonitoringState = usagemonitoring.State
 type UsageMonitoringCatchUpResult = usagemonitoring.CatchUpResult
 type UsageArchivePreview = usagearchive.Preview
 type UsageArchiveRun = usagearchive.Run
+type UsageArchiveRunListFilter = usagearchive.RunListFilter
+type UsageArchiveRunListResult = usagearchive.RunListResult
 type UsageArchiveSegment = usagearchive.Segment
 type UsageArchiveRecord = usagearchive.Record
 type UsageArchiveRecordRef = usagearchive.RecordRef
@@ -500,8 +502,8 @@ func (s *Store) ActiveUsageArchiveRun(ctx context.Context) (UsageArchiveRun, boo
 	return s.UsageArchives.ActiveRun(ctx)
 }
 
-func (s *Store) ListUsageArchiveRuns(ctx context.Context, limit int) ([]UsageArchiveRun, error) {
-	return s.UsageArchives.ListRuns(ctx, limit)
+func (s *Store) ListUsageArchiveRuns(ctx context.Context, filter UsageArchiveRunListFilter) (UsageArchiveRunListResult, error) {
+	return s.UsageArchives.ListRuns(ctx, filter)
 }
 
 func (s *Store) UsageMaintenanceLock(ctx context.Context) (UsageMaintenanceLock, bool, error) {

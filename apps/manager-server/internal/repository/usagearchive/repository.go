@@ -64,6 +64,7 @@ type Run struct {
 	Format                    string `json:"format"`
 	Status                    string `json:"status"`
 	ResumeStatus              string `json:"resume_status,omitempty"`
+	RequestedStage            string `json:"requested_stage,omitempty"`
 	CutoffTimestampMS         int64  `json:"cutoff_timestamp_ms"`
 	TargetEventID             int64  `json:"target_event_id"`
 	EventCount                int64  `json:"event_count"`
@@ -85,6 +86,21 @@ type Run struct {
 	DeleteStartedAtMS         int64  `json:"delete_started_at_ms,omitempty"`
 	CompletedAtMS             int64  `json:"completed_at_ms,omitempty"`
 	LastError                 string `json:"last_error,omitempty"`
+}
+
+type RunListFilter struct {
+	Status            string
+	Mode              string
+	Limit             int
+	BeforeCreatedAtMS int64
+	BeforeID          string
+}
+
+type RunListResult struct {
+	Runs         []Run
+	Total        int64
+	StatusCounts map[string]int64
+	HasMore      bool
 }
 
 type Segment struct {
@@ -237,34 +253,84 @@ func (r *Repository) Run(ctx context.Context, id string) (Run, error) {
 	return runQuery(ctx, r.db, id)
 }
 
-func (r *Repository) ListRuns(ctx context.Context, limit int) ([]Run, error) {
-	if limit <= 0 {
-		limit = 20
+func (r *Repository) ListRuns(ctx context.Context, filter RunListFilter) (RunListResult, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 20
 	}
+	where, args := archiveRunListPredicates(filter.Status, filter.Mode)
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `select count(*) from usage_archive_runs where `+where, args...).Scan(&total); err != nil {
+		return RunListResult{}, err
+	}
+	countWhere, countArgs := archiveRunListPredicates("", filter.Mode)
+	countRows, err := r.db.QueryContext(ctx, `select status, count(*) from usage_archive_runs where `+countWhere+` group by status`, countArgs...)
+	if err != nil {
+		return RunListResult{}, err
+	}
+	statusCounts := make(map[string]int64)
+	for countRows.Next() {
+		var status string
+		var count int64
+		if err := countRows.Scan(&status, &count); err != nil {
+			_ = countRows.Close()
+			return RunListResult{}, err
+		}
+		statusCounts[status] = count
+	}
+	if err := countRows.Err(); err != nil {
+		_ = countRows.Close()
+		return RunListResult{}, err
+	}
+	if err := countRows.Close(); err != nil {
+		return RunListResult{}, err
+	}
+	if filter.BeforeCreatedAtMS > 0 && strings.TrimSpace(filter.BeforeID) != "" {
+		where += ` and (created_at_ms < ? or (created_at_ms = ? and id < ?))`
+		args = append(args, filter.BeforeCreatedAtMS, filter.BeforeCreatedAtMS, filter.BeforeID)
+	}
+	args = append(args, filter.Limit+1)
 	rows, err := r.db.QueryContext(ctx, `select
-		id, mode, schema_version, format, status, resume_status, cutoff_timestamp_ms,
+		id, mode, schema_version, format, status, resume_status, requested_stage, cutoff_timestamp_ms,
 		target_event_id, event_count, estimated_bytes, last_archived_event_id,
 		archived_event_count, archived_uncompressed_bytes, archived_compressed_bytes,
 		archive_digest, manifest_file, manifest_sha256, last_deleted_event_id,
 		deleted_event_count, created_at_ms, updated_at_ms, started_at_ms, archived_at_ms,
 		verified_at_ms, delete_started_at_ms, completed_at_ms, last_error
-	from usage_archive_runs order by created_at_ms desc, id desc limit ?`, limit)
+	from usage_archive_runs where `+where+` order by created_at_ms desc, id desc limit ?`, args...)
 	if err != nil {
-		return nil, err
+		return RunListResult{}, err
 	}
 	defer rows.Close()
-	runs := make([]Run, 0, min(limit, 100))
+	runs := make([]Run, 0, min(filter.Limit+1, 101))
 	for rows.Next() {
 		run, err := scanRun(rows)
 		if err != nil {
-			return nil, err
+			return RunListResult{}, err
 		}
 		runs = append(runs, run)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return RunListResult{}, err
 	}
-	return runs, nil
+	hasMore := len(runs) > filter.Limit
+	if hasMore {
+		runs = runs[:filter.Limit]
+	}
+	return RunListResult{Runs: runs, Total: total, StatusCounts: statusCounts, HasMore: hasMore}, nil
+}
+
+func archiveRunListPredicates(status, mode string) (string, []any) {
+	predicates := []string{"1 = 1"}
+	args := make([]any, 0, 2)
+	if status = strings.TrimSpace(status); status != "" {
+		predicates = append(predicates, "status = ?")
+		args = append(args, status)
+	}
+	if mode = strings.TrimSpace(mode); mode != "" {
+		predicates = append(predicates, "mode = ?")
+		args = append(args, mode)
+	}
+	return strings.Join(predicates, " and "), args
 }
 
 func (r *Repository) MaintenanceLock(ctx context.Context) (MaintenanceLock, bool, error) {
@@ -332,6 +398,136 @@ func (r *Repository) ActiveRun(ctx context.Context) (Run, bool, error) {
 		return Run{}, false, err
 	}
 	return run, true, nil
+}
+
+func (r *Repository) RequestStage(ctx context.Context, runID, stage string, nowMS int64) (Run, bool, error) {
+	if !validRequestedStage(stage) || nowMS <= 0 {
+		return Run{}, false, fmt.Errorf("%w: invalid requested archive stage", ErrInvalidState)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Run{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `update usage_archive_runs set updated_at_ms = updated_at_ms where id = ?`, runID); err != nil {
+		return Run{}, false, err
+	}
+	run, err := runQuery(ctx, tx, runID)
+	if err != nil {
+		return Run{}, false, err
+	}
+	if run.RequestedStage != "" && requestedStageSatisfied(run, run.RequestedStage) {
+		if _, err := tx.ExecContext(ctx, `update usage_archive_runs set requested_stage = null where id = ? and requested_stage = ?`, runID, run.RequestedStage); err != nil {
+			return Run{}, false, err
+		}
+		run.RequestedStage = ""
+	}
+	if requestedStageSatisfied(run, stage) {
+		if err := tx.Commit(); err != nil {
+			return Run{}, false, err
+		}
+		return run, false, nil
+	}
+	if run.RequestedStage != "" {
+		if run.RequestedStage != stage {
+			return Run{}, false, fmt.Errorf("%w: stage %s is already requested", ErrInvalidState, run.RequestedStage)
+		}
+		if err := tx.Commit(); err != nil {
+			return Run{}, false, err
+		}
+		return run, false, nil
+	}
+	if !canRequestStage(run, stage) {
+		return Run{}, false, fmt.Errorf("%w: cannot request %s from %s", ErrInvalidState, stage, run.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `update usage_archive_runs set requested_stage = ?, updated_at_ms = ? where id = ?`, stage, nowMS, runID); err != nil {
+		return Run{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Run{}, false, err
+	}
+	run.RequestedStage = stage
+	run.UpdatedAtMS = nowMS
+	return run, true, nil
+}
+
+func (r *Repository) ClearRequestedStage(ctx context.Context, runID, stage string) error {
+	if !validRequestedStage(stage) {
+		return fmt.Errorf("%w: invalid requested archive stage", ErrInvalidState)
+	}
+	_, err := r.db.ExecContext(ctx, `update usage_archive_runs set requested_stage = null where id = ? and requested_stage = ?`, runID, stage)
+	return err
+}
+
+func (r *Repository) RecoverRequestedStages(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `update usage_archive_runs set requested_stage = status
+		where requested_stage is null and status in (?, ?, ?)`,
+		StatusArchiving,
+		StatusVerifying,
+		StatusDeleting,
+	)
+	return err
+}
+
+func (r *Repository) NextRequestedRun(ctx context.Context) (Run, bool, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx, `select id from usage_archive_runs
+		where requested_stage in (?, ?, ?)
+		order by updated_at_ms asc, created_at_ms asc, id asc limit 1`,
+		StatusArchiving,
+		StatusVerifying,
+		StatusDeleting,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, err
+	}
+	run, err := r.Run(ctx, id)
+	if err != nil {
+		return Run{}, false, err
+	}
+	return run, true, nil
+}
+
+func validRequestedStage(stage string) bool {
+	switch stage {
+	case StatusArchiving, StatusVerifying, StatusDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
+func canRequestStage(run Run, stage string) bool {
+	if run.Status == StatusFailed {
+		return run.ResumeStatus == stage
+	}
+	switch stage {
+	case StatusArchiving:
+		return run.Status == StatusPreviewed || run.Status == StatusArchiving
+	case StatusVerifying:
+		return run.Status == StatusArchived || run.Status == StatusVerifying
+	case StatusDeleting:
+		return run.Status == StatusVerified || run.Status == StatusDeleting
+	default:
+		return false
+	}
+}
+
+func requestedStageSatisfied(run Run, stage string) bool {
+	switch stage {
+	case StatusArchiving:
+		return run.Status == StatusArchived || run.Status == StatusVerifying || run.Status == StatusVerified ||
+			run.Status == StatusDeleting || run.Status == StatusCompleted
+	case StatusVerifying:
+		return run.Status == StatusVerified || run.Status == StatusDeleting || run.Status == StatusCompleted
+	case StatusDeleting:
+		return run.Status == StatusCompleted
+	default:
+		return false
+	}
 }
 
 func (r *Repository) Segments(ctx context.Context, runID string) ([]Segment, error) {
@@ -1080,7 +1276,7 @@ func runQuery(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (Run, error) {
 	run, err := scanRun(queryer.QueryRowContext(ctx, `select
-		id, mode, schema_version, format, status, resume_status, cutoff_timestamp_ms,
+		id, mode, schema_version, format, status, resume_status, requested_stage, cutoff_timestamp_ms,
 		target_event_id, event_count, estimated_bytes, last_archived_event_id,
 		archived_event_count, archived_uncompressed_bytes, archived_compressed_bytes,
 		archive_digest, manifest_file, manifest_sha256, last_deleted_event_id,
@@ -1098,7 +1294,7 @@ func runQuery(ctx context.Context, queryer interface {
 
 func scanRun(scanner interface{ Scan(...any) error }) (Run, error) {
 	var run Run
-	var resumeStatus, archiveDigest, manifestFile, manifestSHA256, lastError sql.NullString
+	var resumeStatus, requestedStage, archiveDigest, manifestFile, manifestSHA256, lastError sql.NullString
 	var startedAt, archivedAt, verifiedAt, deleteStartedAt, completedAt sql.NullInt64
 	if err := scanner.Scan(
 		&run.ID,
@@ -1107,6 +1303,7 @@ func scanRun(scanner interface{ Scan(...any) error }) (Run, error) {
 		&run.Format,
 		&run.Status,
 		&resumeStatus,
+		&requestedStage,
 		&run.CutoffTimestampMS,
 		&run.TargetEventID,
 		&run.EventCount,
@@ -1132,6 +1329,7 @@ func scanRun(scanner interface{ Scan(...any) error }) (Run, error) {
 		return Run{}, err
 	}
 	run.ResumeStatus = resumeStatus.String
+	run.RequestedStage = requestedStage.String
 	run.ArchiveDigest = archiveDigest.String
 	run.ManifestFile = manifestFile.String
 	run.ManifestSHA256 = manifestSHA256.String

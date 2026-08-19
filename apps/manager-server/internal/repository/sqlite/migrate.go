@@ -573,6 +573,7 @@ func Migrate(db *sql.DB) error {
 			format text not null,
 			status text not null,
 			resume_status text,
+			requested_stage text,
 			cutoff_timestamp_ms integer not null,
 			target_event_id integer not null,
 			event_count integer not null,
@@ -998,6 +999,9 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 	if err := ensureUsageDataMigrationColumns(db); err != nil {
+		return err
+	}
+	if err := ensureUsageArchiveRunColumns(db); err != nil {
 		return err
 	}
 	if err := ensureUsageEventSnapshotColumns(db); err != nil {
@@ -2220,6 +2224,41 @@ func ensureUsageDataMigrationColumns(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func ensureUsageArchiveRunColumns(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(usage_archive_runs)`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existing[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	if _, ok := existing["requested_stage"]; ok {
+		return nil
+	}
+	_, err = db.Exec(`alter table usage_archive_runs add column requested_stage text`)
+	return err
 }
 
 func ensureCodexInspectionOwnershipColumns(db *sql.DB) error {

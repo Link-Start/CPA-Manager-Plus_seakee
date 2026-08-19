@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -266,6 +267,188 @@ func TestRepositoryArchiveVerifyResumeAndBoundedDelete(t *testing.T) {
 	}
 	if reimported.Inserted != 0 || reimported.Skipped != 1 {
 		t.Fatalf("reimport result = %#v", reimported)
+	}
+}
+
+func TestRepositoryPersistsAndRecoversRequestedArchiveStages(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()[:1]); err != nil {
+		t.Fatalf("insert usage event: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "requested-stage", 2_000, 10_000)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	requested, newlyRequested, err := repository.RequestStage(ctx, run.ID, StatusArchiving, 10_001)
+	if err != nil || !newlyRequested || requested.RequestedStage != StatusArchiving {
+		t.Fatalf("request archive stage = %#v new=%t err=%v", requested, newlyRequested, err)
+	}
+	requestedAgain, newlyRequested, err := repository.RequestStage(ctx, run.ID, StatusArchiving, 10_002)
+	if err != nil || newlyRequested || requestedAgain.UpdatedAtMS != requested.UpdatedAtMS {
+		t.Fatalf("repeat archive request = %#v new=%t err=%v", requestedAgain, newlyRequested, err)
+	}
+	if _, _, err := repository.RequestStage(ctx, run.ID, StatusVerifying, 10_003); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("request future stage error = %v, want invalid state", err)
+	}
+	if err := repository.ClearRequestedStage(ctx, run.ID, StatusArchiving); err != nil {
+		t.Fatalf("clear requested stage: %v", err)
+	}
+	if _, err := repository.BeginArchive(ctx, run.ID, 10_003); err != nil {
+		t.Fatalf("begin archive: %v", err)
+	}
+	if err := repository.RecoverRequestedStages(ctx); err != nil {
+		t.Fatalf("recover requested stages: %v", err)
+	}
+	recovered, err := repository.Run(ctx, run.ID)
+	if err != nil || recovered.RequestedStage != StatusArchiving {
+		t.Fatalf("recovered run = %#v err=%v", recovered, err)
+	}
+	if _, err := db.Exec(`update usage_archive_runs set
+		status = ?, resume_status = ?, requested_stage = null
+		where id = ?`, StatusFailed, StatusDeleting, run.ID); err != nil {
+		t.Fatalf("set failed fixture: %v", err)
+	}
+	if err := repository.RecoverRequestedStages(ctx); err != nil {
+		t.Fatalf("recover failed stage: %v", err)
+	}
+	failed, err := repository.Run(ctx, run.ID)
+	if err != nil || failed.RequestedStage != "" {
+		t.Fatalf("failed run was automatically requested: %#v err=%v", failed, err)
+	}
+	if _, err := db.Exec(`update usage_archive_runs set requested_stage = ? where id = ?`, StatusDeleting, run.ID); err != nil {
+		t.Fatalf("persist failed request fixture: %v", err)
+	}
+	if err := repository.RecoverRequestedStages(ctx); err != nil {
+		t.Fatalf("retain failed requested stage: %v", err)
+	}
+	failedRequested, err := repository.Run(ctx, run.ID)
+	if err != nil || failedRequested.RequestedStage != StatusDeleting {
+		t.Fatalf("persisted failed request was lost: %#v err=%v", failedRequested, err)
+	}
+	if _, err := db.Exec(`update usage_archive_runs set status = ?, requested_stage = null where id = ?`, StatusArchived, run.ID); err != nil {
+		t.Fatalf("set archived fixture: %v", err)
+	}
+	if err := repository.RecoverRequestedStages(ctx); err != nil {
+		t.Fatalf("recover archived stage: %v", err)
+	}
+	archived, err := repository.Run(ctx, run.ID)
+	if err != nil || archived.RequestedStage != "" {
+		t.Fatalf("archived run unexpectedly requested a next stage: %#v err=%v", archived, err)
+	}
+}
+
+func TestRepositorySerializesDuplicateRequestedArchiveStages(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()[:1]); err != nil {
+		t.Fatalf("insert usage event: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "concurrent-requested-stage", 2_000, 10_000)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	type result struct {
+		run       Run
+		requested bool
+		err       error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for index := 0; index < 2; index++ {
+		go func(nowMS int64) {
+			ready.Done()
+			<-start
+			requestedRun, newlyRequested, requestErr := repository.RequestStage(
+				ctx,
+				run.ID,
+				StatusArchiving,
+				nowMS,
+			)
+			results <- result{run: requestedRun, requested: newlyRequested, err: requestErr}
+		}(10_001 + int64(index))
+	}
+	ready.Wait()
+	close(start)
+
+	newRequestCount := 0
+	for index := 0; index < 2; index++ {
+		requestResult := <-results
+		if requestResult.err != nil {
+			t.Fatalf("concurrent stage request %d: %v", index, requestResult.err)
+		}
+		if requestResult.run.RequestedStage != StatusArchiving {
+			t.Fatalf("concurrent stage request %d = %#v", index, requestResult.run)
+		}
+		if requestResult.requested {
+			newRequestCount++
+		}
+	}
+	if newRequestCount != 1 {
+		t.Fatalf("new request count = %d, want 1", newRequestCount)
+	}
+}
+
+func TestRepositoryListsArchiveRunsWithFiltersCountsAndKeysetCursor(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	fixtures := []struct {
+		id        string
+		mode      string
+		status    string
+		createdAt int64
+	}{
+		{id: fmt.Sprintf("%032x", 4), mode: RunModeManual, status: StatusCompleted, createdAt: 400},
+		{id: fmt.Sprintf("%032x", 3), mode: RunModeManual, status: StatusFailed, createdAt: 300},
+		{id: fmt.Sprintf("%032x", 2), mode: RunModeRetention, status: StatusCompleted, createdAt: 200},
+		{id: fmt.Sprintf("%032x", 1), mode: RunModeManual, status: StatusCompleted, createdAt: 100},
+	}
+	for _, fixture := range fixtures {
+		if _, err := db.ExecContext(ctx, `insert into usage_archive_runs (
+			id, mode, schema_version, format, status, cutoff_timestamp_ms,
+			target_event_id, event_count, estimated_bytes, created_at_ms, updated_at_ms
+		) values (?, ?, ?, ?, ?, 1, 1, 1, 1, ?, ?)`,
+			fixture.id,
+			fixture.mode,
+			SchemaVersion,
+			FormatGzipJSONLV1,
+			fixture.status,
+			fixture.createdAt,
+			fixture.createdAt,
+		); err != nil {
+			t.Fatalf("insert run %s: %v", fixture.id, err)
+		}
+	}
+	repository := New(db)
+	first, err := repository.ListRuns(ctx, RunListFilter{Mode: RunModeManual, Limit: 2})
+	if err != nil {
+		t.Fatalf("list first page: %v", err)
+	}
+	if first.Total != 3 || !first.HasMore || len(first.Runs) != 2 ||
+		first.Runs[0].ID != fixtures[0].id || first.Runs[1].ID != fixtures[1].id ||
+		first.StatusCounts[StatusCompleted] != 2 || first.StatusCounts[StatusFailed] != 1 {
+		t.Fatalf("first page = %#v", first)
+	}
+	second, err := repository.ListRuns(ctx, RunListFilter{
+		Mode:              RunModeManual,
+		Limit:             2,
+		BeforeCreatedAtMS: first.Runs[1].CreatedAtMS,
+		BeforeID:          first.Runs[1].ID,
+	})
+	if err != nil {
+		t.Fatalf("list second page: %v", err)
+	}
+	if second.Total != 3 || second.HasMore || len(second.Runs) != 1 || second.Runs[0].ID != fixtures[3].id {
+		t.Fatalf("second page = %#v", second)
+	}
+	completed, err := repository.ListRuns(ctx, RunListFilter{Status: StatusCompleted, Limit: 10})
+	if err != nil || completed.Total != 3 || len(completed.Runs) != 3 {
+		t.Fatalf("completed filter = %#v err=%v", completed, err)
 	}
 }
 
