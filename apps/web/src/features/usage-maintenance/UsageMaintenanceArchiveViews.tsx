@@ -483,14 +483,7 @@ export function UsageMaintenanceOverviewView({
               <Button fullWidth onClick={() => onNavigate('create')}>
                 {t('usage_maintenance.create', { defaultValue: 'Create archive task' })}
               </Button>
-              <Button
-                fullWidth
-                variant="secondary"
-                disabled
-                title={t('usage_maintenance.phase_pending', {
-                  defaultValue: 'This view is added in the next implementation phase.',
-                })}
-              >
+              <Button fullWidth variant="secondary" onClick={() => onNavigate('transfer')}>
                 {t('usage_maintenance.transfer_title', { defaultValue: 'Import / export usage' })}
               </Button>
               <Button

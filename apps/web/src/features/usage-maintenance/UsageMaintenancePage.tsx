@@ -37,6 +37,7 @@ import {
 } from './UsageMaintenanceArchiveViews';
 import { UsageMaintenanceCreateView, type GuidedArchiveStage } from './UsageMaintenanceCreateView';
 import { UsageMaintenanceDeleteConfirmation } from './UsageMaintenanceDeleteConfirmation';
+import { UsageMaintenanceTransferView } from './UsageMaintenanceTransferView';
 import styles from './UsageMaintenancePage.module.scss';
 
 const isUnsupportedError = (error: unknown) => {
@@ -1361,6 +1362,18 @@ export function UsageMaintenancePage() {
           actionDisabled={archiveActionDisabled}
           actionTitle={archiveActionTitle}
           actionLabel={(run, action) => actionLabel(run, action)}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'transfer') {
+    return (
+      <div className={styles.page}>
+        <UsageMaintenanceTransferView
+          serviceBase={serviceBase}
+          managementKey={managementKey}
+          onBack={() => navigateTo('overview')}
         />
       </div>
     );
