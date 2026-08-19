@@ -25,6 +25,7 @@ const { mocks } = vi.hoisted(() => {
       showConfirmation: vi.fn(),
       probeUsageMaintenance: vi.fn(),
       getUsageMaintenance: vi.fn(),
+      getUsageArchive: vi.fn(),
       listUsageArchives: vi.fn(),
       previewUsageArchive: vi.fn(),
       createUsageArchive: vi.fn(),
@@ -79,6 +80,7 @@ vi.mock('@/services/api/usageService', () => ({
   usageServiceApi: {
     probeUsageMaintenance: mocks.probeUsageMaintenance,
     getUsageMaintenance: mocks.getUsageMaintenance,
+    getUsageArchive: mocks.getUsageArchive,
     listUsageArchives: mocks.listUsageArchives,
     previewUsageArchive: mocks.previewUsageArchive,
     createUsageArchive: mocks.createUsageArchive,
@@ -182,7 +184,7 @@ const getText = (node: ReactTestInstance): string =>
 const findButtons = (renderer: ReactTestRenderer, text: string) =>
   renderer.root.findAllByType('button').filter((button) => getText(button).includes(text));
 
-const renderResolvedPage = async (status = maintenance(), runs: UsageArchiveRunSummary[] = []) => {
+const renderOverviewPage = async (status = maintenance(), runs: UsageArchiveRunSummary[] = []) => {
   mocks.getUsageMaintenance.mockResolvedValue(status);
   mocks.listUsageArchives.mockResolvedValue({ runs } satisfies UsageArchiveList);
   let renderer!: ReactTestRenderer;
@@ -197,6 +199,13 @@ const renderResolvedPage = async (status = maintenance(), runs: UsageArchiveRunS
   return renderer;
 };
 
+const renderResolvedPage = async (status = maintenance(), runs: UsageArchiveRunSummary[] = []) => {
+  const renderer = await renderOverviewPage(status, runs);
+  const createButton = findButtons(renderer, 'Create archive task')[0];
+  if (createButton) act(() => createButton.props.onClick());
+  return renderer;
+};
+
 beforeEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
@@ -204,6 +213,9 @@ beforeEach(() => {
   mocks.availability.managerServiceBase = 'http://manager-a.local:18317';
   mocks.managementKey = 'management-key-a';
   mocks.probeUsageMaintenance.mockResolvedValue(undefined);
+  mocks.getUsageArchive.mockImplementation((_base: string, runId: string) =>
+    Promise.resolve(archiveStatus(archive('verified', runId)))
+  );
   mocks.previewUsageArchive.mockImplementation((_base: string, cutoffTimestampMS: number) =>
     Promise.resolve({
       cutoff_timestamp_ms: cutoffTimestampMS,
@@ -231,6 +243,166 @@ afterEach(() => {
 });
 
 describe('UsageMaintenancePage', () => {
+  it('opens with the maintenance overview and renders only API-backed storage metrics', async () => {
+    const renderer = await renderOverviewPage(
+      maintenance({
+        raw_event_count: 1_284_562,
+        raw_archived_event_count: 342_118,
+        raw_deleted_event_count: 2_845_700,
+      }),
+      [archive('completed', 'recent-run')]
+    );
+
+    const text = getText(renderer.root);
+    expect(text).toContain('Usage maintenance overview');
+    expect(text).toContain('1,284,562');
+    expect(text).toContain('342,118');
+    expect(text).toContain('2,845,700');
+    expect(text).toContain('recent-run');
+    expect(text).not.toContain('78%');
+    expect(findButtons(renderer, 'Create archive task')).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
+
+  it('loads archive history with exact server filters and cursor navigation', async () => {
+    const firstPage = {
+      runs: [archive('archiving', 'history-run-1')],
+      total: 2,
+      status_counts: { archiving: 1, failed: 1 },
+      next_cursor: 'cursor-2',
+    } satisfies UsageArchiveList;
+    const secondPage = {
+      runs: [archive('failed', 'history-run-2')],
+      total: 2,
+      status_counts: { archiving: 1, failed: 1 },
+    } satisfies UsageArchiveList;
+    const renderer = await renderOverviewPage(maintenance(), [archive('completed')]);
+    mocks.listUsageArchives.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+    await act(async () => {
+      findButtons(renderer, 'View all')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getText(renderer.root)).toContain('history-run-1');
+    expect(mocks.listUsageArchives).toHaveBeenLastCalledWith(
+      'http://manager-a.local:18317',
+      'management-key-a',
+      { status: undefined, limit: 20, cursor: undefined },
+      expect.any(AbortSignal)
+    );
+
+    await act(async () => {
+      findButtons(renderer, 'Next')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.listUsageArchives).toHaveBeenLastCalledWith(
+      'http://manager-a.local:18317',
+      'management-key-a',
+      { status: undefined, limit: 20, cursor: 'cursor-2' },
+      expect.any(AbortSignal)
+    );
+    expect(getText(renderer.root)).toContain('history-run-2');
+    act(() => renderer.unmount());
+  });
+
+  it('loads sanitized segment summaries when opening a completed task detail', async () => {
+    const run = archive('completed', 'detail-run');
+    mocks.getUsageArchive.mockResolvedValueOnce({
+      run,
+      segments: [
+        {
+          run_id: run.id,
+          sequence: 1,
+          status: 'verified',
+          first_event_id: 1,
+          last_event_id: 10,
+          min_timestamp_ms: 1_699_999_000_000,
+          max_timestamp_ms: 1_700_000_000_000,
+          event_count: 10,
+          uncompressed_bytes: 1_024,
+          compressed_bytes: 256,
+          created_at_ms: 1_700_000_000_000,
+          verified_at_ms: 1_700_000_001_000,
+        },
+      ],
+    });
+    const renderer = await renderOverviewPage(maintenance(), [run]);
+
+    await act(async () => {
+      findButtons(renderer, 'Details')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.getUsageArchive).toHaveBeenCalledWith(
+      'http://manager-a.local:18317',
+      run.id,
+      'management-key-a',
+      expect.any(AbortSignal)
+    );
+    expect(getText(renderer.root)).toContain('Archive task details');
+    expect(getText(renderer.root)).toContain('Segment summary');
+    expect(getText(renderer.root)).toContain('verified');
+    act(() => renderer.unmount());
+  });
+
+  it('refreshes active task details with maintenance polling', async () => {
+    vi.useFakeTimers();
+    const activeRun = archive('archiving', 'active-detail-run');
+    mocks.getUsageArchive.mockResolvedValue(archiveStatus(activeRun));
+    const renderer = await renderOverviewPage(maintenance({ active_run: activeRun }), [activeRun]);
+
+    await act(async () => {
+      findButtons(renderer, 'Details')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.getUsageArchive).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.getUsageMaintenance).toHaveBeenCalledTimes(2);
+    expect(mocks.getUsageArchive).toHaveBeenCalledTimes(2);
+    act(() => renderer.unmount());
+  });
+
+  it('stops a browser wait started from the active task view without cancelling server work', async () => {
+    const activeRun = archive('archiving', 'active-stop-run');
+    mocks.getUsageArchive.mockResolvedValueOnce(archiveStatus(activeRun));
+    const resume = deferred<unknown>();
+    mocks.resumeUsageArchive.mockImplementationOnce(() => resume.promise);
+    const renderer = await renderOverviewPage(maintenance({ active_run: activeRun }), [activeRun]);
+
+    await act(async () => {
+      findButtons(renderer, 'Details')[0].props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => findButtons(renderer, 'Continue archive')[0].props.onClick());
+    const signal = mocks.resumeUsageArchive.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    act(() => findButtons(renderer, 'Stop waiting')[0].props.onClick());
+    expect(signal.aborted).toBe(true);
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'The request was stopped. If an archive task was created, it remains recoverable in history.',
+      'warning'
+    );
+
+    await act(async () => {
+      resume.resolve({});
+      await Promise.resolve();
+    });
+    expect(mocks.deleteUsageArchive).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
   it('automatically previews the default and selected retention policy before the guided archive workflow', async () => {
     const renderer = await renderResolvedPage();
     expect(mocks.previewUsageArchive).toHaveBeenCalledTimes(1);
@@ -1190,6 +1362,7 @@ describe('UsageMaintenancePage', () => {
     });
     expect(oldSignal.aborted).toBe(true);
     expect(getText(renderer.root)).toContain('new-context-run');
+    act(() => findButtons(renderer, 'Create archive task')[0].props.onClick());
 
     const newPreview = deferred<UsageArchivePreview>();
     mocks.previewUsageArchive.mockImplementationOnce(() => newPreview.promise);

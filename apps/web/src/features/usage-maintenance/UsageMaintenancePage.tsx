@@ -19,13 +19,22 @@ import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability
 import { formatDateTime, formatFileSize } from '@/utils/format';
 import {
   getArchiveRunPresentationStage,
+  archiveHistoryFilterStatus,
   recommendRetentionDays,
   resolveRawEventRange,
   resolveRetentionCutoff,
   retentionPresetDays,
   toLocalDateTimeValue,
+  type ArchiveHistoryFilter,
+  type ArchiveRunAction,
   type RetentionSelection,
+  type UsageMaintenanceView,
 } from './usageMaintenanceModel';
+import {
+  UsageArchiveHistoryView,
+  UsageArchiveRunView,
+  UsageMaintenanceOverviewView,
+} from './UsageMaintenanceArchiveViews';
 import styles from './UsageMaintenancePage.module.scss';
 
 const isUnsupportedError = (error: unknown) => {
@@ -311,6 +320,16 @@ export function UsageMaintenancePage() {
   const serviceBase = availability.managerServiceBase;
   const [maintenance, setMaintenance] = useState<UsageMaintenanceStatus | null>(null);
   const [archives, setArchives] = useState<UsageArchiveRunSummary[]>([]);
+  const [view, setView] = useState<UsageMaintenanceView>('overview');
+  const [historyFilter, setHistoryFilter] = useState<ArchiveHistoryFilter>('all');
+  const [historyCursor, setHistoryCursor] = useState<string | undefined>();
+  const [historyCursorStack, setHistoryCursorStack] = useState<string[]>([]);
+  const [historyList, setHistoryList] = useState<UsageArchiveList>({ runs: [] });
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedArchive, setSelectedArchive] = useState<UsageArchiveStatus | null>(null);
+  const [selectedArchiveLoading, setSelectedArchiveLoading] = useState(false);
+  const [selectedArchiveRefreshToken, setSelectedArchiveRefreshToken] = useState(0);
   const [preview, setPreview] = useState<UsageArchivePreview | null>(null);
   const [retentionSelection, setRetentionSelection] =
     useState<RetentionSelection>(defaultRetentionDays);
@@ -337,6 +356,10 @@ export function UsageMaintenancePage() {
   const previewGenerationRef = useRef(0);
   const operationContextRef = useRef({ serviceBase, managementKey });
   const contextGenerationRef = useRef(0);
+  const historyControllerRef = useRef<AbortController | null>(null);
+  const historyGenerationRef = useRef(0);
+  const selectedArchiveControllerRef = useRef<AbortController | null>(null);
+  const selectedArchiveGenerationRef = useRef(0);
 
   const invalidatePreview = useCallback((resetState = false) => {
     previewGenerationRef.current += 1;
@@ -363,6 +386,12 @@ export function UsageMaintenancePage() {
       previewGenerationRef.current += 1;
       previewControllerRef.current?.abort();
       previewControllerRef.current = null;
+      historyGenerationRef.current += 1;
+      historyControllerRef.current?.abort();
+      historyControllerRef.current = null;
+      selectedArchiveGenerationRef.current += 1;
+      selectedArchiveControllerRef.current?.abort();
+      selectedArchiveControllerRef.current = null;
       contextGenerationRef.current += 1;
     };
   }, []);
@@ -447,6 +476,16 @@ export function UsageMaintenancePage() {
     );
     setMaintenance(null);
     setArchives([]);
+    setView('overview');
+    setHistoryFilter('all');
+    setHistoryCursor(undefined);
+    setHistoryCursorStack([]);
+    setHistoryList({ runs: [] });
+    setHistoryLoading(false);
+    setSelectedRunId(null);
+    setSelectedArchive(null);
+    setSelectedArchiveLoading(false);
+    setSelectedArchiveRefreshToken(0);
     setPreview(null);
     setPreviewLoading(false);
     setPreviewError(null);
@@ -460,6 +499,104 @@ export function UsageMaintenancePage() {
       invalidatePreview(false);
     };
   }, [invalidateOperation, invalidatePreview, managementKey, serviceBase]);
+
+  const loadHistory = useCallback(async () => {
+    if (!mountedRef.current || !serviceBase || view !== 'history') return;
+    const generation = ++historyGenerationRef.current;
+    historyControllerRef.current?.abort();
+    const controller = new AbortController();
+    historyControllerRef.current = controller;
+    setHistoryLoading(true);
+    try {
+      const result = await usageServiceApi.listUsageArchives(
+        serviceBase,
+        managementKey,
+        {
+          status: archiveHistoryFilterStatus(historyFilter),
+          limit: 20,
+          cursor: historyCursor,
+        },
+        controller.signal
+      );
+      if (controller.signal.aborted || generation !== historyGenerationRef.current) return;
+      if (!isUsageArchiveList(result)) {
+        setError(
+          t('usage_maintenance.archive_response_invalid', {
+            defaultValue: 'The server returned an invalid archive task response.',
+          })
+        );
+        return;
+      }
+      setHistoryList(result);
+      setError(null);
+    } catch (cause) {
+      if (controller.signal.aborted || generation !== historyGenerationRef.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (generation === historyGenerationRef.current) {
+        historyControllerRef.current = null;
+        setHistoryLoading(false);
+      }
+    }
+  }, [historyCursor, historyFilter, managementKey, serviceBase, t, view]);
+
+  useEffect(() => {
+    if (view !== 'history') return;
+    void loadHistory();
+    return () => {
+      historyGenerationRef.current += 1;
+      historyControllerRef.current?.abort();
+      historyControllerRef.current = null;
+    };
+  }, [loadHistory, view]);
+
+  useEffect(() => {
+    if (!selectedRunId || (view !== 'detail' && view !== 'active') || !serviceBase) return;
+    const generation = ++selectedArchiveGenerationRef.current;
+    selectedArchiveControllerRef.current?.abort();
+    const controller = new AbortController();
+    selectedArchiveControllerRef.current = controller;
+    setSelectedArchiveLoading(true);
+    setSelectedArchive(null);
+    const loadSelectedArchive = async () => {
+      try {
+        const result = await usageServiceApi.getUsageArchive(
+          serviceBase,
+          selectedRunId,
+          managementKey,
+          controller.signal
+        );
+        if (controller.signal.aborted || generation !== selectedArchiveGenerationRef.current)
+          return;
+        if (!isUsageArchiveStatus(result) || result.run.id !== selectedRunId) {
+          setError(
+            t('usage_maintenance.archive_response_invalid', {
+              defaultValue: 'The server returned an invalid archive task response.',
+            })
+          );
+          return;
+        }
+        setSelectedArchive(result);
+        setError(null);
+      } catch (cause) {
+        if (controller.signal.aborted || generation !== selectedArchiveGenerationRef.current)
+          return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (generation === selectedArchiveGenerationRef.current) {
+          selectedArchiveControllerRef.current = null;
+          setSelectedArchiveLoading(false);
+        }
+      }
+    };
+    void loadSelectedArchive();
+    return () => {
+      controller.abort();
+      if (selectedArchiveControllerRef.current === controller) {
+        selectedArchiveControllerRef.current = null;
+      }
+    };
+  }, [managementKey, selectedArchiveRefreshToken, selectedRunId, serviceBase, t, view]);
 
   const load = useCallback(
     async ({ background = false }: { background?: boolean } = {}) => {
@@ -547,10 +684,16 @@ export function UsageMaintenancePage() {
   useEffect(() => {
     if (!shouldPollMaintenance || working || !serviceBase) return;
     const timer = setInterval(() => {
-      if (!loadControllerRef.current) void load({ background: true });
+      if (!loadControllerRef.current) {
+        void load({ background: true }).then(() => {
+          if (mountedRef.current && view === 'active' && selectedRunId) {
+            setSelectedArchiveRefreshToken((value) => value + 1);
+          }
+        });
+      }
     }, activeRefreshIntervalMs);
     return () => clearInterval(timer);
-  }, [load, serviceBase, shouldPollMaintenance, working]);
+  }, [load, selectedRunId, serviceBase, shouldPollMaintenance, view, working]);
 
   const cutoffTimestamp = useMemo(
     () => resolveRetentionCutoff(retentionSelection, customCutoff, referenceNowMS),
@@ -699,10 +842,13 @@ export function UsageMaintenancePage() {
     );
 
   const cancelGuidedArchive = () => {
-    if (guidedArchiveStage === 'idle' || guidedArchiveStage === 'complete') return;
+    const guidedOperation = guidedArchiveStage !== 'idle' && guidedArchiveStage !== 'complete';
+    if (!guidedOperation && !working) return;
     invalidateOperation(true);
-    setGuidedArchiveStage('idle');
-    setGuidedArchiveRunId(null);
+    if (guidedOperation) {
+      setGuidedArchiveStage('idle');
+      setGuidedArchiveRunId(null);
+    }
     showNotification(
       t('usage_maintenance.archive_prepare_cancelled', {
         defaultValue:
@@ -883,8 +1029,12 @@ export function UsageMaintenancePage() {
         );
       }
       await load({ background: true });
+      if (view === 'history') await loadHistory();
       if (operationIsCurrent(operation)) {
         setPreviewRefreshToken((value) => value + 1);
+        if (selectedRunId === run.id) {
+          setSelectedArchiveRefreshToken((value) => value + 1);
+        }
       }
     } catch (cause) {
       if (operationIsCurrent(operation)) {
@@ -1069,6 +1219,62 @@ export function UsageMaintenancePage() {
     recommendedRetentionDays !== null &&
     recommendedRetentionDays !== retentionSelection;
 
+  const navigateTo = (nextView: UsageMaintenanceView) => {
+    if (nextView !== 'detail' && nextView !== 'active') {
+      setSelectedRunId(null);
+      setSelectedArchive(null);
+    }
+    setError(null);
+    setView(nextView);
+  };
+
+  const openRun = (run: UsageArchiveRunSummary) => {
+    const isActive =
+      maintenance?.active_run?.id === run.id || archiveProgressStatuses.has(run.status);
+    setSelectedRunId(run.id);
+    setSelectedArchive(null);
+    setError(null);
+    setView(isActive ? 'active' : 'detail');
+  };
+
+  const updateHistoryFilter = (filter: ArchiveHistoryFilter) => {
+    setHistoryList({ runs: [] });
+    setHistoryFilter(filter);
+    setHistoryCursor(undefined);
+    setHistoryCursorStack([]);
+  };
+
+  const nextHistoryPage = () => {
+    if (!historyList.next_cursor) return;
+    setHistoryList({ runs: [] });
+    setHistoryCursorStack((stack) => [...stack, historyCursor ?? '']);
+    setHistoryCursor(historyList.next_cursor);
+  };
+
+  const previousHistoryPage = () => {
+    setHistoryList({ runs: [] });
+    setHistoryCursorStack((stack) => {
+      if (stack.length === 0) return stack;
+      const previous = stack[stack.length - 1];
+      setHistoryCursor(previous || undefined);
+      return stack.slice(0, -1);
+    });
+  };
+
+  const archiveActionDisabled = (run: UsageArchiveRunSummary, action: ArchiveRunAction) => {
+    const waitingForMigration =
+      archiveReadinessPending && actionRequiresMigrationReady(run, action);
+    return waitingForMigration || (actionIsDestructive(run, action) && deleteDisabled);
+  };
+
+  const archiveActionTitle = (run: UsageArchiveRunSummary, action: ArchiveRunAction) => {
+    if (archiveReadinessPending && actionRequiresMigrationReady(run, action)) {
+      return archiveReadinessHint;
+    }
+    if (actionIsDestructive(run, action)) return deleteReadinessHint || undefined;
+    return undefined;
+  };
+
   if (availability.checking || loading) return <LoadingSpinner />;
   if (unsupported) {
     return (
@@ -1084,6 +1290,87 @@ export function UsageMaintenancePage() {
             })}
           </p>
         </section>
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'overview') {
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageMaintenanceOverviewView
+          maintenance={maintenance}
+          archives={archives}
+          working={working}
+          onRefresh={refreshMaintenance}
+          onNavigate={navigateTo}
+          onOpenRun={openRun}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && view === 'history') {
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageArchiveHistoryView
+          archiveList={historyList}
+          filter={historyFilter}
+          loading={historyLoading}
+          working={working}
+          canGoBack={historyCursorStack.length > 0}
+          onFilter={updateHistoryFilter}
+          onNextPage={nextHistoryPage}
+          onPreviousPage={previousHistoryPage}
+          onRefresh={() => void loadHistory()}
+          onNavigate={navigateTo}
+          onOpenRun={openRun}
+          onAction={confirmAction}
+          actionDisabled={archiveActionDisabled}
+          actionTitle={archiveActionTitle}
+          actionLabel={(run, action) => actionLabel(run, action)}
+        />
+      </div>
+    );
+  }
+
+  if (maintenance && (view === 'detail' || view === 'active')) {
+    if (selectedArchiveLoading) return <LoadingSpinner />;
+    if (!selectedArchive) {
+      return (
+        <div className={styles.page}>
+          <div className={styles.error}>
+            {error ??
+              t('usage_maintenance.archive_response_invalid', {
+                defaultValue: 'The server returned an invalid archive task response.',
+              })}
+          </div>
+          <Button variant="secondary" onClick={() => navigateTo('history')}>
+            {t('common.back')}
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <div className={styles.page}>
+        {error ? <div className={styles.error}>{error}</div> : null}
+        <UsageArchiveRunView
+          archive={selectedArchive}
+          active={view === 'active'}
+          maintenance={maintenance}
+          working={working}
+          onBack={() => navigateTo('history')}
+          onRefresh={() => {
+            setSelectedArchiveRefreshToken((value) => value + 1);
+            void load({ background: true });
+          }}
+          onStopWaiting={cancelGuidedArchive}
+          onAction={confirmAction}
+          actionDisabled={archiveActionDisabled}
+          actionTitle={archiveActionTitle}
+          actionLabel={(run, action) => actionLabel(run, action)}
+        />
       </div>
     );
   }
@@ -1106,6 +1393,11 @@ export function UsageMaintenancePage() {
           </p>
         </div>
         <div className={styles.actions}>
+          {view !== 'overview' ? (
+            <Button variant="ghost" size="sm" onClick={() => navigateTo('overview')}>
+              {t('common.back')}
+            </Button>
+          ) : null}
           <Button variant="secondary" size="sm" onClick={refreshMaintenance} disabled={working}>
             {t('common.refresh')}
           </Button>

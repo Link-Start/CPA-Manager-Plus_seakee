@@ -11,6 +11,20 @@ export type ArchiveRunPresentationStage =
   | 'completed'
   | 'attention';
 
+export type UsageMaintenanceView =
+  | 'overview'
+  | 'create'
+  | 'active'
+  | 'history'
+  | 'detail'
+  | 'transfer'
+  | 'advanced'
+  | 'diagnostics';
+
+export type ArchiveHistoryFilter = 'all' | 'archiving' | 'archived' | 'verified' | 'failed';
+
+export type ArchiveRunAction = 'resume' | 'verify' | 'delete';
+
 export type RawEventRangeState =
   | { kind: 'empty' }
   | { kind: 'unavailable' }
@@ -95,4 +109,29 @@ export const getArchiveRunPresentationStage = (run: {
     return 'verifying';
   }
   return run.status === 'previewed' || run.status === 'archiving' ? 'archiving' : 'attention';
+};
+
+export const resolveProgressPercent = (completed: number, total: number): number | null => {
+  if (!Number.isFinite(completed) || !Number.isFinite(total) || completed < 0 || total <= 0) {
+    return null;
+  }
+  return Math.min(100, Math.max(0, (completed / total) * 100));
+};
+
+export const archiveHistoryFilterStatus = (filter: ArchiveHistoryFilter): string | undefined =>
+  filter === 'all' ? undefined : filter;
+
+export const getArchiveRunAction = (status: string): ArchiveRunAction | null => {
+  if (
+    status === 'previewed' ||
+    status === 'archiving' ||
+    status === 'verifying' ||
+    status === 'deleting' ||
+    status === 'failed'
+  ) {
+    return 'resume';
+  }
+  if (status === 'archived') return 'verify';
+  if (status === 'verified') return 'delete';
+  return null;
 };

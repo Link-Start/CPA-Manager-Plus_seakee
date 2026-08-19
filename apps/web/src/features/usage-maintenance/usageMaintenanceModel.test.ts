@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  archiveHistoryFilterStatus,
+  getArchiveRunAction,
   getArchiveRunPresentationStage,
   recommendRetentionDays,
   resolveRawEventRange,
+  resolveProgressPercent,
   resolveRetentionCutoff,
   toLocalDateTimeValue,
 } from './usageMaintenanceModel';
@@ -68,5 +71,22 @@ describe('usage maintenance model', () => {
     expect(getArchiveRunPresentationStage({ status: 'deleting' })).toBe('deleting');
     expect(getArchiveRunPresentationStage({ status: 'completed' })).toBe('completed');
     expect(getArchiveRunPresentationStage({ status: 'cancelled' })).toBe('attention');
+  });
+
+  it('derives determinate progress only from valid non-zero totals', () => {
+    expect(resolveProgressPercent(25, 100)).toBe(25);
+    expect(resolveProgressPercent(120, 100)).toBe(100);
+    expect(resolveProgressPercent(-1, 100)).toBeNull();
+    expect(resolveProgressPercent(0, 0)).toBeNull();
+    expect(resolveProgressPercent(Number.NaN, 100)).toBeNull();
+  });
+
+  it('maps history filters and workflow actions to exact API states', () => {
+    expect(archiveHistoryFilterStatus('all')).toBeUndefined();
+    expect(archiveHistoryFilterStatus('verified')).toBe('verified');
+    expect(getArchiveRunAction('archived')).toBe('verify');
+    expect(getArchiveRunAction('verified')).toBe('delete');
+    expect(getArchiveRunAction('failed')).toBe('resume');
+    expect(getArchiveRunAction('completed')).toBeNull();
   });
 });
