@@ -502,8 +502,28 @@ export interface UsageImportSession {
   updated_at_ms: number;
   expires_at_ms: number;
   retryable?: boolean;
+  has_error?: boolean;
   error?: string;
+  error_code?: string;
   result?: UsageImportResponse;
+}
+
+export interface UsageImportSessionListOptions {
+  status?: UsageImportSessionStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface UsageImportSessionList {
+  sessions: UsageImportSession[];
+  total: number;
+  status_counts: Partial<Record<UsageImportSessionStatus, number>>;
+  next_cursor?: string;
+  active_sessions: number;
+  max_sessions: number;
+  chunk_size_bytes: number;
+  disk_quota_bytes: number;
+  ttl_seconds: number;
 }
 
 export type UsageArchiveRunStatus =
@@ -519,6 +539,17 @@ export type UsageArchiveRunStatus =
   | string;
 
 export type UsageArchiveResumeStage = 'archiving' | 'verifying' | 'deleting';
+
+export type UsageArchiveActionOptions =
+  | { background?: boolean; wait?: never }
+  | { background?: never; wait?: boolean };
+
+export interface UsageArchiveListOptions {
+  status?: UsageArchiveRunStatus;
+  mode?: 'manual' | 'retention';
+  limit?: number;
+  cursor?: string;
+}
 
 export interface UsageArchivePreview {
   cutoff_timestamp_ms: number;
@@ -536,6 +567,7 @@ export interface UsageArchiveRunSummary {
   mode: 'manual' | 'retention' | string;
   status: UsageArchiveRunStatus;
   resume_status?: UsageArchiveRunStatus;
+  requested_stage?: UsageArchiveResumeStage;
   cutoff_timestamp_ms: number;
   target_event_id: number;
   event_count: number;
@@ -578,6 +610,9 @@ export interface UsageArchiveStatus {
 
 export interface UsageArchiveList {
   runs: UsageArchiveRunSummary[];
+  total?: number;
+  status_counts?: Record<string, number>;
+  next_cursor?: string;
 }
 
 export interface UsageMaintenanceLock {
@@ -616,6 +651,18 @@ export interface UsageMaintenanceStatus {
     migration_ready: boolean;
     hourly_aggregate_ready: boolean;
     archive_delete_enabled: boolean;
+  };
+  migration_coverage?: {
+    status: string;
+    watermark_event_id: number;
+    target_event_id: number;
+    complete: boolean;
+  };
+  hourly_aggregate_coverage?: {
+    status: string;
+    watermark_event_id: number;
+    target_event_id: number;
+    complete: boolean;
   };
   storage: {
     page_size: number;
@@ -2719,7 +2766,8 @@ const runUsageArchiveAction = async (
   action: 'resume' | 'verify' | 'delete',
   managementKey?: string,
   signal?: AbortSignal,
-  expectedStage?: UsageArchiveResumeStage
+  expectedStage?: UsageArchiveResumeStage,
+  options: UsageArchiveActionOptions = {}
 ): Promise<UsageArchiveStatus> =>
   withUsageServiceError(async () => {
     const response = await axios.post<UsageArchiveStatus>(
@@ -2728,7 +2776,11 @@ const runUsageArchiveAction = async (
       {
         timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
         headers: authHeaders(managementKey),
-        params: expectedStage ? { expected_stage: expectedStage } : undefined,
+        params: {
+          ...(expectedStage ? { expected_stage: expectedStage } : {}),
+          ...(options.background !== undefined ? { background: options.background } : {}),
+          ...(options.wait !== undefined ? { wait: options.wait } : {}),
+        },
         signal,
       }
     );
@@ -3417,6 +3469,65 @@ export const usageServiceApi = {
     });
   },
 
+  listUsageImportSessions: async (
+    base: string,
+    managementKey?: string,
+    options: UsageImportSessionListOptions = {},
+    signal?: AbortSignal
+  ): Promise<UsageImportSessionList> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      const sessions = [...demoUsageImportSessions.values()]
+        .filter((session) => !options.status || session.status === options.status)
+        .sort(
+          (left, right) =>
+            right.updated_at_ms - left.updated_at_ms || right.id.localeCompare(left.id)
+        );
+      const limit = options.limit ?? 20;
+      const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0);
+      const page = sessions.slice(offset, offset + limit).map(cloneUsageImportSession);
+      const statusCounts = [...demoUsageImportSessions.values()].reduce<
+        Partial<Record<UsageImportSessionStatus, number>>
+      >((counts, session) => {
+        counts[session.status] = (counts[session.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const activeSessions = [...demoUsageImportSessions.values()].filter(
+        (session) =>
+          ['uploading', 'ready', 'processing'].includes(session.status) ||
+          (session.status === 'failed' && session.retryable === true)
+      ).length;
+      return {
+        sessions: page,
+        total: sessions.length,
+        status_counts: statusCounts,
+        next_cursor:
+          offset + page.length < sessions.length ? String(offset + page.length) : undefined,
+        active_sessions: activeSessions,
+        max_sessions: 4,
+        chunk_size_bytes: 4 * 1024 * 1024,
+        disk_quota_bytes: 512 * 1024 * 1024,
+        ttl_seconds: 24 * 60 * 60,
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageImportSessionList>(
+        buildUrl(base, '/v0/management/usage/import-sessions'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          params: {
+            ...(options.status ? { status: options.status } : {}),
+            limit: options.limit ?? 20,
+            ...(options.cursor ? { cursor: options.cursor } : {}),
+          },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
   uploadUsageImportSessionChunk: async (
     base: string,
     sessionId: string,
@@ -3546,11 +3657,30 @@ export const usageServiceApi = {
   listUsageArchives: async (
     base: string,
     managementKey?: string,
-    limit = 20,
+    limitOrOptions: number | UsageArchiveListOptions = 20,
     signal?: AbortSignal
   ): Promise<UsageArchiveList> => {
+    const options: UsageArchiveListOptions =
+      typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
     if (__DEMO_SITE__ && isDemoMode()) {
-      return getDemoUsageArchives(limit);
+      const demo = getDemoUsageArchives(100);
+      const modeFiltered = demo.runs.filter((run) => !options.mode || run.mode === options.mode);
+      const filtered = modeFiltered.filter(
+        (run) => !options.status || run.status === options.status
+      );
+      const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0);
+      const limit = options.limit ?? 20;
+      const runs = filtered.slice(offset, offset + limit);
+      return {
+        runs,
+        total: filtered.length,
+        status_counts: modeFiltered.reduce<Record<string, number>>((counts, run) => {
+          counts[run.status] = (counts[run.status] ?? 0) + 1;
+          return counts;
+        }, {}),
+        next_cursor:
+          offset + runs.length < filtered.length ? String(offset + runs.length) : undefined,
+      };
     }
     return withUsageServiceError(async () => {
       const response = await axios.get<UsageArchiveList>(
@@ -3558,7 +3688,12 @@ export const usageServiceApi = {
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
-          params: { limit },
+          params: {
+            ...(options.status ? { status: options.status } : {}),
+            ...(options.mode ? { mode: options.mode } : {}),
+            limit: options.limit ?? 20,
+            ...(options.cursor ? { cursor: options.cursor } : {}),
+          },
           signal,
         }
       );
@@ -3593,36 +3728,47 @@ export const usageServiceApi = {
     runId: string,
     managementKey?: string,
     signal?: AbortSignal,
-    expectedStage?: UsageArchiveResumeStage
+    expectedStage?: UsageArchiveResumeStage,
+    options?: UsageArchiveActionOptions
   ): Promise<UsageArchiveStatus> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return resumeDemoUsageArchive(runId);
     }
-    return runUsageArchiveAction(base, runId, 'resume', managementKey, signal, expectedStage);
+    return runUsageArchiveAction(
+      base,
+      runId,
+      'resume',
+      managementKey,
+      signal,
+      expectedStage,
+      options
+    );
   },
 
   verifyUsageArchive: async (
     base: string,
     runId: string,
     managementKey?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: UsageArchiveActionOptions
   ): Promise<UsageArchiveStatus> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return verifyDemoUsageArchive(runId);
     }
-    return runUsageArchiveAction(base, runId, 'verify', managementKey, signal);
+    return runUsageArchiveAction(base, runId, 'verify', managementKey, signal, undefined, options);
   },
 
   deleteUsageArchive: async (
     base: string,
     runId: string,
     managementKey?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: UsageArchiveActionOptions
   ): Promise<UsageArchiveStatus> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return deleteDemoUsageArchive(runId);
     }
-    return runUsageArchiveAction(base, runId, 'delete', managementKey, signal);
+    return runUsageArchiveAction(base, runId, 'delete', managementKey, signal, undefined, options);
   },
 
   probeUsageMaintenance: async (

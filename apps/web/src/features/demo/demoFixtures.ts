@@ -208,13 +208,21 @@ export const createDemoUsageArchive = (cutoffTimestampMs: number): UsageArchiveS
 export const getDemoUsageArchive = (runId: string): UsageArchiveStatus =>
   clone(requireDemoUsageArchive(runId));
 
-export const getDemoUsageArchives = (limit = 20): UsageArchiveList => ({
-  runs: demoUsageArchiveStatuses
+export const getDemoUsageArchives = (limit = 20): UsageArchiveList => {
+  const runs = demoUsageArchiveStatuses
     .slice()
     .sort((left, right) => right.run.created_at_ms - left.run.created_at_ms)
     .slice(0, limit)
-    .map((item) => summarizeDemoUsageArchive(item.run)),
-});
+    .map((item) => summarizeDemoUsageArchive(item.run));
+  return {
+    runs,
+    total: demoUsageArchiveStatuses.length,
+    status_counts: demoUsageArchiveStatuses.reduce<Record<string, number>>((counts, item) => {
+      counts[item.run.status] = (counts[item.run.status] ?? 0) + 1;
+      return counts;
+    }, {}),
+  };
+};
 
 export const resumeDemoUsageArchive = (runId: string): UsageArchiveStatus => {
   const status = requireDemoUsageArchive(runId);
@@ -323,8 +331,7 @@ export const deleteDemoUsageArchive = (runId: string): UsageArchiveStatus => {
 export const getDemoUsageMaintenance = (): UsageMaintenanceStatus => {
   const active = demoUsageArchiveStatuses.find((item) => demoUsageArchiveIsActive(item.run));
   const dynamicArchived = demoUsageArchiveStatuses.reduce(
-    (sum, item) =>
-      sum + Math.max(0, item.run.archived_event_count - item.run.deleted_event_count),
+    (sum, item) => sum + Math.max(0, item.run.archived_event_count - item.run.deleted_event_count),
     0
   );
   const dynamicDeleted = demoUsageArchiveStatuses
@@ -358,6 +365,18 @@ export const getDemoUsageMaintenance = (): UsageMaintenanceStatus => {
       migration_ready: true,
       hourly_aggregate_ready: true,
       archive_delete_enabled: true,
+    },
+    migration_coverage: {
+      status: 'completed',
+      watermark_event_id: 184_260,
+      target_event_id: 184_260,
+      complete: true,
+    },
+    hourly_aggregate_coverage: {
+      status: 'ready',
+      watermark_event_id: 184_260,
+      target_event_id: 184_260,
+      complete: true,
     },
     storage: {
       page_size: 4_096,

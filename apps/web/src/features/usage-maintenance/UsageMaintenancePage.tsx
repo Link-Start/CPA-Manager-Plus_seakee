@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import {
   usageServiceApi,
+  type UsageArchiveList,
   type UsageArchivePreview,
   type UsageArchiveResumeStage,
   type UsageArchiveRunStatus,
@@ -103,6 +104,12 @@ const hasOptionalNumber = (value: Record<string, unknown>, key: string) =>
 const hasOptionalString = (value: Record<string, unknown>, key: string) =>
   value[key] === undefined || hasString(value, key);
 
+const isNumberRecord = (value: unknown) =>
+  isRecord(value) &&
+  Object.values(value).every(
+    (candidate) => typeof candidate === 'number' && Number.isFinite(candidate)
+  );
+
 const isUsageArchivePreview = (value: unknown): value is UsageArchivePreview =>
   isRecord(value) &&
   hasNumber(value, 'cutoff_timestamp_ms') &&
@@ -119,6 +126,7 @@ const isUsageArchiveRunSummary = (value: unknown): value is UsageArchiveRunSumma
     hasString(value, 'mode') &&
     hasString(value, 'status') &&
     hasOptionalString(value, 'resume_status') &&
+    hasOptionalString(value, 'requested_stage') &&
     hasNumber(value, 'cutoff_timestamp_ms') &&
     hasNumber(value, 'target_event_id') &&
     hasNumber(value, 'event_count') &&
@@ -140,8 +148,13 @@ const isUsageArchiveRunSummary = (value: unknown): value is UsageArchiveRunSumma
   );
 };
 
-const isUsageArchiveList = (value: unknown): value is { runs: UsageArchiveRunSummary[] } =>
-  isRecord(value) && Array.isArray(value.runs) && value.runs.every(isUsageArchiveRunSummary);
+const isUsageArchiveList = (value: unknown): value is UsageArchiveList =>
+  isRecord(value) &&
+  Array.isArray(value.runs) &&
+  value.runs.every(isUsageArchiveRunSummary) &&
+  hasOptionalNumber(value, 'total') &&
+  (value.status_counts === undefined || isNumberRecord(value.status_counts)) &&
+  hasOptionalString(value, 'next_cursor');
 
 const isUsageArchiveSegmentSummary = (value: unknown): value is UsageArchiveSegmentSummary => {
   if (!isRecord(value)) return false;
@@ -174,6 +187,13 @@ const isUsageMaintenanceLock = (value: unknown) =>
   hasNumber(value, 'acquired_at_ms') &&
   hasNumber(value, 'updated_at_ms');
 
+const isUsageMaintenanceCoverage = (value: unknown) =>
+  isRecord(value) &&
+  hasString(value, 'status') &&
+  hasNumber(value, 'watermark_event_id') &&
+  hasNumber(value, 'target_event_id') &&
+  hasBoolean(value, 'complete');
+
 const isUsageMaintenanceStatus = (value: unknown): value is UsageMaintenanceStatus => {
   if (!isRecord(value)) return false;
   const migration = value.migration;
@@ -185,6 +205,18 @@ const isUsageMaintenanceStatus = (value: unknown): value is UsageMaintenanceStat
   }
   if (value.active_run !== undefined && !isUsageArchiveRunSummary(value.active_run)) return false;
   if (value.active_lock !== undefined && !isUsageMaintenanceLock(value.active_lock)) return false;
+  if (
+    value.migration_coverage !== undefined &&
+    !isUsageMaintenanceCoverage(value.migration_coverage)
+  ) {
+    return false;
+  }
+  if (
+    value.hourly_aggregate_coverage !== undefined &&
+    !isUsageMaintenanceCoverage(value.hourly_aggregate_coverage)
+  ) {
+    return false;
+  }
   return (
     hasNumber(value, 'raw_event_count') &&
     hasOptionalNumber(value, 'raw_min_timestamp_ms') &&
@@ -837,7 +869,10 @@ export function UsageMaintenancePage() {
         setGuidedArchiveRunId(null);
       }
       const destructive = actionIsDestructive(run, action);
-      if (!destructive && (updated.run.status === 'deleting' || updated.run.status === 'completed')) {
+      if (
+        !destructive &&
+        (updated.run.status === 'deleting' || updated.run.status === 'completed')
+      ) {
         showConcurrentDeleteWarning();
       } else {
         showNotification(
@@ -1376,25 +1411,25 @@ export function UsageMaintenancePage() {
                           defaultValue:
                             'Some older raw events are already protected by an archive. Review archive history before changing the retention period.',
                         })
-                    : recommendedPresetAvailable
-                      ? t('usage_maintenance.preview_empty_recommendation', {
-                          defaultValue:
-                            'The oldest raw event is {{oldest}}. Keep {{days}} days to include older events while preserving recent data.',
-                          oldest:
-                            rawEventRange?.kind === 'available'
-                              ? formatTime(rawEventRange.minTimestampMS)
-                              : '-',
-                          days: recommendedRetentionDays,
-                        })
-                      : rawEventRange?.kind === 'available'
-                        ? t('usage_maintenance.preview_empty_recent', {
+                      : recommendedPresetAvailable
+                        ? t('usage_maintenance.preview_empty_recommendation', {
                             defaultValue:
-                              'All raw events are newer than the standard retention presets. Use a custom date only if you intentionally want to archive recent data.',
+                              'The oldest raw event is {{oldest}}. Keep {{days}} days to include older events while preserving recent data.',
+                            oldest:
+                              rawEventRange?.kind === 'available'
+                                ? formatTime(rawEventRange.minTimestampMS)
+                                : '-',
+                            days: recommendedRetentionDays,
                           })
-                        : t('usage_maintenance.preview_empty_generic', {
-                            defaultValue:
-                              'Try a shorter retention period or choose a custom cutoff after the oldest event.',
-                          })}
+                        : rawEventRange?.kind === 'available'
+                          ? t('usage_maintenance.preview_empty_recent', {
+                              defaultValue:
+                                'All raw events are newer than the standard retention presets. Use a custom date only if you intentionally want to archive recent data.',
+                            })
+                          : t('usage_maintenance.preview_empty_generic', {
+                              defaultValue:
+                                'Try a shorter retention period or choose a custom cutoff after the oldest event.',
+                            })}
                 </p>
                 {recommendedPresetAvailable ? (
                   <Button

@@ -158,6 +158,18 @@ describe('usage maintenance capability probe', () => {
         hourly_aggregate_ready: true,
         archive_delete_enabled: true,
       },
+      migration_coverage: {
+        status: 'completed',
+        watermark_event_id: 2,
+        target_event_id: 2,
+        complete: true,
+      },
+      hourly_aggregate_coverage: {
+        status: 'ready',
+        watermark_event_id: 2,
+        target_event_id: 2,
+        complete: true,
+      },
       storage: {
         page_size: 4_096,
         page_count: 10,
@@ -232,6 +244,65 @@ describe('usage maintenance capability probe', () => {
     }
     expect(post.mock.calls[0][2]).toEqual(
       expect.objectContaining({ params: { expected_stage: 'archiving' } })
+    );
+  });
+
+  it('forwards archive filters, cursors, and background execution options', async () => {
+    const signal = new AbortController().signal;
+    get.mockResolvedValue(responseWithStatus(200));
+    post.mockResolvedValue(responseWithStatus(202));
+
+    await usageServiceApi.listUsageArchives(
+      'http://manager.local:18317',
+      'admin-key',
+      { status: 'failed', mode: 'manual', limit: 15, cursor: 'next-page' },
+      signal
+    );
+    await usageServiceApi.resumeUsageArchive(
+      'http://manager.local:18317',
+      'run/id',
+      'admin-key',
+      signal,
+      'verifying',
+      { background: true }
+    );
+
+    expect(get).toHaveBeenCalledWith(
+      'http://manager.local:18317/v0/management/usage/archives',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer admin-key' },
+        params: { status: 'failed', mode: 'manual', limit: 15, cursor: 'next-page' },
+        signal,
+      })
+    );
+    expect(post).toHaveBeenCalledWith(
+      'http://manager.local:18317/v0/management/usage/archives/run%2Fid/resume',
+      undefined,
+      expect.objectContaining({
+        params: { expected_stage: 'verifying', background: true },
+        signal,
+      })
+    );
+  });
+
+  it('lists resumable import sessions with capabilities and pagination filters', async () => {
+    const signal = new AbortController().signal;
+    get.mockResolvedValue(responseWithStatus(200));
+
+    await usageServiceApi.listUsageImportSessions(
+      'http://manager.local:18317',
+      'management-key',
+      { status: 'uploading', limit: 10, cursor: 'next-import-page' },
+      signal
+    );
+
+    expect(get).toHaveBeenCalledWith(
+      'http://manager.local:18317/v0/management/usage/import-sessions',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer management-key' },
+        params: { status: 'uploading', limit: 10, cursor: 'next-import-page' },
+        signal,
+      })
     );
   });
 });

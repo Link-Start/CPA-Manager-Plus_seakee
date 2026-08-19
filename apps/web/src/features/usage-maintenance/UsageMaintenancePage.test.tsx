@@ -700,6 +700,21 @@ describe('UsageMaintenancePage', () => {
     act(() => renderer.unmount());
   });
 
+  it('shows the unsupported state for non-numeric archive status counts', async () => {
+    mocks.getUsageMaintenance.mockResolvedValueOnce(maintenance());
+    mocks.listUsageArchives.mockResolvedValueOnce({
+      runs: [],
+      status_counts: { completed: '1' },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<UsageMaintenancePage />);
+    });
+    expect(getText(renderer.root)).toContain('older than the usage maintenance API');
+    expect(getText(renderer.root)).not.toContain('full-screen-loading');
+    act(() => renderer.unmount());
+  });
+
   it('shows the unsupported state for a malformed preview payload returned with 200', async () => {
     mocks.previewUsageArchive.mockResolvedValueOnce({
       cutoff_timestamp_ms: 1_700_000_000_000,
@@ -833,9 +848,7 @@ describe('UsageMaintenancePage', () => {
   it('binds a resume request to its displayed stage before accepting a concurrent delete', async () => {
     const run = { ...archive('failed', 'stale-resume-run'), resume_status: 'verifying' };
     const renderer = await renderResolvedPage(maintenance(), [run]);
-    mocks.resumeUsageArchive.mockResolvedValueOnce(
-      archiveStatus(archive('completed', run.id))
-    );
+    mocks.resumeUsageArchive.mockResolvedValueOnce(archiveStatus(archive('completed', run.id)));
 
     await act(async () => {
       findButtons(renderer, 'Continue verification')[0].props.onClick();
