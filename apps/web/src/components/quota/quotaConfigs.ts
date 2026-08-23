@@ -19,7 +19,7 @@ import type {
   CodexQuotaData,
   KimiQuotaData,
 } from '@/utils/quota';
-import { resetCodexQuota } from '@/services/api/codexQuota';
+import { resetCodexQuota, type CodexResetQuotaResult } from '@/services/api/codexQuota';
 import {
   buildCodexQuotaWindows,
   fetchAntigravityQuota,
@@ -52,7 +52,7 @@ import {
 
 type QuotaType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';
 
-export interface QuotaConfig<TState, TData> {
+export interface QuotaConfig<TState, TData, TResetResult = TData> {
   type: QuotaType;
   i18nPrefix: string;
   fetchQuota: (
@@ -80,8 +80,9 @@ export interface QuotaConfig<TState, TData> {
   resetQuota?: (
     file: AuthFileItem,
     t: TFunction,
-    requestScope?: AuthFilesApiRequestScope
-  ) => Promise<TData>;
+    requestScope?: AuthFilesApiRequestScope,
+    onConsumed?: () => void
+  ) => Promise<TResetResult>;
   canResetQuota?: (file: AuthFileItem, quota: TState | undefined) => boolean;
 }
 
@@ -236,10 +237,7 @@ const mergeCodexQuotaWindows = (
       ...(aliases.length > 0 ? { providerWindowAliases: aliases } : {}),
     };
   });
-  return [
-    ...mergedWindows,
-    ...observedWindows.filter((_, index) => !usedObserved.has(index)),
-  ];
+  return [...mergedWindows, ...observedWindows.filter((_, index) => !usedObserved.has(index))];
 };
 
 const hasKnownResetCreditCount = (quota: CodexQuotaMergeState): boolean => {
@@ -332,7 +330,9 @@ const appendMissingObservedQuotaWindows = <TState extends DisplayQuotaState>(
         ) === observedIndex
     );
   };
-  const missingWindows = observedWindows.filter((_, observedIndex) => !isAlreadyRepresented(observedIndex));
+  const missingWindows = observedWindows.filter(
+    (_, observedIndex) => !isAlreadyRepresented(observedIndex)
+  );
   if (missingWindows.length === 0) return activeQuota;
   const merged: CodexQuotaMergeState = {
     ...active,
@@ -598,7 +598,7 @@ export const ANTIGRAVITY_CONFIG: QuotaConfig<AntigravityQuotaState, AntigravityQ
   scopeState: scopeCredentialQuotaState,
 };
 
-export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData, CodexResetQuotaResult> = {
   type: 'codex',
   i18nPrefix: 'codex_quota',
   fetchQuota: fetchCodexQuota,

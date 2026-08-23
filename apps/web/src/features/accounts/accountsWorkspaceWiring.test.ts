@@ -137,6 +137,10 @@ describe('accounts workspace wiring', () => {
       'reset_requires_verification_hint',
       'reset_verify_failed_message',
       'reset_no_credits_message',
+      'reset_consuming_in_progress',
+      'reset_confirmation_in_progress',
+      'reset_context_changed',
+      'reset_refresh_failed_message',
     ].forEach((key) => expect(codexQuota[key]).toBeTypeOf('string'));
   });
 

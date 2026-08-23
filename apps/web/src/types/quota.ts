@@ -397,6 +397,8 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   observedFromUsageHeaders?: boolean;
   observedModelScope?: QuotaModelScope;
   observedResetCreditsUnknown?: boolean;
+  /** Timestamp after which older reset-credit evidence is no longer valid. */
+  resetCreditsInvalidatedAtMs?: number;
   observedAtMs?: number;
   observedTraceId?: string;
   observedErrorKind?: string;

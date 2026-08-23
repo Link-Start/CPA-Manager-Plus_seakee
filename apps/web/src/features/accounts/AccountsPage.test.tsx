@@ -39,6 +39,7 @@ import type {
   CredentialInspectionSnapshot,
   CredentialInspectionTarget,
 } from '@/features/monitoring/model/credentialInspectionSnapshot';
+import type { CodexResetQuotaResult } from '@/services/api/codexQuota';
 import type { CodexReauthTarget } from '@/features/oauth/codexReauthModel';
 import { AccountDiagnosticsTab } from './components/accountDetail/AccountDiagnosticsTab';
 import { AccountModelsTab } from './components/accountDetail/AccountModelsTab';
@@ -8703,7 +8704,7 @@ describe('AccountsPage replacement flows', () => {
       fetchedAtMs: 1,
     };
     mocks.quotaState.codexQuota = { [storeKey]: previousQuota };
-    const resetResult = createDeferred<CodexQuotaData>();
+    const resetResult = createDeferred<CodexResetQuotaResult>();
     vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation(() => resetResult.promise);
     vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
       ...makeCodexQuotaData(),
@@ -10556,6 +10557,52 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getAccountWindowUsage).not.toHaveBeenCalled();
   });
 
+  it('keeps Codex reset usable in panel-only mode without Manager storage', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: '',
+      requestMonitoringAvailable: false,
+      serverCodexInspectionAvailable: false,
+    };
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(mocks.files[0], {
+      status: 'success' as const,
+      fetchedAtMs: Date.now(),
+      quotaInventoryObserved: true,
+      windows: [],
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [],
+    });
+    const quotaFetch = vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const resetConsume = vi
+      .spyOn(CODEX_CONFIG, 'resetQuota')
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    expect(accountQuotaSnapshotApi.write).not.toHaveBeenCalled();
+    expect(accountQuotaSnapshotApi.query).not.toHaveBeenCalled();
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    expect(resetAction.props.disabled).toBe(false);
+    await act(async () => {
+      resetAction.props.onClick();
+      await flushPromises();
+    });
+    expect(quotaFetch).toHaveBeenCalledTimes(1);
+    expect(mocks.showConfirmation).toHaveBeenCalledTimes(1);
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+  });
+
   it('associates credential detail tabs with their active panel', async () => {
     const renderer = await renderAccountsPage();
 
@@ -10747,8 +10794,11 @@ describe('AccountsPage replacement flows', () => {
       rateLimitResetCreditsAvailableCount: 2,
     });
     const resetConsume = vi.spyOn(CODEX_CONFIG, 'resetQuota').mockResolvedValue({
-      ...makeCodexQuotaData(),
-      rateLimitResetCreditsAvailableCount: 1,
+      outcome: 'consumed_and_refreshed',
+      quota: {
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 1,
+      },
     });
     const originalT = mocks.t;
     const resetButtonCounts: unknown[] = [];
@@ -10793,7 +10843,7 @@ describe('AccountsPage replacement flows', () => {
       .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 0 });
     const resetConsume = vi
       .spyOn(CODEX_CONFIG, 'resetQuota')
-      .mockResolvedValue(makeCodexQuotaData());
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
     await flushPromises();
@@ -10831,7 +10881,7 @@ describe('AccountsPage replacement flows', () => {
     vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockRejectedValue(new Error('network down'));
     const resetConsume = vi
       .spyOn(CODEX_CONFIG, 'resetQuota')
-      .mockResolvedValue(makeCodexQuotaData());
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
     await flushPromises();
@@ -10885,9 +10935,12 @@ describe('AccountsPage replacement flows', () => {
       rateLimitResetCreditsAvailableCount: 1,
     });
     const resetConsume = vi.spyOn(CODEX_CONFIG, 'resetQuota').mockResolvedValue({
-      ...makeCodexQuotaData(),
-      rateLimitResetCreditsAvailableCount: 0,
-      rateLimitResetCredits: [],
+      outcome: 'consumed_and_refreshed',
+      quota: {
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 0,
+        rateLimitResetCredits: [],
+      },
     });
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
@@ -10920,7 +10973,70 @@ describe('AccountsPage replacement flows', () => {
     expect(vi.mocked(accountQuotaSnapshotApi.write).mock.calls.length).toBeGreaterThan(
       writesBeforeReset
     );
+    const resetSnapshotEntries = vi
+      .mocked(accountQuotaSnapshotApi.write)
+      .mock.calls.slice(writesBeforeReset)
+      .flatMap((call) => (call[2] as AccountQuotaSnapshotWriteEntry[]) ?? [])
+      .filter((entry) => entry.row_key === rowKey && entry.provider === 'codex');
+    const resetCreditWindow = resetSnapshotEntries
+      .flatMap((entry) => entry.windows)
+      .find((window) => window.provider_window_id === 'reset-credits');
+    expect(resetCreditWindow?.reset_credits_available).toBe(0);
+    expect(resetCreditWindow?.observed_at_ms).toBeGreaterThan(observedAtMs);
     // the rendered detail no longer shows the pre-reset credit count
+    expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
+  });
+
+  it('keeps an older post-reset provider timestamp ahead of the pre-reset snapshot', async () => {
+    const file = makeCodexFile('codex.json', 'auth-1', 'codex@example.com');
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    const snapshotObservedAtMs = Date.now() - 60_000;
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }], snapshotObservedAtMs);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      observedAtMs: snapshotObservedAtMs - 1_000,
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockResolvedValue({
+      outcome: 'consumed_and_refreshed',
+      quota: {
+        ...makeCodexQuotaData(),
+        observedAtMs: snapshotObservedAtMs - 2_000,
+        rateLimitResetCreditsAvailableCount: 0,
+        rateLimitResetCredits: [],
+      },
+    });
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(file, {
+      status: 'success' as const,
+      fetchedAtMs: snapshotObservedAtMs - 500,
+      quotaInventoryObserved: true,
+      windows: [],
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [],
+    });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+      await flushPromises();
+    });
+
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(finalState.fetchedAtMs).toBeGreaterThan(snapshotObservedAtMs);
     expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
   });
 
@@ -10997,7 +11113,7 @@ describe('AccountsPage replacement flows', () => {
       fetchDeferreds.push(deferred);
       return deferred.promise;
     });
-    const consumeResult = createDeferred<CodexQuotaData>();
+    const consumeResult = createDeferred<CodexResetQuotaResult>();
     vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation(() => consumeResult.promise);
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
@@ -11038,8 +11154,11 @@ describe('AccountsPage replacement flows', () => {
 
     await act(async () => {
       consumeResult.resolve({
-        ...makeCodexQuotaData(),
-        rateLimitResetCreditsAvailableCount: 0,
+        outcome: 'consumed_and_refreshed',
+        quota: {
+          ...makeCodexQuotaData(),
+          rateLimitResetCreditsAvailableCount: 0,
+        },
       });
       await confirmPromise;
     });
@@ -11050,6 +11169,652 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.showNotification).toHaveBeenCalledWith(
       expect.stringContaining('codex_quota.reset_success'),
       'success'
+    );
+  });
+
+  it('keeps the post-reset zero when a manual refresh started before reset', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    const fetchDeferreds: Array<ReturnType<typeof createDeferred<CodexQuotaData>>> = [];
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockImplementation(() => {
+      const deferred = createDeferred<CodexQuotaData>();
+      fetchDeferreds.push(deferred);
+      return deferred.promise;
+    });
+    const consumeDeferred = createDeferred<CodexResetQuotaResult>();
+    let onConsumed: (() => void) | undefined;
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation(
+      (_file, _t, _scope, consumedCallback) => {
+        onConsumed = consumedCallback;
+        return consumeDeferred.promise;
+      }
+    );
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+    });
+    expect(fetchDeferreds).toHaveLength(1);
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+      await Promise.resolve();
+    });
+    expect(fetchDeferreds).toHaveLength(2);
+
+    await act(async () => {
+      fetchDeferreds[1].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 1,
+      });
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let confirmPromise!: Promise<void>;
+    await act(async () => {
+      confirmPromise = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      expect(onConsumed).toBeTypeOf('function');
+      onConsumed?.();
+      consumeDeferred.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: {
+          ...makeCodexQuotaData(),
+          rateLimitResetCreditsAvailableCount: 0,
+        },
+      });
+      await confirmPromise;
+    });
+    await act(async () => {
+      fetchDeferreds[0].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 1,
+      });
+      await flushPromises();
+    });
+
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBe(0);
+
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+    });
+    expect(fetchDeferreds).toHaveLength(3);
+    await act(async () => {
+      fetchDeferreds[2].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 0,
+      });
+      await flushPromises();
+    });
+    expect(
+      Object.values(mocks.quotaState.codexQuota as Record<string, CodexQuotaState>)[0]
+        .rateLimitResetCreditsAvailableCount
+    ).toBe(0);
+
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+    });
+    expect(fetchDeferreds).toHaveLength(4);
+    await act(async () => {
+      fetchDeferreds[3].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 2,
+      });
+      await flushPromises();
+    });
+    expect(
+      Object.values(mocks.quotaState.codexQuota as Record<string, CodexQuotaState>)[0]
+        .rateLimitResetCreditsAvailableCount
+    ).toBe(2);
+  });
+
+  it('follows snapshot freshness for reset eligibility when a newer snapshot overrides a live zero', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    const observedAtMs = Date.now();
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }], observedAtMs);
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(
+      makeCodexFile('codex.json', 'auth-1', 'codex@example.com'),
+      {
+        status: 'success' as const,
+        fetchedAtMs: observedAtMs - 100,
+        quotaInventoryObserved: true,
+        windows: [],
+        rateLimitResetCreditsAvailableCount: 0,
+      }
+    );
+    const quotaFetch = vi
+      .spyOn(CODEX_CONFIG, 'fetchQuota')
+      .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    expect(readText(renderer.root.findByProps({ 'data-quota-reset-count': 'true' }))).toContain(
+      '1'
+    );
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    expect(resetAction.props.disabled).toBe(false);
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(quotaFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not authorize reset from a live count that a newer snapshot supersedes with zero', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    const observedAtMs = Date.now();
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 0 }], observedAtMs);
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(
+      makeCodexFile('codex.json', 'auth-1', 'codex@example.com'),
+      {
+        status: 'success' as const,
+        fetchedAtMs: observedAtMs - 100,
+        quotaInventoryObserved: true,
+        windows: [],
+        rateLimitResetCreditsAvailableCount: 1,
+      }
+    );
+    const quotaFetch = vi
+      .spyOn(CODEX_CONFIG, 'fetchQuota')
+      .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    expect(readText(renderer.root.findByProps({ 'data-quota-reset-count': 'true' }))).toContain(
+      '0'
+    );
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    expect(resetAction.props.disabled).toBe(true);
+    expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(quotaFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the post-reset zero when a stale manual refresh lands during the consume', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }], Date.now() - 60_000);
+    installCodexQuotaStoreMutationMock();
+    const fetchDeferreds: Array<ReturnType<typeof createDeferred<CodexQuotaData>>> = [];
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockImplementation(() => {
+      const deferred = createDeferred<CodexQuotaData>();
+      fetchDeferreds.push(deferred);
+      return deferred.promise;
+    });
+    const consumeDeferred = createDeferred<CodexResetQuotaResult>();
+    let onConsumed: (() => void) | undefined;
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation(
+      (_file, _t, _scope, consumedCallback) => {
+        onConsumed = consumedCallback;
+        return consumeDeferred.promise;
+      }
+    );
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      fetchDeferreds[0].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 1,
+      });
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+
+    let confirmPromise!: Promise<void>;
+    await act(async () => {
+      confirmPromise = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+    });
+    expect(fetchDeferreds).toHaveLength(2);
+
+    await act(async () => {
+      expect(onConsumed).toBeTypeOf('function');
+      onConsumed?.();
+      consumeDeferred.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: {
+          ...makeCodexQuotaData(),
+          rateLimitResetCreditsAvailableCount: 0,
+        },
+      });
+      await confirmPromise;
+    });
+    await act(async () => {
+      fetchDeferreds[1].resolve({
+        ...makeCodexQuotaData(),
+        rateLimitResetCreditsAvailableCount: 1,
+      });
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
+  });
+
+  it('runs at most one consume when the confirmation confirm handler fires twice', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const consumeDeferred = createDeferred<CodexResetQuotaResult>();
+    const resetConsume = vi
+      .spyOn(CODEX_CONFIG, 'resetQuota')
+      .mockImplementation(() => consumeDeferred.promise);
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+
+    let first!: Promise<void>;
+    let second: Promise<void> | undefined;
+    await act(async () => {
+      first = confirmation.onConfirm();
+      second = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      consumeDeferred.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: {
+          ...makeCodexQuotaData(),
+          rateLimitResetCreditsAvailableCount: 0,
+        },
+      });
+      await first;
+      await second;
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      expect.stringContaining('codex_quota.reset_success'),
+      'success'
+    );
+  });
+
+  it('shares the consume guard between the quota tab button and drawer menu', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const consumeDeferred = createDeferred<CodexResetQuotaResult>();
+    const resetConsume = vi
+      .spyOn(CODEX_CONFIG, 'resetQuota')
+      .mockImplementation(() => consumeDeferred.promise);
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let confirmPromise!: Promise<void>;
+    await act(async () => {
+      confirmPromise = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      findDrawerMoreItem(renderer, 'reset-codex-quota').onClick();
+      await Promise.resolve();
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      consumeDeferred.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: {
+          ...makeCodexQuotaData(),
+          rateLimitResetCreditsAvailableCount: 0,
+        },
+      });
+      await confirmPromise;
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows independent Reset transactions for different credentials', async () => {
+    const fileA = makeCodexFile('codex-a.json', 'auth-a', 'a@example.com');
+    const fileB = makeCodexFile('codex-b.json', 'auth-b', 'b@example.com');
+    const rowKeyA = codexRowKey(fileA.name, 'auth-a');
+    const rowKeyB = codexRowKey(fileB.name, 'auth-b');
+    mocks.files = [fileA, fileB];
+    seedCodexResetCreditSnapshot([
+      { rowKey: rowKeyA, resetCreditsAvailable: 1 },
+      { rowKey: rowKeyB, resetCreditsAvailable: 1 },
+    ]);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const consumeDeferreds = new Map<
+      string,
+      ReturnType<typeof createDeferred<CodexResetQuotaResult>>
+    >();
+    const resetConsume = vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation((file) => {
+      const deferred = createDeferred<CodexResetQuotaResult>();
+      consumeDeferreds.set(file.name, deferred);
+      return deferred.promise;
+    });
+
+    openQuotaTabDeepLink(rowKeyA);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    await act(async () => {
+      renderer.root.findByProps({ 'data-quota-reset-action': 'true' }).props.onClick();
+      await flushPromises();
+    });
+    const confirmationA = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let confirmAPromise!: Promise<void>;
+    await act(async () => {
+      confirmAPromise = confirmationA.onConfirm();
+      await Promise.resolve();
+    });
+    expect(resetConsume).toHaveBeenCalledTimes(1);
+    expect(resetConsume).toHaveBeenLastCalledWith(
+      fileA,
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+
+    mocks.location = {
+      pathname: '/accounts',
+      search: `?account=${encodeURIComponent(rowKeyB)}&tab=quota`,
+    };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    await act(async () => {
+      renderer.root.findByProps({ 'data-quota-reset-action': 'true' }).props.onClick();
+      await flushPromises();
+    });
+    const confirmationB = mocks.showConfirmation.mock.calls[1]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let confirmBPromise!: Promise<void>;
+    await act(async () => {
+      confirmBPromise = confirmationB.onConfirm();
+      await Promise.resolve();
+    });
+
+    expect(resetConsume).toHaveBeenCalledTimes(2);
+    expect(resetConsume).toHaveBeenLastCalledWith(
+      fileB,
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(consumeDeferreds.get(fileA.name)).toBeDefined();
+    expect(consumeDeferreds.get(fileB.name)).toBeDefined();
+
+    const postResetQuota = {
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 0,
+      rateLimitResetCredits: [],
+    };
+    await act(async () => {
+      consumeDeferreds.get(fileA.name)?.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: postResetQuota,
+      });
+      consumeDeferreds.get(fileB.name)?.resolve({
+        outcome: 'consumed_and_refreshed',
+        quota: postResetQuota,
+      });
+      await Promise.all([confirmAPromise, confirmBPromise]);
+    });
+
+    expect(resetConsume).toHaveBeenCalledTimes(2);
+    expect(
+      Object.values(mocks.quotaState.codexQuota as Record<string, CodexQuotaState>).every(
+        (state) => state.rateLimitResetCreditsAvailableCount === 0
+      )
+    ).toBe(true);
+  });
+
+  it('reports a completed reset when the post-consume refresh fails', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    const quotaFetch = vi
+      .spyOn(CODEX_CONFIG, 'fetchQuota')
+      .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockResolvedValue({
+      outcome: 'consumed_refresh_failed',
+      refreshError: new Error('refresh down'),
+    } as never);
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      expect.stringContaining('codex_quota.reset_failed'),
+      'error'
+    );
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'codex_quota.reset_refresh_failed_message',
+      'warning'
+    );
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBeNull();
+
+    // after a partial success the next reset must verify again before consuming
+    quotaFetch.mockClear();
+    quotaFetch.mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: null,
+    });
+    mocks.showConfirmation.mockClear();
+    const resetActionAfter = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetActionAfter.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(quotaFetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(CODEX_CONFIG.resetQuota)).toHaveBeenCalledTimes(1);
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
+    expect(lastCodexQuotaCommit().rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(lastCodexQuotaCommit().resetCreditsInvalidatedAtMs).toBeGreaterThan(0);
+    expect(treeText(renderer)).not.toContain('codex_quota.reset_credits_available_label');
+  });
+
+  it('cancels a confirmation when the selected credential changes', async () => {
+    const fileA = makeCodexFile('codex-a.json', 'auth-a', 'a@example.com');
+    const fileB = makeCodexFile('codex-b.json', 'auth-b', 'b@example.com');
+    const rowKeyA = codexRowKey(fileA.name, 'auth-a');
+    const rowKeyB = codexRowKey(fileB.name, 'auth-b');
+    mocks.files = [fileA, fileB];
+    seedCodexResetCreditSnapshot([
+      { rowKey: rowKeyA, resetCreditsAvailable: 1 },
+      { rowKey: rowKeyB, resetCreditsAvailable: 1 },
+    ]);
+    const quotaFetch = vi
+      .spyOn(CODEX_CONFIG, 'fetchQuota')
+      .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
+    const resetConsume = vi
+      .spyOn(CODEX_CONFIG, 'resetQuota')
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
+    openQuotaTabDeepLink(rowKeyA);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    await act(async () => {
+      renderer.root.findByProps({ 'data-quota-reset-action': 'true' }).props.onClick();
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+
+    mocks.location = {
+      pathname: '/accounts',
+      search: `?account=${encodeURIComponent(rowKeyB)}&tab=quota`,
+    };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+    expect(resetConsume).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'codex_quota.reset_context_changed',
+      'warning'
+    );
+    expect(quotaFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a confirmation when the CPA connection fingerprint changes', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const resetConsume = vi
+      .spyOn(CODEX_CONFIG, 'resetQuota')
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    await act(async () => {
+      renderer.root.findByProps({ 'data-quota-reset-action': 'true' }).props.onClick();
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+
+    mocks.apiBase = 'http://cpa-b.local:8317';
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+    expect(resetConsume).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'codex_quota.reset_context_changed',
+      'warning'
     );
   });
 
@@ -11073,7 +11838,7 @@ describe('AccountsPage replacement flows', () => {
     });
     const resetConsume = vi
       .spyOn(CODEX_CONFIG, 'resetQuota')
-      .mockResolvedValue(makeCodexQuotaData());
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
     await flushPromises();
@@ -11132,7 +11897,7 @@ describe('AccountsPage replacement flows', () => {
       .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
     const resetConsume = vi
       .spyOn(CODEX_CONFIG, 'resetQuota')
-      .mockResolvedValue(makeCodexQuotaData());
+      .mockResolvedValue({ outcome: 'consumed_and_refreshed', quota: makeCodexQuotaData() });
     openQuotaTabDeepLink(rowKey);
     const renderer = await renderAccountsPage();
     await flushPromises();
@@ -11158,12 +11923,12 @@ describe('AccountsPage replacement flows', () => {
   });
 
   it('scopes reset eligibility per credential identity', async () => {
-    const fileA = makeCodexFile('codex-a.json', 'auth-1', 'a@example.com');
-    const fileB = makeCodexFile('codex-b.json', 'auth-2', 'b@example.com');
+    const fileA = makeCodexFile('shared-codex.json', 'auth-1', 'a@example.com');
+    const fileB = makeCodexFile('shared-codex.json', 'auth-2', 'b@example.com');
     mocks.files = [fileA, fileB];
     seedCodexResetCreditSnapshot([
-      { rowKey: codexRowKey('codex-a.json', 'auth-1'), resetCreditsAvailable: 1 },
-      { rowKey: codexRowKey('codex-b.json', 'auth-2'), resetCreditsAvailable: 0 },
+      { rowKey: codexRowKey('shared-codex.json', 'auth-1'), resetCreditsAvailable: 1 },
+      { rowKey: codexRowKey('shared-codex.json', 'auth-2'), resetCreditsAvailable: 0 },
     ]);
     mocks.quotaState.codexQuota = {
       ...buildCredentialScopedQuotaRecord(fileA, {
@@ -11185,14 +11950,14 @@ describe('AccountsPage replacement flows', () => {
       .spyOn(CODEX_CONFIG, 'fetchQuota')
       .mockResolvedValue({ ...makeCodexQuotaData(), rateLimitResetCreditsAvailableCount: 1 });
 
-    openQuotaTabDeepLink(codexRowKey('codex-a.json', 'auth-1'));
+    openQuotaTabDeepLink(codexRowKey('shared-codex.json', 'auth-1'));
     const rendererA = await renderAccountsPage();
     await flushPromises();
     const resetActionA = rendererA.root.findByProps({ 'data-quota-reset-action': 'true' });
     expect(resetActionA.props.disabled).toBe(false);
     expect(() => findDrawerMoreItem(rendererA, 'reset-codex-quota')).not.toThrow();
 
-    openQuotaTabDeepLink(codexRowKey('codex-b.json', 'auth-2'));
+    openQuotaTabDeepLink(codexRowKey('shared-codex.json', 'auth-2'));
     const rendererB = await renderAccountsPage();
     await flushPromises();
     const resetActionB = rendererB.root.findByProps({ 'data-quota-reset-action': 'true' });

@@ -6,6 +6,7 @@ import {
   buildAccountQuotaSnapshotWriteEntries,
   mergeCodexResetCreditsFromQuotaSnapshots,
   mergeAccountQuotaSnapshotWindows,
+  resolveCodexResetCreditEvidence,
 } from './accountQuotaSnapshots';
 import type { AccountRow } from './accountRows';
 
@@ -63,6 +64,16 @@ const makeSnapshot = (
   stale: false,
   ...overrides,
 });
+
+const makeResetSnapshot = (count: number, observedAtMs: number): AccountQuotaSnapshotWindow =>
+  makeSnapshot({
+    provider_window_id: 'reset-credits',
+    window_kind: 'reset_credits',
+    observed_at_ms: observedAtMs,
+    reset_credits_available: count,
+    reset_credits:
+      count > 0 ? [{ id: `credit-${count}`, expires_at_ms: observedAtMs + 86_400_000 }] : [],
+  });
 
 describe('account quota snapshots', () => {
   it('overlays server provenance, boundaries, scope, and stale state', () => {
@@ -358,12 +369,18 @@ describe('account quota snapshots', () => {
       boundary_accuracy: 'unknown',
     });
 
-    const merged = mergeAccountQuotaSnapshotWindows([], [makeSnapshot({
-      ...entry.windows[0],
-      provider_window_id: 'future-feature-weekly-0',
-      window_kind: 'weekly',
-      stale: false,
-    })], { provider: 'codex' });
+    const merged = mergeAccountQuotaSnapshotWindows(
+      [],
+      [
+        makeSnapshot({
+          ...entry.windows[0],
+          provider_window_id: 'future-feature-weekly-0',
+          window_kind: 'weekly',
+          stale: false,
+        }),
+      ],
+      { provider: 'codex' }
+    );
     expect(merged).toMatchObject([
       expect.objectContaining({
         providerWindowId: 'future-feature-weekly-0',
@@ -1028,5 +1045,165 @@ describe('account quota snapshots', () => {
 
     expect(forward?.rateLimitResetCreditsAvailableCount).toBe(3);
     expect(reverse?.rateLimitResetCreditsAvailableCount).toBe(3);
+  });
+
+  it.each([
+    {
+      name: 'F1: newer snapshot positive count overrides older live zero',
+      liveCount: 0,
+      liveObservedAtMs: 100,
+      snapshotCount: 1,
+      snapshotObservedAtMs: 200,
+      expectedCount: 1,
+      expectedSource: 'snapshot' as const,
+    },
+    {
+      name: 'F2: newer snapshot zero overrides older live positive count',
+      liveCount: 1,
+      liveObservedAtMs: 100,
+      snapshotCount: 0,
+      snapshotObservedAtMs: 200,
+      expectedCount: 0,
+      expectedSource: 'snapshot' as const,
+    },
+    {
+      name: 'F3: newer live zero overrides older snapshot positive count',
+      liveCount: 0,
+      liveObservedAtMs: 200,
+      snapshotCount: 1,
+      snapshotObservedAtMs: 100,
+      expectedCount: 0,
+      expectedSource: 'live' as const,
+    },
+    {
+      name: 'F4: newer live positive count overrides older snapshot zero',
+      liveCount: 1,
+      liveObservedAtMs: 200,
+      snapshotCount: 0,
+      snapshotObservedAtMs: 100,
+      expectedCount: 1,
+      expectedSource: 'live' as const,
+    },
+  ])(
+    '$name',
+    ({
+      liveCount,
+      liveObservedAtMs,
+      snapshotCount,
+      snapshotObservedAtMs,
+      expectedCount,
+      expectedSource,
+    }) => {
+      const liveQuota = {
+        status: 'success' as const,
+        windows: [],
+        fetchedAtMs: liveObservedAtMs,
+        rateLimitResetCreditsAvailableCount: liveCount,
+        rateLimitResetCredits: [],
+      };
+      const snapshots = [makeResetSnapshot(snapshotCount, snapshotObservedAtMs)];
+
+      const evidence = resolveCodexResetCreditEvidence(liveQuota, snapshots);
+      const merged = mergeCodexResetCreditsFromQuotaSnapshots(liveQuota, snapshots);
+
+      expect(evidence.source).toBe(expectedSource);
+      expect(evidence.displayedCount).toBe(expectedCount);
+      expect(merged?.rateLimitResetCreditsAvailableCount).toBe(expectedCount);
+    }
+  );
+
+  it('uses the snapshot deterministically on an equal timestamp tie', () => {
+    const liveQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 100,
+      rateLimitResetCreditsAvailableCount: 0,
+    };
+    const evidence = resolveCodexResetCreditEvidence(liveQuota, [makeResetSnapshot(1, 100)]);
+
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(1);
+    expect(evidence.snapshotOverridesLive).toBe(true);
+  });
+
+  it('does not restore an older snapshot credit list when live count is zero', () => {
+    const liveQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 200,
+      rateLimitResetCreditsAvailableCount: 0,
+    };
+    const snapshot = makeResetSnapshot(1, 100);
+    const evidence = resolveCodexResetCreditEvidence(liveQuota, [snapshot]);
+    const merged = mergeCodexResetCreditsFromQuotaSnapshots(liveQuota, [snapshot]);
+
+    expect(evidence.source).toBe('live');
+    expect(evidence.displayedCount).toBe(0);
+    expect(merged?.rateLimitResetCredits).toBeUndefined();
+  });
+
+  it('keeps reset-credit evidence displayable when timestamps are missing', () => {
+    const liveQuota = {
+      status: 'success' as const,
+      windows: [],
+      rateLimitResetCreditsAvailableCount: 0,
+    };
+    const evidence = resolveCodexResetCreditEvidence(liveQuota, [makeResetSnapshot(1, 0)]);
+
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(1);
+    expect(evidence.observedAtMs).toBeNull();
+  });
+
+  it('does not reuse an older live count when a newer snapshot only has credit entries', () => {
+    const liveQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 100,
+      rateLimitResetCreditsAvailableCount: 0,
+    };
+    const snapshots = [
+      makeSnapshot({
+        provider_window_id: 'reset-credits',
+        window_kind: 'reset_credits',
+        observed_at_ms: 200,
+        reset_credits: [{ id: 'newer-credit', expires_at_ms: 100_000 }],
+      }),
+    ];
+    const evidence = resolveCodexResetCreditEvidence(liveQuota, snapshots);
+    const merged = mergeCodexResetCreditsFromQuotaSnapshots(liveQuota, snapshots);
+
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBeNull();
+    expect(evidence.displayedCreditsCount).toBe(1);
+    expect(evidence.liveIsAuthoritative).toBe(false);
+    expect(evidence.snapshotOverridesLive).toBe(true);
+    expect(merged?.rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(merged?.rateLimitResetCredits).toEqual([
+      {
+        id: 'newer-credit',
+        status: 'available',
+        grantedAt: '',
+        expiresAt: new Date(100_000).toISOString(),
+      },
+    ]);
+  });
+
+  it('does not resurrect a snapshot at or before the consume invalidation fence', () => {
+    const liveQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 300,
+      rateLimitResetCreditsAvailableCount: null,
+      rateLimitResetCredits: [],
+      resetCreditsInvalidatedAtMs: 200,
+    };
+    const evidence = resolveCodexResetCreditEvidence(liveQuota, [makeResetSnapshot(1, 200)]);
+    const merged = mergeCodexResetCreditsFromQuotaSnapshots(liveQuota, [makeResetSnapshot(1, 200)]);
+
+    expect(evidence.source).toBe('invalidated');
+    expect(evidence.displayedCount).toBeNull();
+    expect(merged?.rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(merged?.rateLimitResetCredits).toEqual([]);
   });
 });

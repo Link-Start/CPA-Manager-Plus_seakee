@@ -149,7 +149,8 @@ export function AccountQuotaTab({
   const hasResetRecords =
     detailView.quota.resetCreditsAvailableCount !== null ||
     detailView.quota.resetCreditExpiries.length > 0;
-  const shouldShowResetRecords = detailView.identity.provider === 'codex' && hasResetRecords;
+  const shouldShowResetRecords =
+    detailView.identity.provider === 'codex' && (hasResetRecords || resetQuotaAction.interactive);
 
   return (
     <div className={styles.quotaTab} data-account-quota-tab="true">

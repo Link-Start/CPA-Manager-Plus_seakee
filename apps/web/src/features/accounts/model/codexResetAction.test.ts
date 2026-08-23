@@ -6,27 +6,35 @@ import {
   type CodexResetActionState,
   type CodexResetActionStateInput,
 } from '@/features/accounts/model/codexResetAction';
-import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { CodexResetCreditEvidence } from '@/features/accounts/model/accountQuotaSnapshots';
+import type { AuthFileItem } from '@/types';
 
 const codexFile = { name: 'codex.json', authIndex: 'auth-1' } as AuthFileItem;
+
+const evidence = (overrides: Partial<CodexResetCreditEvidence>): CodexResetCreditEvidence => ({
+  displayedCount: null,
+  displayedCreditsCount: 0,
+  source: 'none',
+  observedAtMs: null,
+  liveCount: null,
+  liveObservedAtMs: null,
+  snapshotCount: null,
+  snapshotObservedAtMs: null,
+  liveIsAuthoritative: false,
+  snapshotOverridesLive: false,
+  ...overrides,
+});
 
 const buildInput = (
   overrides: Partial<CodexResetActionStateInput> = {}
 ): CodexResetActionStateInput => ({
-  row: { provider: 'codex', disabled: false, runtimeOnly: false, raw: codexFile },
-  liveQuota: undefined,
-  displayQuota: undefined,
+  row: { provider: 'codex', runtimeOnly: false, raw: codexFile },
+  evidence: evidence({}),
   configurationSaving: false,
   verifying: false,
+  consuming: false,
   ...overrides,
 });
-
-const liveSuccess = (count: number | null): CodexQuotaState =>
-  ({
-    status: 'success',
-    windows: [],
-    rateLimitResetCreditsAvailableCount: count,
-  }) as CodexQuotaState;
 
 describe('codex reset action state', () => {
   it('marks non-codex providers unsupported', () => {
@@ -57,94 +65,142 @@ describe('codex reset action state', () => {
     });
   });
 
-  it('treats configuration saving as busy without verifying flag', () => {
-    expect(resolveCodexResetActionState(buildInput({ configurationSaving: true }))).toEqual({
-      kind: 'busy',
-      verifying: false,
-    });
-  });
-
-  it('treats an in-flight verification as busy with verifying flag', () => {
+  it('treats an in-flight verification as busy in the verifying phase', () => {
     expect(resolveCodexResetActionState(buildInput({ verifying: true }))).toEqual({
       kind: 'busy',
-      verifying: true,
+      phase: 'verifying',
     });
   });
 
-  it('allows reset immediately when live quota verifies a positive count', () => {
-    expect(resolveCodexResetActionState(buildInput({ liveQuota: liveSuccess(3) }))).toEqual({
-      kind: 'available',
-      count: 3,
+  it('treats an in-flight consume as busy in the consuming phase', () => {
+    expect(resolveCodexResetActionState(buildInput({ consuming: true }))).toEqual({
+      kind: 'busy',
+      phase: 'consuming',
     });
   });
 
-  it('stays unavailable when live quota verifies zero credits', () => {
-    expect(resolveCodexResetActionState(buildInput({ liveQuota: liveSuccess(0) }))).toEqual({
-      kind: 'unavailable',
-      reasonKey: 'codex_quota.reset_unavailable_no_credits',
+  it('treats configuration saving as busy in the configuration phase', () => {
+    expect(resolveCodexResetActionState(buildInput({ configurationSaving: true }))).toEqual({
+      kind: 'busy',
+      phase: 'configuration',
     });
   });
 
-  it('requires verification when live count is unknown but display evidence shows credits', () => {
-    const display = liveSuccess(2);
+  it('prefers the consuming phase over verifying when both are in flight', () => {
+    expect(resolveCodexResetActionState(buildInput({ verifying: true, consuming: true }))).toEqual({
+      kind: 'busy',
+      phase: 'consuming',
+    });
+  });
+
+  it('allows reset immediately when verified live evidence shows a positive count', () => {
     expect(
       resolveCodexResetActionState(
-        buildInput({ liveQuota: liveSuccess(null), displayQuota: display })
+        buildInput({ evidence: evidence({ source: 'live', displayedCount: 3 }) })
       )
-    ).toEqual({ kind: 'needs_verification', snapshotCount: 2 });
+    ).toEqual({ kind: 'available', count: 3 });
   });
 
-  it('requires verification when live quota is idle or missing entirely', () => {
-    const idle = { status: 'idle', windows: [] } as CodexQuotaState;
-    expect(
-      resolveCodexResetActionState(buildInput({ liveQuota: idle, displayQuota: liveSuccess(1) }))
-    ).toEqual({ kind: 'needs_verification', snapshotCount: 1 });
-    expect(resolveCodexResetActionState(buildInput({ displayQuota: liveSuccess(1) }))).toEqual({
-      kind: 'needs_verification',
-      snapshotCount: 1,
-    });
-  });
-
-  it('requires verification when live quota is a preserved failure state with display evidence', () => {
-    const errorState = {
-      status: 'error',
-      windows: [],
-      error: 'failed',
-      rateLimitResetCreditsAvailableCount: 1,
-    } as CodexQuotaState;
-    expect(
-      resolveCodexResetActionState(buildInput({ liveQuota: errorState, displayQuota: errorState }))
-    ).toEqual({ kind: 'needs_verification', snapshotCount: 1 });
-  });
-
-  it('requires verification when only the reset-credit list is present without a count', () => {
-    const display = {
-      status: 'success',
-      windows: [],
-      rateLimitResetCreditsAvailableCount: null,
-      rateLimitResetCredits: [
-        { id: 'credit-1', status: 'available', grantedAt: '', expiresAt: new Date().toISOString() },
-      ],
-    } as unknown as CodexQuotaState;
-    expect(resolveCodexResetActionState(buildInput({ displayQuota: display }))).toEqual({
-      kind: 'needs_verification',
-      snapshotCount: null,
-    });
-  });
-
-  it('stays unavailable when display evidence is a verified zero', () => {
-    expect(resolveCodexResetActionState(buildInput({ displayQuota: liveSuccess(0) }))).toEqual({
-      kind: 'unavailable',
-      reasonKey: 'codex_quota.reset_unavailable_no_credits',
-    });
-  });
-
-  it('does not block disabled credentials with a verified reset credit', () => {
+  it('stays unavailable when verified live evidence shows zero credits', () => {
     expect(
       resolveCodexResetActionState(
-        buildInput({ row: { ...buildInput().row, disabled: true }, liveQuota: liveSuccess(1) })
+        buildInput({ evidence: evidence({ source: 'live', displayedCount: 0 }) })
+      )
+    ).toEqual({ kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' });
+  });
+
+  it('requires verification when a fresher snapshot shows a positive count', () => {
+    expect(
+      resolveCodexResetActionState(
+        buildInput({ evidence: evidence({ source: 'snapshot', displayedCount: 1 }) })
+      )
+    ).toEqual({ kind: 'needs_verification', snapshotCount: 1 });
+  });
+
+  it('withdraws an older live count when a fresher snapshot shows zero', () => {
+    expect(
+      resolveCodexResetActionState(
+        buildInput({ evidence: evidence({ source: 'snapshot', displayedCount: 0 }) })
+      )
+    ).toEqual({ kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' });
+  });
+
+  it('requires verification for unverified preserved counts and credit lists', () => {
+    expect(
+      resolveCodexResetActionState(
+        buildInput({ evidence: evidence({ source: 'unverified', displayedCount: 1 }) })
+      )
+    ).toEqual({ kind: 'needs_verification', snapshotCount: 1 });
+    expect(
+      resolveCodexResetActionState(
+        buildInput({
+          evidence: evidence({ source: 'unverified', displayedCreditsCount: 2 }),
+        })
+      )
+    ).toEqual({ kind: 'needs_verification', snapshotCount: null });
+  });
+
+  it('stays unavailable for unverified evidence without positive credits', () => {
+    expect(
+      resolveCodexResetActionState(
+        buildInput({ evidence: evidence({ source: 'unverified', displayedCount: 0 }) })
+      )
+    ).toEqual({ kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' });
+    expect(
+      resolveCodexResetActionState(buildInput({ evidence: evidence({ source: 'none' }) }))
+    ).toEqual({ kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' });
+  });
+
+  it('does not block disabled credentials with verified reset credits', () => {
+    const file = { name: 'codex.json', authIndex: 'auth-1', disabled: true } as AuthFileItem;
+    expect(
+      resolveCodexResetActionState(
+        buildInput({
+          row: { provider: 'codex', runtimeOnly: false, raw: file },
+          evidence: evidence({ source: 'live', displayedCount: 1 }),
+        })
       )
     ).toEqual({ kind: 'available', count: 1 });
+  });
+});
+
+describe('codex reset credit evidence freshness (live vs snapshot)', () => {
+  const cases: Array<{
+    name: string;
+    source: CodexResetCreditEvidence['source'];
+    displayedCount: number | null;
+    expected: CodexResetActionState;
+  }> = [
+    {
+      name: 'F1: older live zero superseded by newer snapshot one → needs_verification',
+      source: 'snapshot',
+      displayedCount: 1,
+      expected: { kind: 'needs_verification', snapshotCount: 1 },
+    },
+    {
+      name: 'F2: older live one superseded by newer snapshot zero → unavailable',
+      source: 'snapshot',
+      displayedCount: 0,
+      expected: { kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' },
+    },
+    {
+      name: 'F3: newer live zero over older snapshot one → unavailable',
+      source: 'live',
+      displayedCount: 0,
+      expected: { kind: 'unavailable', reasonKey: 'codex_quota.reset_unavailable_no_credits' },
+    },
+    {
+      name: 'F4: newer live one over older snapshot zero → available',
+      source: 'live',
+      displayedCount: 1,
+      expected: { kind: 'available', count: 1 },
+    },
+  ];
+
+  it.each(cases)('$name', ({ source, displayedCount, expected }) => {
+    expect(
+      resolveCodexResetActionState(buildInput({ evidence: evidence({ source, displayedCount }) }))
+    ).toEqual(expected);
   });
 });
 
@@ -163,8 +219,8 @@ describe('codex reset action presentation', () => {
     });
   });
 
-  it('shows a verifying spinner for the busy verifying state', () => {
-    expect(resolveCodexResetActionPresentation({ kind: 'busy', verifying: true })).toEqual({
+  it('shows a verifying spinner for the busy verifying phase', () => {
+    expect(resolveCodexResetActionPresentation({ kind: 'busy', phase: 'verifying' })).toEqual({
       disabled: true,
       busy: true,
       titleKey: 'codex_quota.reset_verify_in_progress',
@@ -172,8 +228,17 @@ describe('codex reset action presentation', () => {
     });
   });
 
-  it('keeps configuration-saving busy clickable-in-principle but disabled', () => {
-    expect(resolveCodexResetActionPresentation({ kind: 'busy', verifying: false })).toEqual({
+  it('shows a consuming spinner for the busy consuming phase', () => {
+    expect(resolveCodexResetActionPresentation({ kind: 'busy', phase: 'consuming' })).toEqual({
+      disabled: true,
+      busy: true,
+      titleKey: 'codex_quota.reset_consuming_in_progress',
+      interactive: true,
+    });
+  });
+
+  it('keeps configuration-saving busy disabled without a title', () => {
+    expect(resolveCodexResetActionPresentation({ kind: 'busy', phase: 'configuration' })).toEqual({
       disabled: true,
       busy: false,
       titleKey: null,
@@ -223,7 +288,7 @@ describe('isCodexResetActionExecutable', () => {
         reasonKey: 'codex_quota.reset_unsupported_credential',
       })
     ).toBe(false);
-    expect(isCodexResetActionExecutable({ kind: 'busy', verifying: true })).toBe(false);
+    expect(isCodexResetActionExecutable({ kind: 'busy', phase: 'consuming' })).toBe(false);
     expect(
       isCodexResetActionExecutable({
         kind: 'unavailable',

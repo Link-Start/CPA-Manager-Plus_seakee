@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     request: vi.fn(),
+    fetchQuota: vi.fn(),
   },
 }));
 
@@ -14,11 +15,20 @@ vi.mock('./apiCall', () => ({
     `${result.statusCode} ${result.bodyText ?? ''}`.trim(),
 }));
 
+vi.mock('@/utils/quota/providerRequests', () => ({
+  fetchCodexQuota: mocks.fetchQuota,
+}));
+
 import { CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL } from '@/utils/quota/constants';
-import { buildCodexUsageRequestHeaders, consumeCodexRateLimitResetCredit } from './codexQuota';
+import {
+  buildCodexUsageRequestHeaders,
+  consumeCodexRateLimitResetCredit,
+  resetCodexQuota,
+} from './codexQuota';
 
 beforeEach(() => {
   mocks.request.mockReset();
+  mocks.fetchQuota.mockReset();
 });
 
 describe('buildCodexUsageRequestHeaders', () => {
@@ -100,5 +110,78 @@ describe('consumeCodexRateLimitResetCredit', () => {
       headers: { Authorization: 'Bearer captured-key' },
       cpampScopedRequest: true,
     });
+  });
+});
+
+describe('resetCodexQuota', () => {
+  const file = {
+    name: 'codex-auth.json',
+    type: 'codex',
+    authIndex: 'auth-1',
+  };
+  const t = ((key: string) => key) as never;
+  const quota = {
+    planType: 'plus',
+    windows: [],
+    quotaInventoryObserved: true,
+    rateLimitResetCreditsAvailableCount: 0,
+    rateLimitResetCredits: [],
+    rateLimitResetCreditsError: null,
+  };
+
+  it('fences the post-consume refresh behind the successful consume', async () => {
+    const events: string[] = [];
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '{}',
+      body: {},
+    });
+    mocks.fetchQuota.mockImplementation(async () => {
+      events.push('refresh');
+      return quota;
+    });
+
+    const result = await resetCodexQuota(file, t, undefined, () => events.push('consumed'));
+
+    expect(result).toEqual({ outcome: 'consumed_and_refreshed', quota });
+    expect(events).toEqual(['consumed', 'refresh']);
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns partial success when consume succeeds but the post-consume refresh fails', async () => {
+    const onConsumed = vi.fn();
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '{}',
+      body: {},
+    });
+    mocks.fetchQuota.mockRejectedValueOnce(new Error('refresh unavailable'));
+
+    const result = await resetCodexQuota(file, t, undefined, onConsumed);
+
+    expect(result.outcome).toBe('consumed_refresh_failed');
+    expect(result).toMatchObject({ refreshError: new Error('refresh unavailable') });
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps consume failures as failures and does not run the refresh', async () => {
+    const onConsumed = vi.fn();
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 409,
+      hasStatusCode: true,
+      header: {},
+      bodyText: 'no credits',
+      body: {},
+    });
+
+    await expect(resetCodexQuota(file, t, undefined, onConsumed)).rejects.toThrow('409');
+    expect(onConsumed).not.toHaveBeenCalled();
+    expect(mocks.fetchQuota).not.toHaveBeenCalled();
   });
 });

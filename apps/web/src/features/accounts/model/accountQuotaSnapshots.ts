@@ -96,11 +96,53 @@ const compareSnapshotFieldFreshness =
     return leftKey < rightKey ? -1 : 1;
   };
 
-export const mergeCodexResetCreditsFromQuotaSnapshots = (
+interface CodexResetCreditSnapshotSelection {
+  countSnapshot: AccountQuotaSnapshotWindow | undefined;
+  countObservedAt: number;
+  creditsSnapshot: AccountQuotaSnapshotWindow | undefined;
+  creditsObservedAt: number;
+  localObservedAt: number;
+  liveCount: number | null;
+  liveObservedAt: number;
+  liveCountInvalidated: boolean;
+  useSnapshotCount: boolean;
+  useSnapshotCredits: boolean;
+}
+
+// Shared freshness selection for Codex reset-credit evidence. Display merging
+// (mergeCodexResetCreditsFromQuotaSnapshots) and the reset action state
+// (resolveCodexResetCreditEvidence) must agree on whether the live count or a
+// persisted snapshot owns the displayed value, so both consume this selector
+// instead of duplicating timestamp comparisons.
+const selectCodexResetCreditSnapshots = (
   quota: CodexQuotaState | undefined,
   snapshots: AccountQuotaSnapshotWindow[]
-): CodexQuotaState | undefined => {
-  const localObservedAt = quota?.fetchedAtMs ?? quota?.observedAtMs ?? 0;
+): CodexResetCreditSnapshotSelection => {
+  const localObservedAt = Math.max(
+    typeof quota?.fetchedAtMs === 'number' && Number.isFinite(quota.fetchedAtMs)
+      ? quota.fetchedAtMs
+      : 0,
+    typeof quota?.observedAtMs === 'number' && Number.isFinite(quota.observedAtMs)
+      ? quota.observedAtMs
+      : 0
+  );
+  const liveCount =
+    typeof quota?.rateLimitResetCreditsAvailableCount === 'number' &&
+    Number.isFinite(quota.rateLimitResetCreditsAvailableCount) &&
+    quota.rateLimitResetCreditsAvailableCount >= 0
+      ? quota.rateLimitResetCreditsAvailableCount
+      : null;
+  const resetCreditsInvalidatedAtMs =
+    typeof quota?.resetCreditsInvalidatedAtMs === 'number' &&
+    Number.isFinite(quota.resetCreditsInvalidatedAtMs) &&
+    quota.resetCreditsInvalidatedAtMs > 0
+      ? quota.resetCreditsInvalidatedAtMs
+      : 0;
+  // Once a consume has completed, a live state without a reset-credit count
+  // cannot re-authorize older evidence merely because an unrelated quota
+  // field was fetched later. A known live count (including zero) is the only
+  // observation that clears the invalidation fence.
+  const liveCountInvalidated = resetCreditsInvalidatedAtMs > 0 && liveCount === null;
   const usableSnapshots = snapshots.filter(
     (snapshot) =>
       snapshot.stale !== true &&
@@ -112,11 +154,19 @@ export const mergeCodexResetCreditsFromQuotaSnapshots = (
       (snapshot) =>
         typeof snapshot.reset_credits_available === 'number' &&
         Number.isFinite(snapshot.reset_credits_available) &&
-        snapshot.reset_credits_available >= 0
+        snapshot.reset_credits_available >= 0 &&
+        (resetCreditsInvalidatedAtMs <= 0 ||
+          snapshotFieldObservedAt(snapshot, 'reset_credits_available') >
+            resetCreditsInvalidatedAtMs)
     )
     .sort(compareSnapshotFieldFreshness('reset_credits_available'))[0];
   const creditsSnapshot = usableSnapshots
-    .filter((snapshot) => snapshot.reset_credits !== undefined)
+    .filter(
+      (snapshot) =>
+        snapshot.reset_credits !== undefined &&
+        (resetCreditsInvalidatedAtMs <= 0 ||
+          snapshotFieldObservedAt(snapshot, 'reset_credits') > resetCreditsInvalidatedAtMs)
+    )
     .sort(compareSnapshotFieldFreshness('reset_credits'))[0];
   const countObservedAt = countSnapshot
     ? snapshotFieldObservedAt(countSnapshot, 'reset_credits_available')
@@ -126,28 +176,170 @@ export const mergeCodexResetCreditsFromQuotaSnapshots = (
     : 0;
   const useSnapshotCount =
     countSnapshot !== undefined &&
-    (quota?.rateLimitResetCreditsAvailableCount === undefined ||
-      countObservedAt >= localObservedAt);
+    (liveCount === null || liveCountInvalidated || countObservedAt >= localObservedAt);
   const useSnapshotCredits =
     creditsSnapshot !== undefined &&
-    (quota?.rateLimitResetCredits === undefined || creditsObservedAt >= localObservedAt);
+    ((quota?.rateLimitResetCredits === undefined && liveCount === null) ||
+      liveCountInvalidated ||
+      creditsObservedAt >= localObservedAt);
+  return {
+    countSnapshot,
+    countObservedAt,
+    creditsSnapshot,
+    creditsObservedAt,
+    localObservedAt,
+    liveCount,
+    liveObservedAt: localObservedAt,
+    liveCountInvalidated,
+    useSnapshotCount,
+    useSnapshotCredits,
+  };
+};
+
+export type CodexResetCreditCountSource =
+  | 'live'
+  | 'snapshot'
+  | 'unverified'
+  | 'invalidated'
+  | 'none';
+
+export interface CodexResetCreditEvidence {
+  /** Count the credential detail displays after snapshot merging; null = unknown. */
+  displayedCount: number | null;
+  /** Reset-credit entries backing the display (live or snapshot), regardless of count. */
+  displayedCreditsCount: number;
+  /**
+   * 'live' — a successful live fetch owns the displayed count and no newer
+   *   snapshot overrides it; the only mutation-grade evidence.
+   * 'snapshot' — a fresher persisted snapshot owns the displayed count.
+   * 'unverified' — a preserved count or credit list exists, but the live
+   *   state did not verify it (error-preserved, header-observed, or fetch
+   *   with an unknown reset-credit count).
+   * 'none' — no reset-credit evidence at all.
+   */
+  source: CodexResetCreditCountSource;
+  observedAtMs: number | null;
+  liveCount: number | null;
+  liveObservedAtMs: number | null;
+  snapshotCount: number | null;
+  snapshotObservedAtMs: number | null;
+  liveIsAuthoritative: boolean;
+  snapshotOverridesLive: boolean;
+}
+
+export const resolveCodexResetCreditEvidence = (
+  quota: CodexQuotaState | undefined,
+  snapshots: AccountQuotaSnapshotWindow[]
+): CodexResetCreditEvidence => {
+  const selection = selectCodexResetCreditSnapshots(quota, snapshots);
+  const snapshotCount = selection.countSnapshot?.reset_credits_available ?? null;
+  const snapshotHasEvidence = selection.useSnapshotCount || selection.useSnapshotCredits;
+  const liveIsAuthoritative =
+    !selection.liveCountInvalidated &&
+    quota?.status === 'success' &&
+    selection.liveCount !== null &&
+    !snapshotHasEvidence;
+  const source: CodexResetCreditCountSource =
+    selection.liveCountInvalidated && !snapshotHasEvidence
+      ? 'invalidated'
+      : snapshotHasEvidence
+        ? 'snapshot'
+        : liveIsAuthoritative
+          ? 'live'
+          : selection.liveCount !== null || (quota?.rateLimitResetCredits?.length ?? 0) > 0
+            ? 'unverified'
+            : 'none';
+  const displayedCount =
+    source === 'snapshot'
+      ? selection.useSnapshotCount
+        ? snapshotCount
+        : selection.useSnapshotCredits
+          ? null
+          : selection.liveCount
+      : source === 'live'
+        ? selection.liveCount
+        : source === 'invalidated'
+          ? null
+          : selection.liveCount;
+  const displayedCreditsCount =
+    source === 'invalidated'
+      ? 0
+      : selection.useSnapshotCredits
+        ? (selection.creditsSnapshot?.reset_credits?.length ?? 0)
+        : (quota?.rateLimitResetCredits?.length ?? 0);
+  const observedAtMs =
+    source === 'snapshot'
+      ? Math.max(
+          selection.useSnapshotCount ? selection.countObservedAt : 0,
+          selection.useSnapshotCredits ? selection.creditsObservedAt : 0
+        )
+      : source === 'live'
+        ? selection.liveObservedAt
+        : null;
+  return {
+    displayedCount,
+    displayedCreditsCount,
+    source,
+    observedAtMs: observedAtMs !== null && observedAtMs > 0 ? observedAtMs : null,
+    liveCount: selection.liveCount,
+    liveObservedAtMs: selection.liveObservedAt > 0 ? selection.liveObservedAt : null,
+    snapshotCount,
+    snapshotObservedAtMs: selection.countObservedAt > 0 ? selection.countObservedAt : null,
+    liveIsAuthoritative,
+    snapshotOverridesLive: source === 'snapshot',
+  };
+};
+
+export const invalidateCodexResetCreditState = (
+  quota: CodexQuotaState,
+  invalidatedAtMs: number
+): CodexQuotaState => ({
+  ...quota,
+  rateLimitResetCreditsAvailableCount: null,
+  rateLimitResetCredits: [],
+  resetCreditsInvalidatedAtMs: Math.max(quota.resetCreditsInvalidatedAtMs ?? 0, invalidatedAtMs),
+});
+
+export const mergeCodexResetCreditsFromQuotaSnapshots = (
+  quota: CodexQuotaState | undefined,
+  snapshots: AccountQuotaSnapshotWindow[]
+): CodexQuotaState | undefined => {
+  const {
+    countSnapshot,
+    countObservedAt,
+    creditsSnapshot,
+    creditsObservedAt,
+    useSnapshotCount,
+    useSnapshotCredits,
+  } = selectCodexResetCreditSnapshots(quota, snapshots);
+  const evidence = resolveCodexResetCreditEvidence(quota, snapshots);
+  if (evidence.source === 'invalidated' && quota) {
+    return invalidateCodexResetCreditState(quota, quota.resetCreditsInvalidatedAtMs ?? Date.now());
+  }
   if (!useSnapshotCount && !useSnapshotCredits) return quota;
 
   const clearCreditsFromNewZeroCount =
-    useSnapshotCount &&
-    countSnapshot?.reset_credits_available === 0 &&
-    countObservedAt >= creditsObservedAt;
+    useSnapshotCount && countSnapshot?.reset_credits_available === 0
+      ? countObservedAt >= creditsObservedAt
+      : false;
 
   const base: CodexQuotaState = quota ?? { status: 'success', windows: [] };
   const next: CodexQuotaState = {
     ...base,
+    // A newer snapshot that only contains the credit list owns the displayed
+    // reset-credit evidence, but it does not establish a numeric count. Do
+    // not let an older live count survive beside that newer list: the display
+    // and action resolver must both treat the count as unknown until live
+    // verification supplies it.
     rateLimitResetCreditsAvailableCount: useSnapshotCount
-      ? (countSnapshot.reset_credits_available ?? null)
-      : base.rateLimitResetCreditsAvailableCount,
+      ? (countSnapshot?.reset_credits_available ?? null)
+      : useSnapshotCredits
+        ? null
+        : base.rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: clearCreditsFromNewZeroCount
       ? []
       : useSnapshotCredits
-        ? (creditsSnapshot.reset_credits ?? []).map((credit) => ({
+        ? (creditsSnapshot?.reset_credits ?? []).map((credit) => ({
             id: credit.id,
             status: 'available',
             grantedAt: '',
@@ -373,14 +565,12 @@ const normalizedSnapshotModelIDs = (modelIDs: string[] | undefined): string[] =>
     new Set((modelIDs ?? []).map((model) => model.trim().toLowerCase()).filter(Boolean))
   ).sort();
 
-const snapshotScopeParts = (
-  window: {
-    provider_window_id: string;
-    model_scope_kind: string;
-    model_scope_key?: string;
-    model_ids?: string[];
-  }
-) => {
+const snapshotScopeParts = (window: {
+  provider_window_id: string;
+  model_scope_kind: string;
+  model_scope_key?: string;
+  model_ids?: string[];
+}) => {
   if (isIncompleteModelScopeSnapshot(window)) {
     return [window.provider_window_id.trim(), 'models', ''];
   }
@@ -390,14 +580,12 @@ const snapshotScopeParts = (
   return [window.provider_window_id.trim(), kind, key, ...models];
 };
 
-const snapshotScopeKey = (
-  window: {
-    provider_window_id: string;
-    model_scope_kind: string;
-    model_scope_key?: string;
-    model_ids?: string[];
-  }
-) => snapshotScopeParts(window).join('\u0000');
+const snapshotScopeKey = (window: {
+  provider_window_id: string;
+  model_scope_kind: string;
+  model_scope_key?: string;
+  model_ids?: string[];
+}) => snapshotScopeParts(window).join('\u0000');
 
 const snapshotDisplayKey = (snapshot: AccountQuotaSnapshotWindow): string =>
   [
@@ -530,20 +718,16 @@ export const mergeAccountQuotaSnapshotWindows = (
       definition.modelScope.complete === false ||
       !scopedProviderWindowIds.has(definition.providerWindowId)
   );
-  const compatibleSnapshots = canonicalSnapshots.filter(
-    (snapshot) => {
-      if (snapshot.model_scope_kind.trim().toLowerCase() !== 'all') return true;
-      if (options.provider !== 'codex') return true;
-      const isKnownScopedLegacy = isCodexKnownScopedProviderWindowId(
-        snapshot.provider_window_id
-      );
-      return (
-        !isKnownScopedLegacy &&
-        !scopedProviderWindowIds.has(snapshot.provider_window_id) &&
-        !scopedProviderWindowAliases.has(snapshot.provider_window_id)
-      );
-    }
-  );
+  const compatibleSnapshots = canonicalSnapshots.filter((snapshot) => {
+    if (snapshot.model_scope_kind.trim().toLowerCase() !== 'all') return true;
+    if (options.provider !== 'codex') return true;
+    const isKnownScopedLegacy = isCodexKnownScopedProviderWindowId(snapshot.provider_window_id);
+    return (
+      !isKnownScopedLegacy &&
+      !scopedProviderWindowIds.has(snapshot.provider_window_id) &&
+      !scopedProviderWindowAliases.has(snapshot.provider_window_id)
+    );
+  });
   const snapshotsByKey = new Map<string, AccountQuotaSnapshotWindow>();
   compatibleSnapshots.forEach((snapshot) => {
     const key = snapshotScopeKey(snapshot);
@@ -557,14 +741,12 @@ export const mergeAccountQuotaSnapshotWindows = (
     if (definition.modelScope.kind === 'all' && definition.modelScope.complete === false) {
       return definition;
     }
-    const key = snapshotScopeKey(
-      {
-        provider_window_id: definition.providerWindowId,
-        model_scope_kind: definition.modelScope.kind,
-        model_scope_key: definition.modelScope.key,
-        model_ids: definition.modelScope.models,
-      },
-    );
+    const key = snapshotScopeKey({
+      provider_window_id: definition.providerWindowId,
+      model_scope_kind: definition.modelScope.kind,
+      model_scope_key: definition.modelScope.key,
+      model_ids: definition.modelScope.models,
+    });
     const snapshot = snapshotsByKey.get(key);
     if (!snapshot) return definition;
     matchedSnapshotKeys.add(key);
@@ -619,9 +801,7 @@ export const mergeAccountQuotaSnapshotWindows = (
   });
 };
 
-const snapshotModelScope = (
-  snapshot: AccountQuotaSnapshotWindow
-): QuotaModelScope => {
+const snapshotModelScope = (snapshot: AccountQuotaSnapshotWindow): QuotaModelScope => {
   if (isIncompleteModelScopeSnapshot(snapshot)) {
     return { kind: 'models', models: [], complete: false };
   }

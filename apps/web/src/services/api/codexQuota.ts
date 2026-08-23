@@ -102,11 +102,29 @@ export const consumeCodexRateLimitResetCredit = async (
   return result;
 };
 
+export type CodexResetQuotaResult =
+  | { outcome: 'consumed_and_refreshed'; quota: CodexQuotaData }
+  | { outcome: 'consumed_refresh_failed'; refreshError: Error };
+
 export const resetCodexQuota = async (
   file: AuthFileItem,
   t: TFunction,
-  requestScope?: ApiClientRequestScope
-): Promise<CodexQuotaData> => {
+  requestScope?: ApiClientRequestScope,
+  onConsumed?: () => void
+): Promise<CodexResetQuotaResult> => {
   await consumeCodexRateLimitResetCredit(file, t, requestScope);
-  return fetchCodexQuota(file, t, requestScope);
+  onConsumed?.();
+  try {
+    return {
+      outcome: 'consumed_and_refreshed',
+      quota: await fetchCodexQuota(file, t, requestScope),
+    };
+  } catch (error) {
+    // The credit is already consumed server-side; a failed post-consume
+    // refresh must not be reported as a failed reset.
+    return {
+      outcome: 'consumed_refresh_failed',
+      refreshError: error instanceof Error ? error : new Error(t('common.unknown_error')),
+    };
+  }
 };
