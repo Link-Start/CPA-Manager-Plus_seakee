@@ -894,3 +894,162 @@ describe('Codex plan precedence', () => {
     ]);
   });
 });
+
+describe('Codex reset-credit provenance', () => {
+  const codexFile = {
+    name: 'codex.json',
+    type: 'codex' as const,
+    authIndex: 'auth-1',
+  };
+
+  it('buildSuccessState copies field-level reset-credit provenance', () => {
+    const state = CODEX_CONFIG.buildSuccessState(
+      {
+        planType: 'plus',
+        windows: [],
+        quotaInventoryObserved: true,
+        subscriptionActiveUntil: null,
+        rateLimitResetCreditsAvailableCount: 2,
+        rateLimitResetCredits: [],
+        rateLimitResetCreditsError: null,
+        resetCreditsObservedAtMs: 1_500,
+        resetCreditsObservationSource: 'reset_endpoint',
+        observedAtMs: 1_000,
+      },
+      codexFile
+    );
+
+    expect(state.resetCreditsObservedAtMs).toBe(1_500);
+    expect(state.resetCreditsObservationSource).toBe('reset_endpoint');
+    expect(state.fetchedAtMs).toBe(1_000);
+  });
+
+  it('buildSuccessState derives provenance for known counts from the fetch observation', () => {
+    const state = CODEX_CONFIG.buildSuccessState(
+      {
+        planType: 'plus',
+        windows: [],
+        quotaInventoryObserved: true,
+        subscriptionActiveUntil: null,
+        rateLimitResetCreditsAvailableCount: 0,
+        rateLimitResetCredits: [],
+        rateLimitResetCreditsError: null,
+        observedAtMs: 1_000,
+      },
+      codexFile
+    );
+
+    expect(state.resetCreditsObservedAtMs).toBe(1_000);
+    expect(state.resetCreditsObservationSource).toBe('usage');
+  });
+
+  it('marks unknown provenance when the fetch has no reset-credit count', () => {
+    const state = CODEX_CONFIG.buildSuccessState(
+      {
+        planType: 'plus',
+        windows: [],
+        quotaInventoryObserved: true,
+        subscriptionActiveUntil: null,
+        rateLimitResetCreditsAvailableCount: null,
+        rateLimitResetCredits: [],
+        rateLimitResetCreditsError: 'unavailable',
+        observedAtMs: 1_000,
+      },
+      codexFile
+    );
+
+    expect(state.resetCreditsObservedAtMs).toBeNull();
+    expect(state.resetCreditsObservationSource).toBe('unknown');
+  });
+
+  it('keeps active reset-credit provenance when merging a newer header observation', () => {
+    const activeQuota: CodexQuotaState = {
+      status: 'success',
+      fetchedAtMs: 1_000,
+      windows: [],
+      rateLimitResetCreditsAvailableCount: 2,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 1_000,
+      resetCreditsObservationSource: 'reset_endpoint',
+    };
+    const observedQuota: CodexQuotaState = {
+      status: 'success',
+      windows: [],
+      observedFromUsageHeaders: true,
+      observedResetCreditsUnknown: true,
+      observedAtMs: 2_000,
+    };
+
+    const result = resolveQuotaDisplayState(activeQuota, observedQuota) as CodexQuotaState;
+
+    expect(result.observedAtMs).toBe(2_000);
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(2);
+    expect(result.resetCreditsObservedAtMs).toBe(1_000);
+    expect(result.resetCreditsObservationSource).toBe('reset_endpoint');
+  });
+
+  it('takes the reset-credit block from a provider observation merged over header evidence', () => {
+    const activeQuota: CodexQuotaState = {
+      status: 'success',
+      windows: [],
+      quotaInventoryObserved: false,
+      observedFromUsageHeaders: true,
+      observedResetCreditsUnknown: true,
+      observedAtMs: 1_000,
+      fetchedAtMs: 1_000,
+    };
+    const observedQuota: CodexQuotaState = {
+      status: 'success',
+      windows: [],
+      quotaInventoryObserved: true,
+      fetchedAtMs: 2_000,
+      observedAtMs: 2_000,
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [
+        {
+          id: 'credit-1',
+          status: 'available',
+          grantedAt: '',
+          expiresAt: '2026-07-19T00:42:09Z',
+        },
+      ],
+      rateLimitResetCreditsError: null,
+      resetCreditsObservedAtMs: 2_000,
+      resetCreditsObservationSource: 'reset_endpoint',
+    };
+
+    const result = resolveQuotaDisplayState(activeQuota, observedQuota) as CodexQuotaState;
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(result.rateLimitResetCredits).toHaveLength(1);
+    expect(result.resetCreditsObservedAtMs).toBe(2_000);
+    expect(result.resetCreditsObservationSource).toBe('reset_endpoint');
+    expect(result.observedResetCreditsUnknown).toBeUndefined();
+  });
+
+  it('downgrades preserved reset-credit provenance when building a failure state', () => {
+    const activeQuota: CodexQuotaState = {
+      status: 'success',
+      windows: [],
+      fetchedAtMs: 1_000,
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 1_000,
+      resetCreditsObservationSource: 'reset_endpoint',
+    };
+
+    const failed = buildQuotaFailureState(
+      CODEX_CONFIG,
+      'provider down',
+      502,
+      codexFile,
+      activeQuota,
+      1_500
+    ) as CodexQuotaState;
+
+    expect(failed.status).toBe('error');
+    expect(failed.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(failed.resetCreditsObservedAtMs).toBe(1_000);
+    expect(failed.resetCreditsObservationSource).toBe('unknown');
+  });
+});

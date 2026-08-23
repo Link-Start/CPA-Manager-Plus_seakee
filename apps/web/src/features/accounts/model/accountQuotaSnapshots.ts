@@ -101,9 +101,8 @@ interface CodexResetCreditSnapshotSelection {
   countObservedAt: number;
   creditsSnapshot: AccountQuotaSnapshotWindow | undefined;
   creditsObservedAt: number;
-  localObservedAt: number;
+  liveResetCreditObservedAt: number;
   liveCount: number | null;
-  liveObservedAt: number;
   liveCountInvalidated: boolean;
   useSnapshotCount: boolean;
   useSnapshotCredits: boolean;
@@ -118,14 +117,17 @@ const selectCodexResetCreditSnapshots = (
   quota: CodexQuotaState | undefined,
   snapshots: AccountQuotaSnapshotWindow[]
 ): CodexResetCreditSnapshotSelection => {
-  const localObservedAt = Math.max(
-    typeof quota?.fetchedAtMs === 'number' && Number.isFinite(quota.fetchedAtMs)
-      ? quota.fetchedAtMs
-      : 0,
-    typeof quota?.observedAtMs === 'number' && Number.isFinite(quota.observedAtMs)
-      ? quota.observedAtMs
-      : 0
-  );
+  // Reset-credit freshness is field-specific: only the observation that
+  // produced the count may date it. The generic quota timestamps are stamped
+  // by whichever evidence event was newest — including usage headers and
+  // inspections that never observe reset credits — so they must not decide
+  // reset-credit freshness here.
+  const liveResetCreditObservedAt =
+    typeof quota?.resetCreditsObservedAtMs === 'number' &&
+    Number.isFinite(quota.resetCreditsObservedAtMs) &&
+    quota.resetCreditsObservedAtMs > 0
+      ? quota.resetCreditsObservedAtMs
+      : 0;
   const liveCount =
     typeof quota?.rateLimitResetCreditsAvailableCount === 'number' &&
     Number.isFinite(quota.rateLimitResetCreditsAvailableCount) &&
@@ -138,11 +140,14 @@ const selectCodexResetCreditSnapshots = (
     quota.resetCreditsInvalidatedAtMs > 0
       ? quota.resetCreditsInvalidatedAtMs
       : 0;
-  // Once a consume has completed, a live state without a reset-credit count
-  // cannot re-authorize older evidence merely because an unrelated quota
-  // field was fetched later. A known live count (including zero) is the only
-  // observation that clears the invalidation fence.
-  const liveCountInvalidated = resetCreditsInvalidatedAtMs > 0 && liveCount === null;
+  // Once a consume has completed, only a reset-credit observation newer than
+  // the invalidation fence re-authorizes evidence. An unrelated quota field
+  // fetched later cannot clear the fence, and a count whose own observation
+  // predates the fence is stale. Observations stamped exactly at the fence are
+  // the post-reset commit's floored provenance and stay authoritative.
+  const liveCountInvalidated =
+    resetCreditsInvalidatedAtMs > 0 &&
+    (liveCount === null || liveResetCreditObservedAt < resetCreditsInvalidatedAtMs);
   const usableSnapshots = snapshots.filter(
     (snapshot) =>
       snapshot.stale !== true &&
@@ -176,20 +181,19 @@ const selectCodexResetCreditSnapshots = (
     : 0;
   const useSnapshotCount =
     countSnapshot !== undefined &&
-    (liveCount === null || liveCountInvalidated || countObservedAt >= localObservedAt);
+    (liveCount === null || liveCountInvalidated || countObservedAt >= liveResetCreditObservedAt);
   const useSnapshotCredits =
     creditsSnapshot !== undefined &&
     ((quota?.rateLimitResetCredits === undefined && liveCount === null) ||
       liveCountInvalidated ||
-      creditsObservedAt >= localObservedAt);
+      creditsObservedAt >= liveResetCreditObservedAt);
   return {
     countSnapshot,
     countObservedAt,
     creditsSnapshot,
     creditsObservedAt,
-    localObservedAt,
+    liveResetCreditObservedAt,
     liveCount,
-    liveObservedAt: localObservedAt,
     liveCountInvalidated,
     useSnapshotCount,
     useSnapshotCredits,
@@ -234,9 +238,17 @@ export const resolveCodexResetCreditEvidence = (
   const selection = selectCodexResetCreditSnapshots(quota, snapshots);
   const snapshotCount = selection.countSnapshot?.reset_credits_available ?? null;
   const snapshotHasEvidence = selection.useSnapshotCount || selection.useSnapshotCredits;
+  // 'live' must mean a provider request actually observed this count: a
+  // preserved count riding a newer unrelated success state (error-preserved
+  // fields, header/inspection merges) is at best 'unverified'.
+  const liveProvenanceVerified =
+    (quota?.resetCreditsObservationSource === 'reset_endpoint' ||
+      quota?.resetCreditsObservationSource === 'usage') &&
+    selection.liveResetCreditObservedAt > 0;
   const liveIsAuthoritative =
     !selection.liveCountInvalidated &&
     quota?.status === 'success' &&
+    liveProvenanceVerified &&
     selection.liveCount !== null &&
     !snapshotHasEvidence;
   const source: CodexResetCreditCountSource =
@@ -274,7 +286,7 @@ export const resolveCodexResetCreditEvidence = (
           selection.useSnapshotCredits ? selection.creditsObservedAt : 0
         )
       : source === 'live'
-        ? selection.liveObservedAt
+        ? selection.liveResetCreditObservedAt
         : null;
   return {
     displayedCount,
@@ -282,7 +294,8 @@ export const resolveCodexResetCreditEvidence = (
     source,
     observedAtMs: observedAtMs !== null && observedAtMs > 0 ? observedAtMs : null,
     liveCount: selection.liveCount,
-    liveObservedAtMs: selection.liveObservedAt > 0 ? selection.liveObservedAt : null,
+    liveObservedAtMs:
+      selection.liveResetCreditObservedAt > 0 ? selection.liveResetCreditObservedAt : null,
     snapshotCount,
     snapshotObservedAtMs: selection.countObservedAt > 0 ? selection.countObservedAt : null,
     liveIsAuthoritative,
@@ -298,6 +311,7 @@ export const invalidateCodexResetCreditState = (
   rateLimitResetCreditsAvailableCount: null,
   rateLimitResetCredits: [],
   resetCreditsInvalidatedAtMs: Math.max(quota.resetCreditsInvalidatedAtMs ?? 0, invalidatedAtMs),
+  resetCreditsObservationSource: 'unknown',
 });
 
 export const mergeCodexResetCreditsFromQuotaSnapshots = (
@@ -324,6 +338,10 @@ export const mergeCodexResetCreditsFromQuotaSnapshots = (
       : false;
 
   const base: CodexQuotaState = quota ?? { status: 'success', windows: [] };
+  const snapshotObservedAt = Math.max(
+    useSnapshotCount ? countObservedAt : 0,
+    useSnapshotCredits ? creditsObservedAt : 0
+  );
   const next: CodexQuotaState = {
     ...base,
     // A newer snapshot that only contains the credit list owns the displayed
@@ -346,6 +364,10 @@ export const mergeCodexResetCreditsFromQuotaSnapshots = (
             expiresAt: new Date(credit.expires_at_ms).toISOString(),
           }))
         : base.rateLimitResetCredits,
+    // The displayed block is snapshot-sourced now; keep its field-level
+    // provenance consistent with where the value came from.
+    resetCreditsObservedAtMs: snapshotObservedAt > 0 ? snapshotObservedAt : null,
+    resetCreditsObservationSource: 'snapshot',
   };
   return next;
 };

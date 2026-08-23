@@ -113,7 +113,12 @@ export const resetCodexQuota = async (
   onConsumed?: () => void
 ): Promise<CodexResetQuotaResult> => {
   await consumeCodexRateLimitResetCredit(file, t, requestScope);
-  onConsumed?.();
+  try {
+    onConsumed?.();
+  } catch {
+    // The credit is already consumed server-side; a local callback failure
+    // must not turn the completed consume into a reported consume failure.
+  }
   try {
     return {
       outcome: 'consumed_and_refreshed',

@@ -184,4 +184,45 @@ describe('resetCodexQuota', () => {
     expect(onConsumed).not.toHaveBeenCalled();
     expect(mocks.fetchQuota).not.toHaveBeenCalled();
   });
+
+  it('does not report a consume failure when the onConsumed callback throws and the refresh succeeds', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '{}',
+      body: {},
+    });
+    mocks.fetchQuota.mockResolvedValue(quota);
+    const onConsumed = vi.fn(() => {
+      throw new Error('callback exploded');
+    });
+
+    const result = await resetCodexQuota(file, t, undefined, onConsumed);
+
+    expect(result).toEqual({ outcome: 'consumed_and_refreshed', quota });
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps partial-success semantics when the onConsumed callback throws and the refresh fails', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '{}',
+      body: {},
+    });
+    mocks.fetchQuota.mockRejectedValueOnce(new Error('refresh unavailable'));
+    const onConsumed = vi.fn(() => {
+      throw new Error('callback exploded');
+    });
+
+    const result = await resetCodexQuota(file, t, undefined, onConsumed);
+
+    expect(result.outcome).toBe('consumed_refresh_failed');
+    expect(result).toMatchObject({ refreshError: new Error('refresh unavailable') });
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchQuota).toHaveBeenCalledTimes(1);
+  });
 });

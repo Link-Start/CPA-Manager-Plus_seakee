@@ -11,6 +11,7 @@ import type {
   ClaudeUsagePayload,
   CodexRateLimitResetCredit,
   CodexQuotaWindow,
+  CodexResetCreditObservationSource,
   CodexUsagePayload,
   KimiQuotaRow,
   KimiUsagePayload,
@@ -104,6 +105,9 @@ export type CodexQuotaData = {
   rateLimitResetCreditsAvailableCount: number | null;
   rateLimitResetCredits: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError: string | null;
+  /** Field-specific observation time behind the reset-credit count. */
+  resetCreditsObservedAtMs?: number | null;
+  resetCreditsObservationSource?: CodexResetCreditObservationSource;
 };
 
 const isCodexRateLimitInventory = (value: unknown): boolean =>
@@ -427,15 +431,47 @@ type CodexResetCreditsData = {
   availableCount: number | null;
   credits: CodexRateLimitResetCredit[];
   error: string | null;
+  /** When the reset-credits endpoint response was observed; null on failure. */
+  observedAtMs: number | null;
 };
 
-const resolveCodexResetCreditsAvailableCount = (
+type CodexResetCreditProvenance = {
+  availableCount: number | null;
+  observationSource: CodexResetCreditObservationSource;
+  observedAtMs: number | null;
+};
+
+// Resolve the reset-credit count together with its field-specific provenance:
+// a reset-endpoint count carries the endpoint observation time, a usage-payload
+// fallback carries the usage observation time, and neither borrows a timestamp
+// from the request it did not come from.
+const resolveCodexResetCreditProvenance = (
   resetCredits: CodexResetCreditsData,
-  usageAvailableCount: number | null
-): number | null => {
-  if (resetCredits.availableCount !== null) return resetCredits.availableCount;
-  if (resetCredits.credits.length > 0) return resetCredits.credits.length;
-  return usageAvailableCount;
+  usageAvailableCount: number | null,
+  usageObservedAtMs: number
+): CodexResetCreditProvenance => {
+  if (resetCredits.availableCount !== null) {
+    return {
+      availableCount: resetCredits.availableCount,
+      observationSource: 'reset_endpoint',
+      observedAtMs: resetCredits.observedAtMs,
+    };
+  }
+  if (resetCredits.credits.length > 0) {
+    return {
+      availableCount: resetCredits.credits.length,
+      observationSource: 'reset_endpoint',
+      observedAtMs: resetCredits.observedAtMs,
+    };
+  }
+  if (usageAvailableCount !== null) {
+    return {
+      availableCount: usageAvailableCount,
+      observationSource: 'usage',
+      observedAtMs: usageObservedAtMs,
+    };
+  }
+  return { availableCount: null, observationSource: 'unknown', observedAtMs: null };
 };
 
 const fetchCodexResetCredits = async (
@@ -460,6 +496,7 @@ const fetchCodexResetCredits = async (
         availableCount: null,
         credits: [],
         error: getApiCallErrorMessage(result),
+        observedAtMs: null,
       };
     }
 
@@ -469,6 +506,7 @@ const fetchCodexResetCredits = async (
         availableCount: null,
         credits: [],
         error: t('codex_quota.reset_credits_invalid_payload'),
+        observedAtMs: null,
       };
     }
 
@@ -476,12 +514,14 @@ const fetchCodexResetCredits = async (
       availableCount: payload.availableCount,
       credits: payload.credits,
       error: null,
+      observedAtMs: Date.now(),
     };
   } catch (err: unknown) {
     return {
       availableCount: null,
       credits: [],
       error: err instanceof Error ? err.message : 'Failed to fetch Codex reset credits',
+      observedAtMs: null,
     };
   }
 };
@@ -525,6 +565,11 @@ export const fetchCodexQuota = async (
   const windows = buildCodexQuotaWindows(payload, t, planType, observedAtMs);
   const usageResetCreditsAvailableCount = resolveCodexRateLimitResetCreditsAvailableCount(payload);
   const resetCredits = await fetchCodexResetCredits(authIndex, accountId, t, requestConfig);
+  const resetCreditProvenance = resolveCodexResetCreditProvenance(
+    resetCredits,
+    usageResetCreditsAvailableCount,
+    observedAtMs
+  );
   return {
     planType,
     windows,
@@ -533,12 +578,11 @@ export const fetchCodexQuota = async (
     subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(payload),
     ...resolveCodexCreditsInfo(payload),
     ...resolveCodexSpendControlInfo(payload),
-    rateLimitResetCreditsAvailableCount: resolveCodexResetCreditsAvailableCount(
-      resetCredits,
-      usageResetCreditsAvailableCount
-    ),
+    rateLimitResetCreditsAvailableCount: resetCreditProvenance.availableCount,
     rateLimitResetCredits: resetCredits.credits,
     rateLimitResetCreditsError: resetCredits.error,
+    resetCreditsObservedAtMs: resetCreditProvenance.observedAtMs,
+    resetCreditsObservationSource: resetCreditProvenance.observationSource,
   };
 };
 

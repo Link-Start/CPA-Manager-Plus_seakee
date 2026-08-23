@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -339,6 +339,113 @@ describe('fetchCodexQuota', () => {
     expect(result.rateLimitResetCreditsAvailableCount).toBe(1);
     expect(result.rateLimitResetCredits).toEqual([]);
     expect(result.rateLimitResetCreditsError).toBe('codex_quota.reset_credits_invalid_payload');
+  });
+});
+
+describe('fetchCodexQuota reset-credit provenance', () => {
+  const file = { name: 'codex.json', type: 'codex' as const, authIndex: 'auth-1' };
+
+  const stubTimedRequests = (
+    usageBody: Record<string, unknown>,
+    resetBody: Record<string, unknown> | null,
+    resetStatusCode = 200
+  ) => {
+    mocks.request.mockImplementation(async (payload: { url: string }) => {
+      if (payload.url === CODEX_USAGE_URL) {
+        vi.setSystemTime(1_000);
+        return {
+          statusCode: 200,
+          hasStatusCode: true,
+          header: {},
+          bodyText: '',
+          body: usageBody,
+        };
+      }
+      vi.setSystemTime(1_500);
+      return {
+        statusCode: resetStatusCode,
+        hasStatusCode: true,
+        header: {},
+        bodyText: resetStatusCode === 200 ? '' : 'bad gateway',
+        body: resetBody,
+      };
+    });
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('P1: stamps the reset endpoint observation when its count wins', async () => {
+    stubTimedRequests({ rate_limit: {} }, { available_count: 2, credits: [] });
+
+    const result = await fetchCodexQuota(file, t);
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(2);
+    expect(result.resetCreditsObservationSource).toBe('reset_endpoint');
+    expect(result.resetCreditsObservedAtMs).toBe(1_500);
+  });
+
+  it('P2: stamps the reset endpoint observation when the credit list wins', async () => {
+    stubTimedRequests(
+      { rate_limit: {} },
+      {
+        available_count: null,
+        credits: [
+          {
+            id: 'credit-1',
+            reset_type: 'codex_rate_limits',
+            status: 'available',
+            granted_at: '2026-06-01T00:00:00Z',
+            expires_at: '2026-06-30T00:00:00Z',
+          },
+        ],
+      }
+    );
+
+    const result = await fetchCodexQuota(file, t);
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(result.resetCreditsObservationSource).toBe('reset_endpoint');
+    expect(result.resetCreditsObservedAtMs).toBe(1_500);
+  });
+
+  it('P3: falls back to the usage observation without borrowing the reset endpoint time', async () => {
+    stubTimedRequests(
+      { rate_limit_reset_credits: { available_count: 3 } },
+      { available_count: null, credits: [] }
+    );
+
+    const result = await fetchCodexQuota(file, t);
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(3);
+    expect(result.resetCreditsObservationSource).toBe('usage');
+    expect(result.resetCreditsObservedAtMs).toBe(1_000);
+  });
+
+  it('P4: marks an unknown provenance when neither source has a count', async () => {
+    stubTimedRequests({ rate_limit: {} }, { available_count: null, credits: [] });
+
+    const result = await fetchCodexQuota(file, t);
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(result.resetCreditsObservationSource).toBe('unknown');
+    expect(result.resetCreditsObservedAtMs).toBeNull();
+  });
+
+  it('P5: a failed reset endpoint never lends its completion time to the usage fallback', async () => {
+    stubTimedRequests({ rate_limit_reset_credits: { available_count: 1 } }, null, 502);
+
+    const result = await fetchCodexQuota(file, t);
+
+    expect(result.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(result.rateLimitResetCreditsError).toBe('502 bad gateway');
+    expect(result.resetCreditsObservationSource).toBe('usage');
+    expect(result.resetCreditsObservedAtMs).toBe(1_000);
   });
 });
 

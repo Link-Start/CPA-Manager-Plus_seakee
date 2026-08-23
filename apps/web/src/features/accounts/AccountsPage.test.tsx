@@ -11730,6 +11730,193 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).not.toContain('codex_quota.reset_credits_available_label');
   });
 
+  it('restores the reset-credit invalidation fence in a single atomic commit on refresh', async () => {
+    const file = makeCodexFile('codex.json', 'auth-1', 'codex@example.com');
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(file, {
+      status: 'success' as const,
+      fetchedAtMs: Date.now() - 1_000,
+      quotaInventoryObserved: true,
+      windows: [],
+      rateLimitResetCreditsAvailableCount: null,
+      rateLimitResetCredits: [],
+      resetCreditsInvalidatedAtMs: 5_000,
+    });
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: null,
+    });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    mocks.quotaState.setCodexQuota.mockClear();
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+      await flushPromises();
+    });
+
+    expect(mocks.quotaState.setCodexQuota).toHaveBeenCalledTimes(1);
+    const committed = lastCodexQuotaCommit();
+    expect(committed.rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(committed.resetCreditsInvalidatedAtMs).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it('does not surface a stale refresh-failed warning when a newer refresh superseded the reset transaction', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }]);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    const resetDeferred = createDeferred<{
+      outcome: 'consumed_refresh_failed';
+      refreshError: Error;
+    }>();
+    let onConsumed: (() => void) | undefined;
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockImplementation(
+      (_file, _t, _scope, consumedCallback) => {
+        onConsumed = consumedCallback;
+        return resetDeferred.promise;
+      }
+    );
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    let confirmPromise!: Promise<void>;
+    await act(async () => {
+      confirmPromise = confirmation.onConfirm();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      onConsumed?.();
+      await flushPromises();
+    });
+    await act(async () => {
+      await findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(mocks.files[0]),
+        'accounts.refresh_quota'
+      ).props.onClick();
+      await flushPromises();
+    });
+
+    await act(async () => {
+      resetDeferred.resolve({
+        outcome: 'consumed_refresh_failed',
+        refreshError: new Error('refresh down'),
+      });
+      await confirmPromise;
+      await flushPromises();
+    });
+
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      'codex_quota.reset_refresh_failed_message',
+      'warning'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      expect.stringContaining('codex_quota.reset_failed'),
+      'error'
+    );
+  });
+
+  it('keeps a zero live verification ahead of an older snapshot via field-specific provenance', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    const snapshotObservedAtMs = Date.now() - 60_000;
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }], snapshotObservedAtMs);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      observedAtMs: snapshotObservedAtMs - 10_000,
+      rateLimitResetCreditsAvailableCount: 0,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: Date.now(),
+      resetCreditsObservationSource: 'reset_endpoint',
+    });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+    });
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'codex_quota.reset_no_credits_message',
+      'info'
+    );
+    expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
+  });
+
+  it('floors post-reset reset-credit provenance at the mutation completion boundary', async () => {
+    const rowKey = codexRowKey('codex.json', 'auth-1');
+    const snapshotObservedAtMs = Date.now() - 60_000;
+    seedCodexResetCreditSnapshot([{ rowKey, resetCreditsAvailable: 1 }], snapshotObservedAtMs);
+    installCodexQuotaStoreMutationMock();
+    vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+      ...makeCodexQuotaData(),
+      rateLimitResetCreditsAvailableCount: 1,
+    });
+    vi.spyOn(CODEX_CONFIG, 'resetQuota').mockResolvedValue({
+      outcome: 'consumed_and_refreshed',
+      quota: {
+        ...makeCodexQuotaData(),
+        observedAtMs: snapshotObservedAtMs - 2_000,
+        rateLimitResetCreditsAvailableCount: 0,
+        rateLimitResetCredits: [],
+        resetCreditsObservedAtMs: snapshotObservedAtMs - 2_000,
+        resetCreditsObservationSource: 'reset_endpoint',
+      },
+    });
+    openQuotaTabDeepLink(rowKey);
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+    await act(async () => {
+      resetAction.props.onClick();
+      await flushPromises();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+      await flushPromises();
+    });
+
+    const finalState = Object.values(
+      mocks.quotaState.codexQuota as Record<string, CodexQuotaState>
+    )[0];
+    expect(finalState.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(finalState.resetCreditsObservedAtMs ?? 0).toBeGreaterThan(snapshotObservedAtMs);
+    expect(treeText(renderer)).toContain('codex_quota.reset_credits_unavailable_label');
+  });
+
   it('cancels a confirmation when the selected credential changes', async () => {
     const fileA = makeCodexFile('codex-a.json', 'auth-a', 'a@example.com');
     const fileB = makeCodexFile('codex-b.json', 'auth-b', 'b@example.com');

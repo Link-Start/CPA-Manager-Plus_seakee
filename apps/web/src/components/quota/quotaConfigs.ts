@@ -245,6 +245,10 @@ const hasKnownResetCreditCount = (quota: CodexQuotaMergeState): boolean => {
   return typeof value === 'number' && Number.isFinite(value);
 };
 
+const isProviderResetCreditObservation = (quota: CodexQuotaMergeState): boolean =>
+  quota.resetCreditsObservationSource === 'reset_endpoint' ||
+  quota.resetCreditsObservationSource === 'usage';
+
 const mergeObservedQuotaIntoActive = <TState extends DisplayQuotaState>(
   activeQuota: TState,
   observedQuota: TState
@@ -295,6 +299,18 @@ const mergeObservedQuotaIntoActive = <TState extends DisplayQuotaState>(
       (merged as Record<string, unknown>)[key] = value;
     }
   });
+  // Reset-credit evidence is field-scoped: only an observation that actually
+  // carried a reset-credit count may replace the active reset-credit block.
+  // Header and inspection observations never do, so the active provenance —
+  // including its observation time — survives their merges untouched.
+  if (isProviderResetCreditObservation(observed)) {
+    merged.rateLimitResetCreditsAvailableCount = observed.rateLimitResetCreditsAvailableCount;
+    merged.rateLimitResetCredits = observed.rateLimitResetCredits;
+    merged.rateLimitResetCreditsError = observed.rateLimitResetCreditsError;
+    merged.resetCreditsObservedAtMs = observed.resetCreditsObservedAtMs ?? null;
+    merged.resetCreditsObservationSource = observed.resetCreditsObservationSource;
+    delete merged.observedResetCreditsUnknown;
+  }
   merged.windows = mergeCodexQuotaWindows(activeWindows, observedWindows);
   if (observed.observedFromUsageHeaders === true) merged.observedFromUsageHeaders = true;
   if (observed.observedModelScope) merged.observedModelScope = observed.observedModelScope;
@@ -399,6 +415,13 @@ const buildCodexQuotaFailureState = (
     errorStatus: status,
     failedAtMs,
     ...buildQuotaCredentialIdentity(file),
+    // A count preserved across a provider failure no longer has a verified
+    // observation behind it. Keep its field-specific timestamp for freshness
+    // comparisons, but mark the provenance unknown so a later unrelated
+    // success merge cannot promote it back to live-authoritative evidence.
+    ...(preservedState && hasKnownResetCreditCount(preservedState)
+      ? { resetCreditsObservationSource: 'unknown' as const }
+      : {}),
   };
 };
 
@@ -608,29 +631,40 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData, CodexRes
     windows: [],
     ...buildQuotaCredentialIdentity(file),
   }),
-  buildSuccessState: (data, file) => ({
-    status: 'success',
-    windows: data.windows,
-    quotaInventoryObserved: data.quotaInventoryObserved,
-    planType: data.planType,
-    subscriptionActiveUntil: data.subscriptionActiveUntil,
-    creditsHasCredits: data.creditsHasCredits,
-    creditsUnlimited: data.creditsUnlimited,
-    creditsBalance: data.creditsBalance,
-    creditsOverageLimitReached: data.creditsOverageLimitReached,
-    creditsApproxLocalMessages: data.creditsApproxLocalMessages,
-    creditsApproxCloudMessages: data.creditsApproxCloudMessages,
-    spendControlReached: data.spendControlReached,
-    spendControlIndividualLimit: data.spendControlIndividualLimit,
-    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
-    rateLimitResetCredits: data.rateLimitResetCredits,
-    rateLimitResetCreditsError: data.rateLimitResetCreditsError,
-    ...buildQuotaCredentialIdentity(file),
-    fetchedAtMs:
+  buildSuccessState: (data, file) => {
+    const fetchObservedAtMs =
       readFiniteTimestamp(data.observedAtMs) ??
       readFiniteTimestamp(data.windows[0]?.observedAtMs) ??
-      Date.now(),
-  }),
+      Date.now();
+    // Field-level reset-credit provenance: explicit values from the fetch win;
+    // a known count without provenance is attributed to this fetch's own
+    // observation so every success state carries usable field provenance.
+    const hasKnownCount = data.rateLimitResetCreditsAvailableCount !== null;
+    return {
+      status: 'success',
+      windows: data.windows,
+      quotaInventoryObserved: data.quotaInventoryObserved,
+      planType: data.planType,
+      subscriptionActiveUntil: data.subscriptionActiveUntil,
+      creditsHasCredits: data.creditsHasCredits,
+      creditsUnlimited: data.creditsUnlimited,
+      creditsBalance: data.creditsBalance,
+      creditsOverageLimitReached: data.creditsOverageLimitReached,
+      creditsApproxLocalMessages: data.creditsApproxLocalMessages,
+      creditsApproxCloudMessages: data.creditsApproxCloudMessages,
+      spendControlReached: data.spendControlReached,
+      spendControlIndividualLimit: data.spendControlIndividualLimit,
+      rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
+      rateLimitResetCredits: data.rateLimitResetCredits,
+      rateLimitResetCreditsError: data.rateLimitResetCreditsError,
+      resetCreditsObservedAtMs:
+        data.resetCreditsObservedAtMs ?? (hasKnownCount ? fetchObservedAtMs : null),
+      resetCreditsObservationSource:
+        data.resetCreditsObservationSource ?? (hasKnownCount ? 'usage' : 'unknown'),
+      ...buildQuotaCredentialIdentity(file),
+      fetchedAtMs: fetchObservedAtMs,
+    };
+  },
   buildErrorState: (message, status, file) => ({
     status: 'error',
     windows: [],

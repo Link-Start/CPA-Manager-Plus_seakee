@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { AccountQuotaSnapshotWindow } from '@/services/api/usageService';
+import { buildQuotaFailureState, CODEX_CONFIG } from '@/components/quota/quotaConfigs';
 import {
   buildInspectionCodexQuotaState,
   getAccountCredentialEvidenceCutoffs,
@@ -9,6 +11,7 @@ import {
   stripSupersededAccountInspectionStatus,
   type AccountInspectionSummary,
 } from './accountCredentialEvidence';
+import { resolveCodexResetCreditEvidence } from './accountQuotaSnapshots';
 
 const file: AuthFileItem = {
   name: 'shared.json',
@@ -543,5 +546,143 @@ describe('account credential evidence', () => {
     });
 
     expect(cutoffs).toEqual({ authenticationAtMs: 0, healthyQuotaAtMs: 0 });
+  });
+});
+
+describe('Codex reset-credit provenance through evidence reconciliation', () => {
+  const headerQuota = (observedAtMs: number): CodexQuotaState => ({
+    status: 'success',
+    windows: [
+      {
+        id: 'usage-header-observed',
+        label: 'Latest request',
+        usedPercent: 55,
+        resetLabel: '-',
+        resetAtMs: null,
+        resetAccuracy: 'unknown',
+        observationSource: 'response_header',
+        observedAtMs,
+      },
+    ],
+    quotaInventoryObserved: false,
+    planType: 'plus',
+    observedFromUsageHeaders: true,
+    observedResetCreditsUnknown: true,
+    observedAtMs,
+  });
+
+  const providerWithResetCount = (count: number, observedAtMs: number): CodexQuotaState =>
+    providerQuota({
+      windows: [],
+      fetchedAtMs: observedAtMs,
+      rateLimitResetCreditsAvailableCount: count,
+      rateLimitResetCredits:
+        count > 0
+          ? [
+              {
+                id: 'live-credit',
+                status: 'available',
+                grantedAt: '',
+                expiresAt: new Date(observedAtMs + 86_400_000).toISOString(),
+              },
+            ]
+          : [],
+      resetCreditsObservedAtMs: observedAtMs,
+      resetCreditsObservationSource: 'reset_endpoint',
+    });
+
+  const resetSnapshot = (count: number, observedAtMs: number): AccountQuotaSnapshotWindow =>
+    ({
+      provider_window_id: 'reset-credits',
+      window_kind: 'reset_credits',
+      window_mode: 'fixed',
+      model_scope_kind: 'all',
+      source: 'api_query',
+      observed_at_ms: observedAtMs,
+      stale: false,
+      reset_credits_available: count,
+      reset_credits:
+        count > 0 ? [{ id: `credit-${count}`, expires_at_ms: observedAtMs + 86_400_000 }] : [],
+    }) as AccountQuotaSnapshotWindow;
+
+  it('F5: header evidence does not advance reset-credit provenance, so a fresher snapshot still wins', () => {
+    const reconciled = reconcileCodexQuotaEvidence({
+      providerQuota: providerWithResetCount(0, 100),
+      headerQuota: headerQuota(200),
+    });
+
+    expect(reconciled?.status).toBe('success');
+    expect(reconciled?.observedAtMs).toBe(200);
+    expect(reconciled?.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(reconciled?.resetCreditsObservedAtMs).toBe(100);
+    expect(reconciled?.resetCreditsObservationSource).toBe('reset_endpoint');
+
+    const evidence = resolveCodexResetCreditEvidence(reconciled, [resetSnapshot(1, 150)]);
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(1);
+    expect(evidence.liveIsAuthoritative).toBe(false);
+  });
+
+  it('F6: header evidence does not advance reset-credit provenance, so a fresher zero snapshot still wins', () => {
+    const reconciled = reconcileCodexQuotaEvidence({
+      providerQuota: providerWithResetCount(1, 100),
+      headerQuota: headerQuota(200),
+    });
+
+    expect(reconciled?.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(reconciled?.resetCreditsObservedAtMs).toBe(100);
+
+    const evidence = resolveCodexResetCreditEvidence(reconciled, [resetSnapshot(0, 150)]);
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(0);
+    expect(evidence.liveIsAuthoritative).toBe(false);
+  });
+
+  it('F7: a count preserved across a provider failure stays unverified after header recovery', () => {
+    const provider = providerWithResetCount(1, 100);
+    const failed = buildQuotaFailureState(
+      CODEX_CONFIG,
+      'provider down',
+      undefined,
+      file,
+      provider,
+      150
+    );
+    expect(failed.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(failed.resetCreditsObservationSource).toBe('unknown');
+    expect(failed.resetCreditsObservedAtMs).toBe(100);
+
+    const reconciled = reconcileCodexQuotaEvidence({
+      providerQuota: failed,
+      headerQuota: headerQuota(200),
+    });
+
+    expect(reconciled?.status).toBe('success');
+    expect(reconciled?.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(reconciled?.resetCreditsObservedAtMs).toBe(100);
+    expect(reconciled?.resetCreditsObservationSource).toBe('unknown');
+
+    const withoutSnapshot = resolveCodexResetCreditEvidence(reconciled, []);
+    expect(withoutSnapshot.source).toBe('unverified');
+    expect(withoutSnapshot.liveIsAuthoritative).toBe(false);
+
+    const withSnapshot = resolveCodexResetCreditEvidence(reconciled, [resetSnapshot(2, 150)]);
+    expect(withSnapshot.source).toBe('snapshot');
+    expect(withSnapshot.displayedCount).toBe(2);
+  });
+
+  it('inspection evidence does not advance reset-credit provenance either', () => {
+    const reconciled = reconcileCodexQuotaEvidence({
+      providerQuota: providerWithResetCount(1, 100),
+      inspectionQuota: buildInspectionCodexQuotaState(file, inspection({ createdAtMs: 300 })),
+    });
+
+    expect(reconciled?.status).toBe('success');
+    expect(reconciled?.resetCreditsObservedAtMs).toBe(100);
+    expect(reconciled?.resetCreditsObservationSource).toBe('reset_endpoint');
+
+    const evidence = resolveCodexResetCreditEvidence(reconciled, [resetSnapshot(1, 150)]);
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(1);
   });
 });

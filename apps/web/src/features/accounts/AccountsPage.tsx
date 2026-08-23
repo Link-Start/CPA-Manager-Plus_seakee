@@ -905,6 +905,7 @@ async function refreshQuotaWithConfig<TState, TData, TResetResult = TData>({
   t,
   isCurrent,
   requestScope,
+  patchSuccessState,
 }: {
   config: QuotaConfig<TState, TData, TResetResult>;
   file: AuthFileItem;
@@ -912,6 +913,9 @@ async function refreshQuotaWithConfig<TState, TData, TResetResult = TData>({
   t: TFunction;
   isCurrent: () => boolean;
   requestScope?: AuthFilesApiRequestScope;
+  // Runs inside the single success commit so callers can fold preserved
+  // fields into the new state without exposing a second intermediate commit.
+  patchSuccessState?: (state: TState, data: TData) => TState;
 }) {
   const storeKey = config.getStoreKey?.(file) ?? file.name;
   const cacheGeneration = captureQuotaCacheGeneration();
@@ -921,7 +925,9 @@ async function refreshQuotaWithConfig<TState, TData, TResetResult = TData>({
     const committed = commitIfQuotaCacheCurrent(cacheGeneration, () => {
       setQuota((prev) => ({
         ...prev,
-        [storeKey]: config.buildSuccessState(data, file),
+        [storeKey]: patchSuccessState
+          ? patchSuccessState(config.buildSuccessState(data, file), data)
+          : config.buildSuccessState(data, file),
       }));
     });
     return committed ? data : null;
@@ -5246,7 +5252,8 @@ export function AccountsPage() {
       if (row.runtimeOnly) return false;
       const refreshWithConfig = <TState, TData, TResetResult = TData>(
         config: QuotaConfig<TState, TData, TResetResult>,
-        setQuota: QuotaSetter<TState>
+        setQuota: QuotaSetter<TState>,
+        patchSuccessState?: (state: TState, data: TData) => TState
       ) => {
         const storeKey = config.getStoreKey?.(row.raw) ?? row.fileName;
         return refreshQuotaWithConfig({
@@ -5259,34 +5266,32 @@ export function AccountsPage() {
             `${config.type}:${storeKey}`
           ),
           requestScope: authFilesRequestScope,
+          patchSuccessState,
         });
       };
       switch (row.provider) {
         case CODEX_CONFIG.type: {
           const previousResetCreditsInvalidatedAtMs =
             getActiveCodexQuota(row.raw)?.resetCreditsInvalidatedAtMs ?? 0;
-          const data = await refreshWithConfig(CODEX_CONFIG, setCodexQuota);
+          // Fold the invalidation fence into the single success commit when
+          // the refreshed data has no known reset-credit count: a separate
+          // follow-up commit would briefly drop the fence.
+          const data = await refreshWithConfig(
+            CODEX_CONFIG,
+            setCodexQuota,
+            (state, refreshedData) =>
+              previousResetCreditsInvalidatedAtMs > 0 &&
+              !hasKnownCodexResetCreditCount(refreshedData.rateLimitResetCreditsAvailableCount)
+                ? {
+                    ...state,
+                    resetCreditsInvalidatedAtMs: Math.max(
+                      state.resetCreditsInvalidatedAtMs ?? 0,
+                      previousResetCreditsInvalidatedAtMs
+                    ),
+                  }
+                : state
+          );
           if (!data) return false;
-          if (
-            previousResetCreditsInvalidatedAtMs > 0 &&
-            !hasKnownCodexResetCreditCount(data.rateLimitResetCreditsAvailableCount)
-          ) {
-            const storeKey = getCodexQuotaStoreKey(row);
-            setCodexQuota((current) => {
-              const state = getScopedQuotaState(CODEX_CONFIG, current, row.raw);
-              if (!state) return current;
-              return {
-                ...current,
-                [storeKey]: {
-                  ...state,
-                  resetCreditsInvalidatedAtMs: Math.max(
-                    state.resetCreditsInvalidatedAtMs ?? 0,
-                    previousResetCreditsInvalidatedAtMs
-                  ),
-                },
-              };
-            });
-          }
           const refreshedQuota = CODEX_CONFIG.buildSuccessState(data, row.raw);
           const healthyQuota = isKnownHealthyCodexQuota(refreshedQuota);
           invalidateCodexCredentialStatusForSelectionKeys([row.selectionKey], {
@@ -5771,6 +5776,16 @@ export function AccountsPage() {
                                   refreshedState.fetchedAtMs ?? 0,
                                   mutationCompletedAtMs
                                 ),
+                                // The same boundary applies to the field-level reset-credit
+                                // observation: a known post-reset count must outdate the
+                                // invalidation fence and every pre-consume snapshot.
+                                resetCreditsObservedAtMs:
+                                  refreshedState.rateLimitResetCreditsAvailableCount != null
+                                    ? Math.max(
+                                        refreshedState.resetCreditsObservedAtMs ?? 0,
+                                        mutationCompletedAtMs
+                                      )
+                                    : refreshedState.resetCreditsObservedAtMs,
                                 resetCreditsInvalidatedAtMs: Math.max(
                                   previousState?.resetCreditsInvalidatedAtMs ?? 0,
                                   mutationCompletedAtMs
@@ -5816,8 +5831,13 @@ export function AccountsPage() {
                         });
                       })
                     : false;
-                  showNotification(t('codex_quota.reset_refresh_failed_message'), 'warning');
-                  void committed;
+                  // A newer quota request already superseded this transaction:
+                  // the reset itself completed, and the newer request owns the
+                  // current quota state and its own success/failure reporting.
+                  // Do not surface the stale refresh-failed warning.
+                  if (committed) {
+                    showNotification(t('codex_quota.reset_refresh_failed_message'), 'warning');
+                  }
                 } finally {
                   setCodexResetTransactionPhase(transactionKey, null);
                 }

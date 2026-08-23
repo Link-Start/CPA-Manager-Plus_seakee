@@ -1100,6 +1100,8 @@ describe('account quota snapshots', () => {
         fetchedAtMs: liveObservedAtMs,
         rateLimitResetCreditsAvailableCount: liveCount,
         rateLimitResetCredits: [],
+        resetCreditsObservedAtMs: liveObservedAtMs,
+        resetCreditsObservationSource: 'reset_endpoint' as const,
       };
       const snapshots = [makeResetSnapshot(snapshotCount, snapshotObservedAtMs)];
 
@@ -1118,6 +1120,8 @@ describe('account quota snapshots', () => {
       windows: [],
       fetchedAtMs: 100,
       rateLimitResetCreditsAvailableCount: 0,
+      resetCreditsObservedAtMs: 100,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
     };
     const evidence = resolveCodexResetCreditEvidence(liveQuota, [makeResetSnapshot(1, 100)]);
 
@@ -1132,6 +1136,8 @@ describe('account quota snapshots', () => {
       windows: [],
       fetchedAtMs: 200,
       rateLimitResetCreditsAvailableCount: 0,
+      resetCreditsObservedAtMs: 200,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
     };
     const snapshot = makeResetSnapshot(1, 100);
     const evidence = resolveCodexResetCreditEvidence(liveQuota, [snapshot]);
@@ -1161,6 +1167,8 @@ describe('account quota snapshots', () => {
       windows: [],
       fetchedAtMs: 100,
       rateLimitResetCreditsAvailableCount: 0,
+      resetCreditsObservedAtMs: 100,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
     };
     const snapshots = [
       makeSnapshot({
@@ -1205,5 +1213,84 @@ describe('account quota snapshots', () => {
     expect(evidence.displayedCount).toBeNull();
     expect(merged?.rateLimitResetCreditsAvailableCount).toBeNull();
     expect(merged?.rateLimitResetCredits).toEqual([]);
+  });
+
+  it('F8: a live verification count with fresh provenance suppresses an older snapshot for good', () => {
+    const verifiedQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 200,
+      observedAtMs: 200,
+      rateLimitResetCreditsAvailableCount: 0,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 200,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
+    };
+    const snapshot = makeResetSnapshot(1, 150);
+    const evidence = resolveCodexResetCreditEvidence(verifiedQuota, [snapshot]);
+    const merged = mergeCodexResetCreditsFromQuotaSnapshots(verifiedQuota, [snapshot]);
+
+    expect(evidence.source).toBe('live');
+    expect(evidence.displayedCount).toBe(0);
+    expect(evidence.liveIsAuthoritative).toBe(true);
+    expect(evidence.liveObservedAtMs).toBe(200);
+    expect(merged?.rateLimitResetCreditsAvailableCount).toBe(0);
+  });
+
+  it('treats a live count observed at or before the invalidation fence as invalidated', () => {
+    const staleLiveQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 100,
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 100,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
+      resetCreditsInvalidatedAtMs: 150,
+    };
+    const evidence = resolveCodexResetCreditEvidence(staleLiveQuota, []);
+
+    expect(evidence.source).toBe('invalidated');
+    expect(evidence.displayedCount).toBeNull();
+    expect(evidence.liveIsAuthoritative).toBe(false);
+  });
+
+  it('lets a genuinely newer provider observation clear the invalidation fence', () => {
+    const recoveredQuota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 300,
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 300,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
+      resetCreditsInvalidatedAtMs: 200,
+    };
+    const postFenceSnapshot = makeResetSnapshot(2, 250);
+    const evidence = resolveCodexResetCreditEvidence(recoveredQuota, [postFenceSnapshot]);
+    const merged = mergeCodexResetCreditsFromQuotaSnapshots(recoveredQuota, [postFenceSnapshot]);
+
+    expect(evidence.source).toBe('live');
+    expect(evidence.displayedCount).toBe(1);
+    expect(evidence.liveIsAuthoritative).toBe(true);
+    expect(merged?.rateLimitResetCreditsAvailableCount).toBe(1);
+  });
+
+  it('reports field-specific live provenance instead of the generic quota timestamps', () => {
+    const quota = {
+      status: 'success' as const,
+      windows: [],
+      fetchedAtMs: 200,
+      observedAtMs: 200,
+      rateLimitResetCreditsAvailableCount: 2,
+      rateLimitResetCredits: [],
+      resetCreditsObservedAtMs: 100,
+      resetCreditsObservationSource: 'reset_endpoint' as const,
+    };
+    const evidence = resolveCodexResetCreditEvidence(quota, [makeResetSnapshot(1, 150)]);
+
+    expect(evidence.source).toBe('snapshot');
+    expect(evidence.displayedCount).toBe(1);
+    expect(evidence.liveObservedAtMs).toBe(100);
   });
 });

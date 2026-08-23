@@ -372,6 +372,15 @@ export interface CodexQuotaWindow {
   providerWindowAliases?: string[];
 }
 
+/**
+ * Which request actually observed the reset-credit count. Only
+ * 'reset_endpoint' and 'usage' are provider observations; 'snapshot' marks a
+ * persisted snapshot merged for display, and 'unknown' covers preserved
+ * counts whose observation can no longer be attributed (e.g. kept across a
+ * provider failure).
+ */
+export type CodexResetCreditObservationSource = 'reset_endpoint' | 'usage' | 'snapshot' | 'unknown';
+
 export interface CodexQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   windows: CodexQuotaWindow[];
@@ -397,6 +406,9 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   observedFromUsageHeaders?: boolean;
   observedModelScope?: QuotaModelScope;
   observedResetCreditsUnknown?: boolean;
+  /** When the request behind `rateLimitResetCreditsAvailableCount` observed it. */
+  resetCreditsObservedAtMs?: number | null;
+  resetCreditsObservationSource?: CodexResetCreditObservationSource;
   /** Timestamp after which older reset-credit evidence is no longer valid. */
   resetCreditsInvalidatedAtMs?: number;
   observedAtMs?: number;
