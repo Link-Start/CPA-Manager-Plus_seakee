@@ -8,7 +8,6 @@ import type { UsageRankRow, UsageTimelinePoint } from './usageAnalyticsModel';
 import {
   adaptUsageAnalyticsData,
   analyzeUsageBucket,
-  adaptUsageAnalyticsData,
   buildApiKeyTrendSeries,
   buildApiKeyRows,
   buildCredentialRows,
