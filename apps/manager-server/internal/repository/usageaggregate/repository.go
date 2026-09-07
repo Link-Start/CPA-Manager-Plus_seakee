@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,14 +25,10 @@ var analyticsModelExpression = usageidentity.SQLRequestAnalyticsModelExpression(
 var ErrUnsupportedSchema = errors.New("unsupported usage hourly aggregate schema")
 
 func IsCurrentStructureRevision(revision string) bool {
-	coreRevision, valid := stripAccountingMigrationRevision(revision)
-	if !valid {
-		return false
-	}
-	if coreRevision == StructureRevision {
+	if revision == StructureRevision {
 		return true
 	}
-	suffix, ok := strings.CutPrefix(coreRevision, StructureRevision+":rebuild-")
+	suffix, ok := strings.CutPrefix(revision, StructureRevision+":rebuild-")
 	if !ok || len(suffix) != 32 {
 		return false
 	}
@@ -45,25 +40,6 @@ func IsCurrentStructureRevision(revision string) bool {
 		}
 	}
 	return true
-}
-
-func stripAccountingMigrationRevision(revision string) (string, bool) {
-	const marker = ":cache-accounting-v2-"
-	index := strings.LastIndex(revision, marker)
-	if index < 0 {
-		return revision, true
-	}
-	parts := strings.Split(revision[index+len(marker):], "-")
-	if len(parts) != 2 {
-		return "", false
-	}
-	for _, part := range parts {
-		value, err := strconv.ParseInt(part, 10, 64)
-		if err != nil || value <= 0 {
-			return "", false
-		}
-	}
-	return revision[:index], true
 }
 
 type Repository interface {
