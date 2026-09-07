@@ -1551,6 +1551,7 @@ func retainedImportEventBytes(event Event) int64 {
 		event.AuthLabelSnapshot,
 		event.AuthFileSnapshot,
 		event.AuthProviderSnapshot,
+		event.AuthAccountIDSnapshot,
 		event.AuthProjectIDSnapshot,
 		event.ReasoningEffort,
 		event.ServiceTier,

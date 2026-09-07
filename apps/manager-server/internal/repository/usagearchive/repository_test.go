@@ -1026,6 +1026,19 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 			},
 		},
 		{
+			name: "monitoring projection revision",
+			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
+				revision := archiveTestString(t, db, `select structure_revision
+					from usage_monitoring_rollup_state where rollup_name = ?`, usagemonitoring.ProjectionRollupName)
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set structure_revision = 'stale'
+					where rollup_name = ?`, usagemonitoring.ProjectionRollupName)
+				return func() {
+					archiveTestExec(t, db, `update usage_monitoring_rollup_state set structure_revision = ?
+						where rollup_name = ?`, revision, usagemonitoring.ProjectionRollupName)
+				}
+			},
+		},
+		{
 			name: "monitoring projection status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
 				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
@@ -1033,6 +1046,51 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 				return func() {
 					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
 						where rollup_name = ?`, usagemonitoring.ProjectionRollupName)
+				}
+			},
+		},
+		{
+			name: "codex legacy identity evidence coverage",
+			mutate: func(t *testing.T, db *sql.DB, run Run) func() {
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set coverage_event_id = ?
+					where rollup_name = ?`, run.TargetEventID-1, usageevent.CodexLegacyIdentityRollupName)
+				return func() {
+					archiveTestExec(t, db, `update usage_monitoring_rollup_state set coverage_event_id = ?
+						where rollup_name = ?`, run.TargetEventID, usageevent.CodexLegacyIdentityRollupName)
+				}
+			},
+		},
+		{
+			name: "codex legacy identity evidence revision",
+			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
+				revision := archiveTestString(t, db, `select structure_revision
+					from usage_monitoring_rollup_state where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set structure_revision = 'stale'
+					where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				return func() {
+					archiveTestExec(t, db, `update usage_monitoring_rollup_state set structure_revision = ?
+						where rollup_name = ?`, revision, usageevent.CodexLegacyIdentityRollupName)
+				}
+			},
+		},
+		{
+			name: "codex legacy identity evidence status",
+			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
+					where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				return func() {
+					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
+						where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				}
+			},
+		},
+		{
+			name: "codex legacy identity evidence state row missing",
+			mutate: func(t *testing.T, db *sql.DB, run Run) func() {
+				archiveTestExec(t, db, `delete from usage_monitoring_rollup_state where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				return func() {
+					archiveTestExec(t, db, `insert into usage_monitoring_rollup_state(rollup_name, schema_version, structure_revision, status, coverage_event_id, updated_at_ms)
+						values(?, ?, ?, 'ready', ?, 1)`, usageevent.CodexLegacyIdentityRollupName, usageevent.CodexLegacyIdentityEvidenceSchemaVersion, usageevent.CodexLegacyIdentityEvidenceRevision, run.TargetEventID)
 				}
 			},
 		},
@@ -1173,6 +1231,7 @@ func catchUpDeleteReadiness(t *testing.T, ctx context.Context, db *sql.DB, nowMS
 		{name: "stats", run: monitoring.CatchUpStats},
 		{name: "metadata", run: monitoring.CatchUpMetadata},
 		{name: "projection", run: monitoring.CatchUpProjection},
+		{name: "codex legacy identity evidence", run: monitoring.CatchUpCodexLegacyIdentityEvidence},
 	} {
 		completed := false
 		for attempt := 0; attempt < 10; attempt++ {
@@ -1331,4 +1390,25 @@ func archiveRecordRefs(records []Record) []RecordRef {
 		refs = append(refs, RecordRef{EventID: record.EventID, EventHash: record.EventHash})
 	}
 	return refs
+}
+
+func TestRepositoryDeleteAcceptsHourlyAggregateRebuildRevision(t *testing.T) {
+	db, repository, run := prepareVerifiedArchiveRun(t, "hourly-rev-"+fmt.Sprint(time.Now().UnixNano()))
+	rebuildRev := usageaggregate.StructureRevision + ":rebuild-0123456789abcdef0123456789abcdef"
+	archiveTestExec(t, db, `update usage_hourly_aggregate_state set structure_revision = ?
+		where aggregate_name = ?`, rebuildRev, usageaggregate.AggregateName)
+	archiveTestExec(t, db, `update usage_event_identity_ledger set aggregate_structure_revision = ?`, rebuildRev)
+
+	if _, err := repository.BeginDelete(context.Background(), run.ID, 40_000); err != nil {
+		t.Fatalf("begin delete with valid rebuild revision error = %v, want nil", err)
+	}
+
+	// Now test malformed rebuild revision
+	db2, repo2, run2 := prepareVerifiedArchiveRun(t, "hourly-rev-bad-"+fmt.Sprint(time.Now().UnixNano()))
+	archiveTestExec(t, db2, `update usage_hourly_aggregate_state set structure_revision = ?
+		where aggregate_name = ?`, usageaggregate.StructureRevision+":rebuild-short", usageaggregate.AggregateName)
+	archiveTestExec(t, db2, `update usage_event_identity_ledger set aggregate_structure_revision = ?`, usageaggregate.StructureRevision+":rebuild-short")
+	if _, err := repo2.BeginDelete(context.Background(), run2.ID, 40_000); !errors.Is(err, ErrCoverageIncomplete) {
+		t.Fatalf("begin delete with malformed rebuild revision error = %v, want coverage incomplete", err)
+	}
 }

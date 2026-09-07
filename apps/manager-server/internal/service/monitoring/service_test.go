@@ -3795,6 +3795,7 @@ func catchUpMonitoringArchiveDeleteReadiness(t *testing.T, ctx context.Context, 
 		{name: "stats", run: db.CatchUpUsageMonitoringStats},
 		{name: "metadata", run: db.CatchUpUsageMonitoringMetadata},
 		{name: "projection", run: db.CatchUpUsageMonitoringProjection},
+		{name: "codex legacy identity evidence", run: db.CatchUpCodexLegacyIdentityEvidence},
 	} {
 		for {
 			result, err := catchUp.run(ctx, 100, time.Now().UnixMilli())

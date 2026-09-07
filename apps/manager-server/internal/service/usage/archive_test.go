@@ -2,12 +2,14 @@ package usage
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1447,6 +1449,7 @@ func catchUpUsageAggregate(t *testing.T, st *store.Store) {
 		{name: "stats", run: st.CatchUpUsageMonitoringStats},
 		{name: "metadata", run: st.CatchUpUsageMonitoringMetadata},
 		{name: "projection", run: st.CatchUpUsageMonitoringProjection},
+		{name: "codex legacy identity evidence", run: st.CatchUpCodexLegacyIdentityEvidence},
 	} {
 		completed := false
 		for iteration := 0; iteration < 100; iteration++ {
@@ -1517,5 +1520,169 @@ func assertPrivateArchiveTree(t *testing.T, archiveDirectory string, status Arch
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		t.Fatalf("archive manifest mode = %v", info.Mode())
+	}
+}
+
+func TestUsageArchiveRoundTripPreservesAuthAccountIDSnapshot(t *testing.T) {
+	events := []usageparser.Event{
+		{
+			RequestID:             "archive-id-req-0",
+			EventHash:             "archive-id-hash-0",
+			TimestampMS:           1_000,
+			Timestamp:             time.UnixMilli(1_000).UTC().Format(time.RFC3339Nano),
+			Provider:              "codex",
+			ExecutorType:          "CodexExecutor",
+			Model:                 "gpt-4o",
+			Endpoint:              "POST /v1/responses",
+			Method:                "POST",
+			Path:                  "/v1/responses",
+			AuthIndex:             "workspace-common",
+			AccountSnapshot:       "member-a@example.com",
+			AuthAccountIDSnapshot: "acc-user-member-a",
+			InputTokens:           100,
+			OutputTokens:          20,
+			TotalTokens:           120,
+			RawJSON:               `{"request":{"model":"gpt-4o"}}`,
+			CreatedAtMS:           1_000,
+		},
+		{
+			RequestID:             "archive-id-req-1",
+			EventHash:             "archive-id-hash-1",
+			TimestampMS:           2_000,
+			Timestamp:             time.UnixMilli(2_000).UTC().Format(time.RFC3339Nano),
+			Provider:              "codex",
+			ExecutorType:          "CodexExecutor",
+			Model:                 "gpt-4o",
+			Endpoint:              "POST /v1/responses",
+			Method:                "POST",
+			Path:                  "/v1/responses",
+			AuthIndex:             "workspace-common",
+			AccountSnapshot:       "member-b@example.com",
+			AuthAccountIDSnapshot: "acc-user-member-b",
+			InputTokens:           100,
+			OutputTokens:          20,
+			TotalTokens:           120,
+			RawJSON:               `{"request":{"model":"gpt-4o"}}`,
+			CreatedAtMS:           2_000,
+		},
+	}
+
+	service, st, archiveDirectory := newArchiveTestService(t, 2, 2, events)
+	ctx := context.Background()
+
+	created, err := service.CreateArchive(ctx, 3_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	archived, err := service.ResumeArchive(ctx, created.Run.ID)
+	if err != nil {
+		t.Fatalf("resume archive: %v", err)
+	}
+	if len(archived.Segments) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(archived.Segments))
+	}
+
+	segmentPath := filepath.Join(archiveDirectory, filepath.FromSlash(archived.Segments[0].FileName))
+	segmentBytes, err := os.ReadFile(segmentPath)
+	if err != nil {
+		t.Fatalf("read segment file: %v", err)
+	}
+
+	gzReader, err := gzip.NewReader(bytes.NewReader(segmentBytes))
+	if err != nil {
+		t.Fatalf("open gzip reader: %v", err)
+	}
+	defer gzReader.Close()
+
+	uncompressedJSONL, err := io.ReadAll(gzReader)
+	if err != nil {
+		t.Fatalf("read uncompressed jsonl: %v", err)
+	}
+
+	// Verify decoded lines have auth_account_id_snapshot
+	scanner := bufio.NewScanner(bytes.NewReader(uncompressedJSONL))
+	var decodedEvents []map[string]any
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("unmarshal jsonl: %v", err)
+		}
+		decodedEvents = append(decodedEvents, record)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanner error: %v", err)
+	}
+	if len(decodedEvents) != 2 {
+		t.Fatalf("expected 2 decoded events, got %d", len(decodedEvents))
+	}
+
+	if got := decodedEvents[0]["auth_account_id_snapshot"]; got != "acc-user-member-a" {
+		t.Errorf("event 0 auth_account_id_snapshot = %v, want acc-user-member-a", got)
+	}
+	if got := decodedEvents[1]["auth_account_id_snapshot"]; got != "acc-user-member-b" {
+		t.Errorf("event 1 auth_account_id_snapshot = %v, want acc-user-member-b", got)
+	}
+
+	// Round-trip import into a new target database
+	importResult, err := usageparser.ParseImportPayload(uncompressedJSONL)
+	if err != nil {
+		t.Fatalf("parse import payload: %v", err)
+	}
+	if len(importResult.Events) != 2 {
+		t.Fatalf("expected 2 parsed events, got %d", len(importResult.Events))
+	}
+
+	targetCfg := testutil.NewConfig(t)
+	targetDB, err := sqliterepo.Open(targetCfg.DBPath)
+	if err != nil {
+		t.Fatalf("open target db: %v", err)
+	}
+	defer targetDB.Close()
+	targetStore := store.New(targetDB)
+
+	if _, err := targetStore.UsageEvents.InsertBatch(ctx, importResult.Events); err != nil {
+		t.Fatalf("insert imported events: %v", err)
+	}
+
+	rows, err := targetDB.Query(`select id, auth_index, coalesce(auth_account_id_snapshot, ''), coalesce(account_snapshot, '') from usage_events order by id asc`)
+	if err != nil {
+		t.Fatalf("query target usage_events: %v", err)
+	}
+	defer rows.Close()
+
+	type eventCheck struct {
+		id            int64
+		authIndex     string
+		authAccountID string
+		account       string
+	}
+	var checks []eventCheck
+	for rows.Next() {
+		var c eventCheck
+		if err := rows.Scan(&c.id, &c.authIndex, &c.authAccountID, &c.account); err != nil {
+			t.Fatalf("scan row: %v", err)
+		}
+		checks = append(checks, c)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("expected 2 imported rows, got %d", len(checks))
+	}
+	if checks[0].authAccountID != "acc-user-member-a" || checks[0].account != "member-a@example.com" {
+		t.Errorf("imported event 0 mismatch: %+v", checks[0])
+	}
+	if checks[1].authAccountID != "acc-user-member-b" || checks[1].account != "member-b@example.com" {
+		t.Errorf("imported event 1 mismatch: %+v", checks[1])
+	}
+	if checks[0].authAccountID == checks[1].authAccountID {
+		t.Errorf("expected distinct member auth_account_id_snapshot, but they were equal")
+	}
+
+	catchUpUsageAggregate(t, st)
+	if _, err := service.VerifyArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("verify archive: %v", err)
+	}
+	if _, err := service.DeleteArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("delete archive: %v", err)
 	}
 }

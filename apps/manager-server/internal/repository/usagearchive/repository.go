@@ -10,6 +10,7 @@ import (
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/datamigration"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageaggregate"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageevent"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagemonitoring"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagepricing"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagerollup"
@@ -1634,7 +1635,8 @@ func validateCurrentDeleteReadiness(
 	}{
 		{name: usagemonitoring.StatsRollupName, expectedRevision: pricingRevision},
 		{name: usagemonitoring.MetadataRollupName, expectedRevision: usageidentity.ModelFormatVersion},
-		{name: usagemonitoring.ProjectionRollupName, expectedRevision: usageidentity.ModelFormatVersion},
+		{name: usagemonitoring.ProjectionRollupName, expectedRevision: usageidentity.MonitoringProjectionStructureRevision()},
+		{name: usageevent.CodexLegacyIdentityRollupName, expectedRevision: usageevent.CodexLegacyIdentityEvidenceRevision},
 	} {
 		var version int
 		var revision, status string
@@ -1790,6 +1792,7 @@ const archiveRecordExpression = `json_patch(
 		),
 		json_object(
 			'auth_provider_snapshot', coalesce(e.auth_provider_snapshot, ''),
+			'auth_account_id_snapshot', coalesce(e.auth_account_id_snapshot, ''),
 			'auth_project_id_snapshot', coalesce(e.auth_project_id_snapshot, ''),
 			'auth_snapshot_at_ms', coalesce(e.auth_snapshot_at_ms, 0),
 			'requested_model', coalesce(e.requested_model, ''),
