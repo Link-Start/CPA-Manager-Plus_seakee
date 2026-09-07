@@ -82,6 +82,10 @@ func (s *Service) WriteExport(ctx context.Context, writer io.Writer, limit int) 
 	return s.store.WriteExportJSONL(ctx, writer, limit)
 }
 
+func (s *Service) WriteFullExport(ctx context.Context, writer io.Writer) error {
+	return s.store.WriteFullExportJSONL(ctx, writer)
+}
+
 func (s *Service) Import(ctx context.Context, reader io.Reader) (ImportResult, *usageparser.ImportStreamResult, error) {
 	var added int
 	var skipped int
@@ -163,12 +167,21 @@ func (s *Service) WriteImportSessionChunk(
 	offset int64,
 	contentLength int64,
 	reader io.Reader,
+	prefixSHA256 ...string,
 ) (ImportSession, error) {
 	manager, err := s.requireImportSessionManager()
 	if err != nil {
 		return ImportSession{}, err
 	}
-	return manager.WriteChunk(ctx, id, offset, contentLength, reader)
+	return manager.WriteChunk(ctx, id, offset, contentLength, reader, prefixSHA256...)
+}
+
+func (s *Service) ValidateImportSessionPrefix(ctx context.Context, id, prefixSHA256 string) (ImportSession, error) {
+	manager, err := s.requireImportSessionManager()
+	if err != nil {
+		return ImportSession{}, err
+	}
+	return manager.ValidatePrefix(ctx, id, prefixSHA256)
 }
 
 func (s *Service) CompleteImportSession(ctx context.Context, id string) (ImportSession, error) {

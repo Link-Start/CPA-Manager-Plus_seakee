@@ -130,6 +130,64 @@ func TestUsageArchiveServiceFullLifecycle(t *testing.T) {
 	}
 }
 
+func TestUsageArchiveServiceCancelReleasesMaintenanceAndRejectsUnsafeRuns(t *testing.T) {
+	service, _, _ := newArchiveTestService(t, 2, 1, archiveTestServiceEvents(2))
+	ctx := context.Background()
+	if _, err := service.CancelArchive(ctx, "invalid"); !errors.Is(err, ErrArchiveInvalidID) {
+		t.Fatalf("invalid cancel run id error = %v, want ErrArchiveInvalidID", err)
+	}
+	created, err := service.CreateArchive(ctx, 3_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	cancelled, err := service.CancelArchive(ctx, created.Run.ID)
+	if err != nil || cancelled.Run.Status != usagearchive.StatusCancelled {
+		t.Fatalf("cancelled archive = %#v error = %v", cancelled, err)
+	}
+	if _, err := service.CancelArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("idempotent service cancel: %v", err)
+	}
+	if _, err := service.CreateArchive(ctx, 3_000); err != nil {
+		t.Fatalf("create archive after cancel: %v", err)
+	}
+}
+
+func TestUsageArchiveServiceCancelRetriesWhenTemporaryCleanupFails(t *testing.T) {
+	service, st, archiveDirectory := newArchiveTestService(t, 1, 1, archiveTestServiceEvents(1))
+	ctx := context.Background()
+	created, err := service.CreateArchive(ctx, 3_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	if err := service.archive.ensureRunDirectory(created.Run.ID); err != nil {
+		t.Fatalf("create archive run directory: %v", err)
+	}
+	temporaryDirectory := filepath.Join(archiveDirectory, created.Run.ID, ".archive-tmp-blocker")
+	if err := os.Mkdir(temporaryDirectory, 0o700); err != nil {
+		t.Fatalf("create temporary cleanup blocker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(temporaryDirectory, "contents"), []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write temporary cleanup blocker: %v", err)
+	}
+	if _, err := service.CancelArchive(ctx, created.Run.ID); !errors.Is(err, ErrArchiveCancelCleanupFailed) {
+		t.Fatalf("cancel with cleanup failure error = %v, want ErrArchiveCancelCleanupFailed", err)
+	}
+	active, found, err := st.UsageArchives.ActiveRun(ctx)
+	if err != nil || !found || active.ID != created.Run.ID || active.Status != usagearchive.StatusPreviewed {
+		t.Fatalf("run after cleanup failure = %#v found=%t error=%v", active, found, err)
+	}
+	if err := os.Remove(filepath.Join(temporaryDirectory, "contents")); err != nil {
+		t.Fatalf("remove temporary blocker contents: %v", err)
+	}
+	if err := os.Remove(temporaryDirectory); err != nil {
+		t.Fatalf("remove temporary blocker: %v", err)
+	}
+	cancelled, err := service.CancelArchive(ctx, created.Run.ID)
+	if err != nil || cancelled.Run.Status != usagearchive.StatusCancelled {
+		t.Fatalf("retry cancel = %#v error=%v", cancelled, err)
+	}
+}
+
 func TestUsageArchiveServiceRequiresCoverageReadyBeforeManualArchive(t *testing.T) {
 	for _, migrationStatus := range []string{"pending", "failed"} {
 		t.Run(migrationStatus, func(t *testing.T) {

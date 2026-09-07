@@ -179,6 +179,8 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 			queued bool
 		)
 		switch action {
+		case "cancel":
+			status, err = h.App.UsageService.CancelArchive(r.Context(), id)
 		case "resume":
 			expectedStage := strings.TrimSpace(r.URL.Query().Get("expected_stage"))
 			status, queued, err = h.App.UsageService.SubmitArchiveResume(r.Context(), id, expectedStage, wait)
@@ -269,7 +271,7 @@ func parseArchivePath(path string) (id string, action string, ok bool) {
 	if len(parts) == 1 && parts[0] != "" {
 		return parts[0], "", true
 	}
-	if len(parts) == 2 && parts[0] != "" && (parts[1] == "resume" || parts[1] == "verify" || parts[1] == "delete") {
+	if len(parts) == 2 && parts[0] != "" && (parts[1] == "resume" || parts[1] == "verify" || parts[1] == "delete" || parts[1] == "cancel") {
 		return parts[0], parts[1], true
 	}
 	return "", "", false
@@ -334,6 +336,8 @@ func writeArchiveError(w http.ResponseWriter, err error) {
 		status = http.StatusUnprocessableEntity
 	case errors.Is(err, usagesvc.ErrArchiveMaintenanceLocked),
 		errors.Is(err, usagesvc.ErrArchiveInvalidState),
+		errors.Is(err, usagesvc.ErrArchiveCancelUnsafe),
+		errors.Is(err, usagesvc.ErrArchiveCancelPublished),
 		errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete),
 		errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
 		status = http.StatusConflict
@@ -359,6 +363,12 @@ func archiveErrorMessage(err error) string {
 		return "usage maintenance is already active"
 	case errors.Is(err, usagesvc.ErrArchiveInvalidState):
 		return "usage archive operation is not allowed in the current state"
+	case errors.Is(err, usagesvc.ErrArchiveCancelUnsafe):
+		return "usage archive task cannot be abandoned after raw deletion has started"
+	case errors.Is(err, usagesvc.ErrArchiveCancelPublished):
+		return "usage archive task cannot be abandoned after archive segments were published; continue the archive stage"
+	case errors.Is(err, usagesvc.ErrArchiveCancelCleanupFailed):
+		return "usage archive task could not be abandoned because temporary-file cleanup failed; retry the cancel action"
 	case errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete):
 		return "usage archive coverage is not ready"
 	case errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
@@ -384,6 +394,12 @@ func archiveErrorCode(err error) string {
 		return "usage_archive_maintenance_locked"
 	case errors.Is(err, usagesvc.ErrArchiveInvalidState):
 		return "usage_archive_invalid_state"
+	case errors.Is(err, usagesvc.ErrArchiveCancelUnsafe):
+		return "usage_archive_cancel_unsafe"
+	case errors.Is(err, usagesvc.ErrArchiveCancelPublished):
+		return "usage_archive_cancel_published"
+	case errors.Is(err, usagesvc.ErrArchiveCancelCleanupFailed):
+		return "usage_archive_cancel_cleanup_failed"
 	case errors.Is(err, usagesvc.ErrArchiveCoverageIncomplete):
 		return "usage_archive_coverage_incomplete"
 	case errors.Is(err, usagesvc.ErrArchiveDeleteUnavailable):
@@ -415,6 +431,8 @@ func (h *Handler) handleImportSession(w http.ResponseWriter, r *http.Request, id
 		h.cancelImportSession(w, r, id)
 	case id != "" && action == "chunk" && r.Method == http.MethodPut:
 		h.writeImportSessionChunk(w, r, id)
+	case id != "" && action == "validate" && r.Method == http.MethodPost:
+		h.validateImportSessionPrefix(w, r, id)
 	case id != "" && action == "complete" && r.Method == http.MethodPost:
 		h.completeImportSession(w, r, id)
 	default:
@@ -499,7 +517,26 @@ func (h *Handler) writeImportSessionChunk(w http.ResponseWriter, r *http.Request
 		offset,
 		r.ContentLength,
 		r.Body,
+		r.Header.Get("X-Usage-Import-Prefix-SHA256"),
 	)
+	if err != nil {
+		writeImportSessionError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, usagesvc.NewImportSessionSummary(session))
+}
+
+type validateImportSessionPrefixRequest struct {
+	PrefixSHA256 string `json:"prefix_sha256"`
+}
+
+func (h *Handler) validateImportSessionPrefix(w http.ResponseWriter, r *http.Request, id string) {
+	var request validateImportSessionPrefixRequest
+	if err := decodeSingleJSON(w, r, &request); err != nil {
+		writeImportSessionError(w, newImportSessionRequestError(err))
+		return
+	}
+	session, err := h.App.UsageService.ValidateImportSessionPrefix(r.Context(), id, request.PrefixSHA256)
 	if err != nil {
 		writeImportSessionError(w, err)
 		return
@@ -546,7 +583,7 @@ func parseImportSessionPath(path string) (id string, action string, ok bool) {
 	case 1:
 		return parts[0], "", parts[0] != ""
 	case 2:
-		if parts[0] != "" && (parts[1] == "chunk" || parts[1] == "complete") {
+		if parts[0] != "" && (parts[1] == "chunk" || parts[1] == "validate" || parts[1] == "complete") {
 			return parts[0], parts[1], true
 		}
 	}
@@ -573,6 +610,8 @@ func writeImportSessionError(w http.ResponseWriter, err error) {
 			status = http.StatusInsufficientStorage
 		case usagesvc.ImportSessionErrorLimitExceeded:
 			status = http.StatusTooManyRequests
+		case usagesvc.ImportSessionErrorFileMismatch:
+			status = http.StatusConflict
 		}
 		if status < http.StatusInternalServerError {
 			message = sessionErr.Message
@@ -591,7 +630,7 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Content-Disposition", `attachment; filename="usage-events.jsonl"`)
 	writer := &countingWriter{writer: w}
-	if err := h.App.UsageService.WriteExport(r.Context(), writer, h.App.Config.QueryLimit); err != nil {
+	if err := h.App.UsageService.WriteFullExport(r.Context(), writer); err != nil {
 		if writer.written == 0 {
 			w.Header().Del("Content-Disposition")
 			response.Error(w, http.StatusInternalServerError, err)

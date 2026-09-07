@@ -328,6 +328,37 @@ export const deleteDemoUsageArchive = (runId: string): UsageArchiveStatus => {
   return clone(status);
 };
 
+export const cancelDemoUsageArchive = (runId: string): UsageArchiveStatus => {
+  const status = requireDemoUsageArchive(runId);
+  if (status.run.status === 'cancelled') return clone(status);
+  const rawDeleteStarted =
+    status.run.status === 'deleting' ||
+    status.run.last_deleted_event_id > 0 ||
+    status.run.deleted_event_count > 0 ||
+    (status.run.delete_started_at_ms ?? 0) > 0 ||
+    (status.run.status === 'failed' && status.run.resume_status === 'deleting');
+  if (rawDeleteStarted) {
+    throw createDemoUsageArchiveError(
+      'usage_archive_cancel_unsafe',
+      409,
+      'usage archive task cannot be abandoned after raw deletion has started'
+    );
+  }
+  if (!['previewed', 'archived', 'verified', 'failed'].includes(status.run.status)) {
+    throw createDemoUsageArchiveError(
+      'usage_archive_invalid_state',
+      409,
+      'usage archive run is in an invalid state'
+    );
+  }
+  status.run.status = 'cancelled';
+  status.run.resume_status = undefined;
+  status.run.requested_stage = undefined;
+  status.run.has_error = false;
+  status.run.updated_at_ms = now();
+  return clone(status);
+};
+
 export const getDemoUsageMaintenance = (): UsageMaintenanceStatus => {
   const active = demoUsageArchiveStatuses.find((item) => demoUsageArchiveIsActive(item.run));
   const dynamicArchived = demoUsageArchiveStatuses.reduce(

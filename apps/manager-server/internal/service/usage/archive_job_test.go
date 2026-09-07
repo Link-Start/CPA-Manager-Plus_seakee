@@ -246,6 +246,46 @@ func TestArchiveJobRecoversPersistedRequestWithoutAdvancingDestructiveStages(t *
 	}
 }
 
+func TestArchiveJobDoesNotResumeCancelledRunAfterRestart(t *testing.T) {
+	service, st, archiveDirectory := newArchiveTestService(t, 1, 1, archiveTestServiceEvents(2))
+	ctx := context.Background()
+	created, err := service.CreateArchive(ctx, 3_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	if _, requested, err := st.UsageArchives.RequestStage(
+		ctx,
+		created.Run.ID,
+		usagearchive.StatusArchiving,
+		time.Now().UnixMilli(),
+	); err != nil || !requested {
+		t.Fatalf("persist archive request: requested=%t err=%v", requested, err)
+	}
+	if cancelled, err := service.CancelArchive(ctx, created.Run.ID); err != nil || cancelled.Run.Status != usagearchive.StatusCancelled {
+		t.Fatalf("cancel archive: status=%#v error=%v", cancelled, err)
+	}
+
+	restarted := New(st, WithArchive(ArchiveConfig{
+		Directory:             archiveDirectory,
+		SegmentEventLimit:     1,
+		DeleteBatchSize:       1,
+		AggregateReadsEnabled: true,
+	}))
+	rootCtx, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	if err := restarted.StartArchiveJobs(rootCtx); err != nil {
+		t.Fatalf("start restarted archive jobs: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	status, err := restarted.ArchiveStatus(ctx, created.Run.ID)
+	if err != nil {
+		t.Fatalf("load cancelled archive: %v", err)
+	}
+	if status.Run.Status != usagearchive.StatusCancelled || status.Run.RequestedStage != "" || len(status.Segments) != 0 {
+		t.Fatalf("cancelled archive resumed after restart: %#v", status)
+	}
+}
+
 func TestArchiveJobRunnerCanRestartAfterLifecycleEnds(t *testing.T) {
 	service, _, _ := newArchiveTestService(t, 1, 1, archiveTestServiceEvents(1))
 	firstCtx, stopFirst := context.WithCancel(context.Background())

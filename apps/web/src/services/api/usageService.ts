@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import {
   createDemoUsageArchive,
+  cancelDemoUsageArchive,
   deleteDemoUsageArchive,
   getDemoAccountActionCandidates,
   getDemoAccountHistory,
@@ -66,6 +67,7 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'usage_import_session_too_large',
   'usage_import_session_quota_exceeded',
   'usage_import_session_limit_exceeded',
+  'usage_import_session_file_mismatch',
   'usage_import_session_unavailable',
   'usage_archive_invalid_id',
   'usage_archive_invalid_request',
@@ -73,6 +75,9 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'usage_archive_no_events',
   'usage_archive_maintenance_locked',
   'usage_archive_invalid_state',
+  'usage_archive_cancel_unsafe',
+  'usage_archive_cancel_published',
+  'usage_archive_cancel_cleanup_failed',
   'usage_archive_coverage_incomplete',
   'usage_archive_delete_unavailable',
   'usage_archive_not_found',
@@ -497,6 +502,7 @@ export interface UsageImportSession {
   status: UsageImportSessionStatus;
   size_bytes: number;
   received_bytes: number;
+  received_prefix_sha256?: string;
   chunk_size_bytes: number;
   created_at_ms: number;
   updated_at_ms: number;
@@ -2763,7 +2769,7 @@ const getDemoModelPriceSyncResponse = (models?: string[]): ModelPriceSyncRespons
 const runUsageArchiveAction = async (
   base: string,
   runId: string,
-  action: 'resume' | 'verify' | 'delete',
+  action: 'resume' | 'verify' | 'delete' | 'cancel',
   managementKey?: string,
   signal?: AbortSignal,
   expectedStage?: UsageArchiveResumeStage,
@@ -3534,7 +3540,8 @@ export const usageServiceApi = {
     offset: number,
     chunk: Blob,
     managementKey?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    prefixSha256?: string
   ): Promise<UsageImportSession> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return uploadDemoUsageImportSessionChunk(sessionId, offset, chunk.size);
@@ -3552,7 +3559,36 @@ export const usageServiceApi = {
           headers: {
             ...(authHeaders(managementKey) ?? {}),
             'Content-Type': 'application/octet-stream',
+            ...(prefixSha256 ? { 'X-Usage-Import-Prefix-SHA256': prefixSha256 } : {}),
           },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  validateUsageImportSessionPrefix: async (
+    base: string,
+    sessionId: string,
+    prefixSha256: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageImportSession(sessionId);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageImportSession>(
+        buildUrl(
+          base,
+          `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}/validate`
+        ),
+        { prefix_sha256: prefixSha256 },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
           signal,
         }
       );
@@ -3769,6 +3805,18 @@ export const usageServiceApi = {
       return deleteDemoUsageArchive(runId);
     }
     return runUsageArchiveAction(base, runId, 'delete', managementKey, signal, undefined, options);
+  },
+
+  cancelUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return cancelDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'cancel', managementKey, signal);
   },
 
   probeUsageMaintenance: async (

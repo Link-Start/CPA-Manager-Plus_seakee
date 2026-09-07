@@ -66,3 +66,14 @@ USAGE_COLLECTOR_MODE=auto
 - `pollIntervalMs` 不应超过 CPA 用量队列保留时间。
 - CPA retention 默认 60s，最大 3600s。
 - 同一个 CPA queue 只应由一个 Manager Server 消费。
+
+## 用量生命周期配置
+
+可恢复导入和历史归档的服务端限制由 Manager Server 环境变量控制：
+
+- `USAGE_QUERY_LIMIT` 只限制兼容的 Usage 查询，不限制 Usage Maintenance 的完整 raw JSONL export。
+- `USAGE_IMPORT_CHUNK_BYTES` 是服务端上传分块大小；面板使用 session 返回的 `chunk_size_bytes` 动态展示。
+- `USAGE_IMPORT_DISK_QUOTA_BYTES`、`USAGE_IMPORT_MAX_SESSIONS` 和 `USAGE_IMPORT_SESSION_TTL_MINUTES` 分别控制活动临时文件总配额、活动会话数和会话 TTL。
+- `USAGE_ARCHIVE_RETENTION_ENABLED` 与 `USAGE_ARCHIVE_RETENTION_DAYS` 控制自动 retention；retention 仍受小时汇总和归档覆盖门禁约束。
+
+完整 export 只覆盖导出开始时仍存在的 raw usage events，不会把已删除的 archive segment 自动合并回 JSONL，也不替代包含 SQLite、WAL/SHM、`data.key` 和 `usage-archives/` 的备份。

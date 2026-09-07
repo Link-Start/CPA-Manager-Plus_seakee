@@ -208,6 +208,10 @@ Manager Server 管理：
 | `USAGE_BATCH_SIZE`                      | `100`                                                       | 单批最大记录数。                                                                                                                                           |
 | `USAGE_POLL_INTERVAL_MS`                | `500`                                                       | 空闲轮询间隔。                                                                                                                                             |
 | `USAGE_QUERY_LIMIT`                     | `50000`                                                     | 最近 usage events 返回上限。                                                                                                                               |
+| `USAGE_IMPORT_CHUNK_BYTES`              | `4194304`                                                   | 可恢复导入会话的服务端分块大小；面板按 session 返回的 `chunk_size_bytes` 显示，不代表完整文件大小上限。                                                     |
+| `USAGE_IMPORT_DISK_QUOTA_BYTES`        | `17179869184`                                               | 所有活动导入临时文件保留的总磁盘配额；超出时不会扩大默认限制或静默覆盖。                                                                                         |
+| `USAGE_IMPORT_MAX_SESSIONS`             | `2`                                                         | 同时保留的活动导入会话数量。                                                                                                                                 |
+| `USAGE_IMPORT_SESSION_TTL_MINUTES`     | `1440`                                                      | 导入会话及其临时文件的 TTL（分钟）；过期会话由服务端清理。                                                                                                    |
 | `USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED` | `true`                                                      | 启用小时汇总 worker，以及 Dashboard 和严格无筛选 Usage Analytics 的 rollup 查询；排查 SQLite 写竞争或汇总异常时可临时设为 `false`，查询会回退 raw events。 |
 | `USAGE_ARCHIVE_RETENTION_ENABLED`       | `false`                                                     | 启用启动时及每 24 小时一次的历史归档、校验和有界删除 worker；默认关闭，要求小时汇总保持启用，修改后需重启 Manager Server。                                 |
 | `USAGE_ARCHIVE_RETENTION_DAYS`          | `30`                                                        | 自动 retention 的保留天数；仅在 retention 与小时汇总同时启用时生效。                                                                                       |
@@ -250,14 +254,15 @@ USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED=false
 - `POST /v0/management/usage/archives/{id}/resume`：继续 archive 或失败恢复。
 - `POST /v0/management/usage/archives/{id}/verify`：重新读取 manifest、segment checksum 和 event digest。
 - `POST /v0/management/usage/archives/{id}/delete`：仅在归档已验证且所有必需派生读路径覆盖 run target 后，按批次删除 raw rows。
+- `POST /v0/management/usage/archives/{id}/cancel`：放弃尚未开始 raw delete 的 run；保留已发布归档文件和 identity ledger，不删除 raw usage。`previewed`、`archived`、`verified` 以及尚未发布 segment、从未开始删除的 `failed` 可取消；`archiving`、`verifying`、`deleting`、已发布 segment 或已部分删除的 `failed` 和 `completed` 不可取消。
 - `HEAD /v0/management/usage/maintenance`：仅 Admin Key 可用的 capability probe；支持该功能的 Manager Server 返回 `204 No Content`。
 - `GET /v0/management/usage/maintenance`：读取 raw/已删除数量、活动 run/锁、迁移与 aggregate readiness，以及 SQLite page/freelist 和文件大小统计。
 
-创建 run 不会立即删除 raw。手动执行 `resume` 时，如果 cache-accounting migration 尚未完成会返回 coverage conflict；迁移完成后会先补齐仍待处理的 response metadata，再写入第一个 segment。稳定的手动 `archived` 和 `verified` run 不会阻止后续手动归档，因此无需启用删除也可以持续使用 archive/verify；自动 retention run 则会保持活动状态，直到 delete 阶段完成。只有 archive 文件、manifest 和 identity ledger 已验证，并且 cache-accounting migration、永久小时 aggregate、pricing/monitoring rollup、监控搜索索引以及 account-history/dashboard checkpoint 都已追平 run target 后，才允许删除。`GET /v0/management/usage/maintenance` 汇总主要 readiness 信号，而 delete 会在每个有界事务内重新执行完整门禁。服务重启或进程中断后可用同一个 run 继续。删除只清理 `usage_events` 行，归档文件和 identity ledger 会保留，因此重复导入已归档事件仍会被幂等跳过。该流程不会在线执行 SQLite `VACUUM`。自动 retention 默认关闭；当 `USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED=false` 时不会启动，启用前应确认归档目录有足够空间并演练恢复。
+创建 run 不会立即删除 raw。手动执行 `resume` 时，如果 cache-accounting migration 尚未完成会返回 coverage conflict；迁移完成后会先补齐仍待处理的 response metadata，再写入第一个 segment。稳定的手动 `archived` 和 `verified` run 不会阻止后续手动归档，因此无需启用删除也可以持续使用 archive/verify；自动 retention run 则会保持活动状态，直到 delete 阶段完成。放弃任务只释放维护锁，不会删除 raw；已发布的 archive segment 不会因为 cancel 被静默删除。为避免已发布的 identity-ledger 引用把仍在线的 raw 永久排除，包含已发布 segment 的 `failed` archiving run 必须先继续 archive，不能直接 cancel。只有 archive 文件、manifest 和 identity ledger 已验证，并且 cache-accounting migration、永久小时 aggregate、pricing/monitoring rollup、监控搜索索引以及 account-history/dashboard checkpoint 都已追平 run target 后，才允许删除。`GET /v0/management/usage/maintenance` 汇总主要 readiness 信号，而 delete 会在每个有界事务内重新执行完整门禁。服务重启或进程中断后可用同一个 run 继续；已取消的 run 不会自动 resume，也不会阻塞手动或 retention run。删除只清理 `usage_events` 行，归档文件和 identity ledger 会保留，因此重复导入已归档事件仍会被幂等跳过。该流程不会在线执行 SQLite `VACUUM`。自动 retention 默认关闭；当 `USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED=false` 时不会启动，启用前应确认归档目录有足够空间并演练恢复。
 
 当当前查询范围或 summary comparison 范围命中已完成验证归档并删除的 raw 历史时，Monitoring analytics 响应会返回 `coverage` 对象。当前范围与对比范围的 raw/deleted 数量分别报告；这些数量只按时间范围统计，不会被提供方、模型、账号、搜索或其他 analytics 筛选条件缩小。对象同时包含 `core_aggregate_used` 和机器可读的 `fidelity_limitations`。永久小时 aggregate 与 event projection 仍可准确提供受支持的 summary、model 和 timeline 核心统计，但仅依赖 raw 的事件明细、延迟百分位、分布、失败诊断、凭证时间线或不受支持的搜索可能不完整。Monitoring 与 Usage Analytics 页面会明确展示该限制，不会把缺失的 raw rows 或仅 raw 指标中的零值误认为完整历史。
 
-只有面板由 Manager Server 托管且 Manager Service 可用时，才会显示“用量维护”页面；普通 CPA 托管面板不会显示该入口。页面可以执行 preview/create/resume/verify/delete 并显示可回收空间，但物理压缩始终是离线 CLI 操作。
+只有面板由 Manager Server 托管且 Manager Service 可用时，才会显示“用量维护”页面；普通 CPA 托管面板不会显示该入口。页面可以执行 preview/create/resume/verify/delete/cancel 并显示可回收空间，但物理压缩始终是离线 CLI 操作。
 
 ### 停服回收 SQLite 空间
 
@@ -329,7 +334,7 @@ cpa-manager-plus cleanup-derived --db-path /data/usage.sqlite
 | `GET /usage-service/quota-cooldowns`                             | 读取当前活跃的配额冷却，用于凭证管理展示恢复提示。            |
 | `POST /setup`                                                    | 首次 setup。                                                  |
 | `GET /v0/management/usage`                                       | 兼容 usage data。                                             |
-| `GET /v0/management/usage/export`                                | 导出 JSONL usage events。                                     |
+| `GET /v0/management/usage/export`                                | 流式导出当前 raw usage events 的完整稳定 snapshot JSONL；不受 `USAGE_QUERY_LIMIT` 限制。已删除 raw 的 archive segment 不会自动合并回此文件。 |
 | `POST /v0/management/usage/import`                               | 导入 JSONL 或兼容旧快照。                                     |
 | `POST /v0/management/usage/archives/preview`                     | 预览历史归档范围（仅 Admin Key）。                            |
 | `POST /v0/management/usage/archives`                             | 创建历史归档 run（仅 Admin Key）。                            |
@@ -397,6 +402,6 @@ Manager Server 可以导出 JSONL / NDJSON usage events。
 - Manager Server 导出的 JSONL / NDJSON。
 - 带 request-level details 的旧 usage snapshot。
 
-大文件通过可恢复分块会话上传，总文件大小受 `USAGE_IMPORT_DISK_QUOTA_BYTES` 限制；单条 JSONL 记录或旧快照 `details` 数组中的单个对象不得超过 10 MiB。该单记录限制不会因分块上传而放宽。
+大文件通过可恢复分块会话上传，总文件大小受 `USAGE_IMPORT_DISK_QUOTA_BYTES` 限制；单条 JSONL 记录或旧快照 `details` 数组中的单个对象不得超过 10 MiB。恢复已有上传 prefix 的服务端 session 时，浏览器会按分块增量计算 prefix 的 SHA-256，服务端也会验证持久化 digest；重新选择的文件必须与原文件内容一致，不能只依赖文件名、大小或 `lastModified`。内容不匹配会要求开始新的导入，且不会继续上传 chunk；已有上传 prefix 但缺少 digest 的旧 session 不会续传。该单记录限制不会因分块上传而放宽。
 
 只有聚合数据的旧文件不能重建请求级 monitoring。对准确性有要求时，先在备份或 staging 数据库上测试导入。

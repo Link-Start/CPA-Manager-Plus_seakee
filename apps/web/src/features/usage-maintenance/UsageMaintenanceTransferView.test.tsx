@@ -170,6 +170,41 @@ describe('UsageMaintenanceTransferView', () => {
     act(() => renderer.unmount());
   });
 
+  it('renders the server-provided chunk size instead of a fixed 4 MiB label', async () => {
+    mocks.listUsageImportSessions.mockResolvedValueOnce(
+      sessionList({ chunk_size_bytes: 7 * 1024 * 1024 })
+    );
+    const renderer = await renderView();
+
+    expect(getText(renderer.root)).toContain('Uploads use 7.00 MB chunks');
+    expect(getText(renderer.root)).not.toContain('Uploads use 4 MiB chunks');
+    act(() => renderer.unmount());
+  });
+
+  it('shows a dedicated file-mismatch message and never starts a chunk upload', async () => {
+    mocks.uploadUsageImportFile.mockRejectedValueOnce({
+      code: 'usage_import_session_file_mismatch',
+      message: 'raw server mismatch',
+    });
+    const renderer = await renderView();
+    const input = renderer.root.findByProps({ type: 'file' });
+    const file = new File(['different prefix'], 'history.jsonl');
+
+    act(() => input.props.onChange({ target: { files: [file], value: 'history.jsonl' } }));
+    const confirmation = mocks.showConfirmation.mock.calls[0][0] as {
+      onConfirm: () => Promise<void>;
+    };
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(getText(renderer.root)).toContain(
+      'The selected file does not match the uploaded session prefix. Choose the original file or start a new import.'
+    );
+    expect(mocks.uploadUsageImportFile).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+
   it('confirms a supported file before starting the resumable import', async () => {
     const renderer = await renderView();
     const input = renderer.root.findByProps({ type: 'file' });

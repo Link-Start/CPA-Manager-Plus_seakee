@@ -44,6 +44,8 @@ var (
 	ErrNotFound           = errors.New("usage archive run not found")
 	ErrNoEvents           = errors.New("no usage events are eligible for archive")
 	ErrInvalidState       = errors.New("usage archive run is in an invalid state")
+	ErrCancelUnsafe       = errors.New("usage archive cancel is unsafe after raw deletion started")
+	ErrCancelPublished    = errors.New("usage archive cancel is unsafe after archive publication")
 	ErrMaintenanceLocked  = errors.New("usage maintenance is already active")
 	ErrCoverageIncomplete = errors.New("usage archive coverage is incomplete")
 )
@@ -613,6 +615,72 @@ func (r *Repository) BeginVerification(ctx context.Context, runID string, nowMS 
 
 func (r *Repository) BeginDelete(ctx context.Context, runID string, nowMS int64) (Run, error) {
 	return r.beginStage(ctx, runID, StatusDeleting, []string{StatusVerified, StatusDeleting}, nowMS)
+}
+
+// CancelRun abandons a run only before raw deletion has begun. Published
+// archive files and identity-ledger rows are intentionally retained.
+func (r *Repository) CancelRun(ctx context.Context, runID string, nowMS int64) (Run, error) {
+	if nowMS <= 0 {
+		return Run{}, fmt.Errorf("nowMS must be greater than zero")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Run{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	run, err := runQuery(ctx, tx, runID)
+	if err != nil {
+		return Run{}, err
+	}
+	if run.Status == StatusDeleting || run.DeleteStartedAtMS > 0 || run.LastDeletedEventID > 0 || run.DeletedEventCount > 0 ||
+		(run.Status == StatusFailed && run.ResumeStatus == StatusDeleting) {
+		return Run{}, ErrCancelUnsafe
+	}
+	// A failed archiving stage may already have committed one or more
+	// published segments and their identity-ledger references. Cancelling such
+	// a run would leave those references permanently excluding still-live raw
+	// events from future previews. Keep the run resumable until the archive
+	// stage is completed instead of attempting a non-transactional filesystem
+	// rollback here.
+	if run.Status == StatusFailed && run.ResumeStatus == StatusArchiving && run.ArchivedEventCount > 0 {
+		return Run{}, ErrCancelPublished
+	}
+	if run.Status == StatusCancelled {
+		if _, err := tx.ExecContext(ctx, `update usage_archive_runs set
+			resume_status = null, requested_stage = null, last_error = null, updated_at_ms = ? where id = ?`, nowMS, runID); err != nil {
+			return Run{}, err
+		}
+		if err := releaseLock(ctx, tx, runID); err != nil {
+			return Run{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Run{}, err
+		}
+		return r.Run(ctx, runID)
+	}
+	if run.Status == StatusCompleted {
+		return Run{}, fmt.Errorf("%w: cannot cancel completed run", ErrInvalidState)
+	}
+	switch run.Status {
+	case StatusPreviewed, StatusArchived, StatusVerified, StatusFailed:
+		// Safe abandon states. A failed run is safe only when it has never
+		// entered the deleting stage (checked above).
+	default:
+		return Run{}, fmt.Errorf("%w: cannot cancel run in %s", ErrInvalidState, run.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `update usage_archive_runs set
+		status = ?, resume_status = null, requested_stage = null,
+		last_error = null, updated_at_ms = ?
+	where id = ?`, StatusCancelled, nowMS, runID); err != nil {
+		return Run{}, err
+	}
+	if err := releaseLock(ctx, tx, runID); err != nil {
+		return Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Run{}, err
+	}
+	return r.Run(ctx, runID)
 }
 
 func (r *Repository) beginStage(ctx context.Context, runID string, stage string, allowed []string, nowMS int64) (Run, error) {

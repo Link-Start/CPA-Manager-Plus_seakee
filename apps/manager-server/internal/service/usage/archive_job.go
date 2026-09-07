@@ -408,3 +408,29 @@ func (r *archiveJobRunner) finish(key archiveJobKey, result archiveJobResult, ke
 		waiter <- result
 	}
 }
+
+func (r *archiveJobRunner) discardRun(runID string) {
+	r.mu.Lock()
+	for key := range r.inFlight {
+		if key.runID == runID {
+			delete(r.inFlight, key)
+		}
+	}
+	for key := range r.retryOnError {
+		if key.runID == runID {
+			delete(r.retryOnError, key)
+		}
+	}
+	waiters := make([]chan archiveJobResult, 0)
+	for key, keyWaiters := range r.waiters {
+		if key.runID != runID {
+			continue
+		}
+		waiters = append(waiters, keyWaiters...)
+		delete(r.waiters, key)
+	}
+	r.mu.Unlock()
+	for _, waiter := range waiters {
+		waiter <- archiveJobResult{err: ErrArchiveInvalidState}
+	}
+}

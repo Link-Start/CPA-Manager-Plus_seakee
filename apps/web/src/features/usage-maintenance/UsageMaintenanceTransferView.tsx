@@ -106,6 +106,7 @@ const formatImportError = (
     usage_import_session_quota_exceeded: 'transfer_error_quota',
     usage_import_session_limit_exceeded: 'transfer_error_limit',
     usage_import_session_conflict: 'transfer_error_conflict',
+    usage_import_session_file_mismatch: 'transfer_error_file_mismatch',
     usage_import_session_not_found: 'transfer_error_not_found',
     usage_import_session_invalid_request: 'transfer_error_invalid',
   };
@@ -117,9 +118,11 @@ const formatImportError = (
           ? 'The Manager Server import disk quota is currently reserved by other sessions.'
           : keyByCode[code] === 'transfer_error_limit'
             ? 'The maximum number of active import sessions has been reached.'
-            : keyByCode[code] === 'transfer_error_conflict'
-              ? 'The selected file does not match the resumable session.'
-              : keyByCode[code] === 'transfer_error_not_found'
+              : keyByCode[code] === 'transfer_error_conflict'
+                ? 'The selected file does not match the resumable session.'
+                : keyByCode[code] === 'transfer_error_file_mismatch'
+                  ? 'The selected file does not match the uploaded session prefix. Choose the original file or start a new import.'
+                : keyByCode[code] === 'transfer_error_not_found'
                 ? 'The resumable session has expired or no longer exists.'
                 : keyByCode[code] === 'transfer_error_invalid'
                   ? 'The import request is invalid.'
@@ -596,7 +599,7 @@ export function UsageMaintenanceTransferView({ serviceBase, managementKey, onBac
               <small>
                 {t('usage_maintenance.transfer_chunk_note', {
                   defaultValue:
-                    'Uploads use 4 MiB chunks; total file size is governed by the server disk quota.',
+                    'Uploads use {{chunk}} chunks; total file size is governed by the server disk quota.',
                   chunk: formatFileSize(sessionList?.chunk_size_bytes ?? 0),
                 })}
               </small>

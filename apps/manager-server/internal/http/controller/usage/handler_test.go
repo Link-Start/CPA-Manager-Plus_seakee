@@ -66,6 +66,7 @@ func TestParseImportSessionPath(t *testing.T) {
 		{path: "/v0/management/usage/import-sessions/", ok: true},
 		{path: "/v0/management/usage/import-sessions/abc", id: "abc", ok: true},
 		{path: "/v0/management/usage/import-sessions/abc/chunk", id: "abc", action: "chunk", ok: true},
+		{path: "/v0/management/usage/import-sessions/abc/validate", id: "abc", action: "validate", ok: true},
 		{path: "/v0/management/usage/import-sessions/abc/complete", id: "abc", action: "complete", ok: true},
 		{path: "/v0/management/usage/import-sessions-legacy", ok: false},
 		{path: "/v0/management/usage/import-sessions/abc/delete", ok: false},
@@ -92,6 +93,7 @@ func TestParseArchivePath(t *testing.T) {
 		{path: "/v0/management/usage/archives/abc/resume", id: "abc", action: "resume", ok: true},
 		{path: "/v0/management/usage/archives/abc/verify", id: "abc", action: "verify", ok: true},
 		{path: "/v0/management/usage/archives/abc/delete", id: "abc", action: "delete", ok: true},
+		{path: "/v0/management/usage/archives/abc/cancel", id: "abc", action: "cancel", ok: true},
 		{path: "/v0/management/usage/archives-legacy", ok: false},
 		{path: "/v0/management/usage/archives/abc/unknown", ok: false},
 	}

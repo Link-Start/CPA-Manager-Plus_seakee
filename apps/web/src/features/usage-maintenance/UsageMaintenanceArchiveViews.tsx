@@ -11,6 +11,7 @@ import { formatDateTime, formatFileSize } from '@/utils/format';
 import {
   getArchiveRunAction,
   getArchiveRunPresentationStage,
+  isArchiveRunCancellable,
   resolveProgressPercent,
   type ArchiveHistoryFilter,
   type ArchiveRunAction,
@@ -638,6 +639,7 @@ export function UsageArchiveHistoryView({
             <tbody>
               {archiveList.runs.map((run) => {
                 const action = getArchiveRunAction(run.status);
+                const cancelAction = isArchiveRunCancellable(run) ? ('cancel' as const) : null;
                 const progress = runProgress(run);
                 return (
                   <tr key={run.id}>
@@ -698,6 +700,17 @@ export function UsageArchiveHistoryView({
                             onClick={() => onAction(run, action)}
                           >
                             {actionLabel(run, action)}
+                          </button>
+                        ) : null}
+                        {cancelAction ? (
+                          <button
+                            type="button"
+                            className={styles.linkButton}
+                            disabled={working || actionDisabled(run, cancelAction)}
+                            title={actionTitle(run, cancelAction)}
+                            onClick={() => onAction(run, cancelAction)}
+                          >
+                            {actionLabel(run, cancelAction)}
                           </button>
                         ) : null}
                       </div>
@@ -770,6 +783,7 @@ export function UsageArchiveRunView({
   const { t, i18n } = useTranslation();
   const run = archive.run;
   const action = getArchiveRunAction(run.status);
+  const cancelAction = isArchiveRunCancellable(run) ? ('cancel' as const) : null;
   const presentation = getArchiveRunPresentationStage(run);
   const progress = runProgress(run);
   const formatTime = (value?: number) =>
@@ -1052,6 +1066,26 @@ export function UsageArchiveRunView({
                 onClick={() => onAction(run, action)}
               >
                 {actionLabel(run, action)}
+              </Button>
+            </section>
+          ) : null}
+          {cancelAction ? (
+            <section className={styles.card}>
+              <h2>{t('usage_maintenance.cancel_task_title', { defaultValue: 'Abandon task' })}</h2>
+              <p>
+                {t('usage_maintenance.cancel_task_note', {
+                  defaultValue:
+                    'Abandoning this task releases maintenance without deleting raw usage data. Published archive files remain available.',
+                })}
+              </p>
+              <Button
+                fullWidth
+                variant="secondary"
+                disabled={working || actionDisabled(run, cancelAction)}
+                title={actionTitle(run, cancelAction)}
+                onClick={() => onAction(run, cancelAction)}
+              >
+                {actionLabel(run, cancelAction)}
               </Button>
             </section>
           ) : null}

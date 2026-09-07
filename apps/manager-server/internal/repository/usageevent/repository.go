@@ -21,6 +21,7 @@ type Repository interface {
 	ExportJSONL(ctx context.Context) ([]byte, error)
 	WriteCompatibleUsage(ctx context.Context, writer io.Writer, limit int) error
 	WriteExportJSONL(ctx context.Context, writer io.Writer, limit int) error
+	WriteFullExportJSONL(ctx context.Context, writer io.Writer) error
 	AggregateBetween(ctx context.Context, fromMs, toMs int64) (Aggregate, error)
 	TopModelsBetween(ctx context.Context, fromMs, toMs int64, limit int) ([]ModelStat, error)
 	ModelStatsBetween(ctx context.Context, fromMs, toMs int64) ([]ModelStat, error)

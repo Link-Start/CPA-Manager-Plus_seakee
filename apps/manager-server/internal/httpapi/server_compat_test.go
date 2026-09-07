@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -508,6 +511,35 @@ func TestServerCompatUsageRoutes(t *testing.T) {
 	}
 }
 
+func TestServerCompatUsageExportIsCompleteBeyondQueryLimit(t *testing.T) {
+	cfg := testutil.NewConfig(t)
+	cfg.QueryLimit = 3
+	handler, db := newCompatHandler(t, cfg, nil)
+	events := make([]usage.Event, 0, 5)
+	for index := 1; index <= 5; index++ {
+		events = append(events, compatEvent(fmt.Sprintf("usage-export-%d", index), int64(index)))
+	}
+	if _, err := db.InsertEvents(context.Background(), events); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+
+	rr := testutil.Request(t, handler, http.MethodGet, "/v0/management/usage/export", "", testutil.AdminKey)
+	testutil.RequireStatus(t, rr, http.StatusOK)
+	lines := strings.Split(strings.TrimSpace(rr.Body.String()), "\n")
+	if len(lines) != len(events) {
+		t.Fatalf("export line count = %d, want %d: %s", len(lines), len(events), rr.Body.String())
+	}
+	for index, line := range lines {
+		var event usage.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode export line %d: %v", index, err)
+		}
+		if event.EventHash != fmt.Sprintf("usage-export-%d", index+1) {
+			t.Fatalf("export line %d hash = %q", index, event.EventHash)
+		}
+	}
+}
+
 func TestServerCompatUsageImportSessionRoutes(t *testing.T) {
 	cfg := testutil.NewConfig(t)
 	handler, _ := newCompatHandler(t, cfg, nil)
@@ -545,6 +577,29 @@ func TestServerCompatUsageImportSessionRoutes(t *testing.T) {
 	if session.Status != usagesvc.ImportSessionStatusReady || session.ReceivedBytes != int64(len(line)) {
 		t.Fatalf("uploaded session = %#v", session)
 	}
+	wrongPrefix := strings.Repeat("0", sha256.Size*2)
+	validateMismatch := testutil.Request(
+		t,
+		handler,
+		http.MethodPost,
+		"/v0/management/usage/import-sessions/"+session.ID+"/validate",
+		`{"prefix_sha256":"`+wrongPrefix+`"}`,
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, validateMismatch, http.StatusConflict)
+	if !strings.Contains(validateMismatch.Body.String(), `"code":"usage_import_session_file_mismatch"`) {
+		t.Fatalf("prefix mismatch body = %s", validateMismatch.Body.String())
+	}
+	prefixDigest := sha256.Sum256([]byte(line))
+	validateOK := testutil.Request(
+		t,
+		handler,
+		http.MethodPost,
+		"/v0/management/usage/import-sessions/"+session.ID+"/validate",
+		`{"prefix_sha256":"`+hex.EncodeToString(prefixDigest[:])+`"}`,
+		testutil.AdminKey,
+	)
+	testutil.RequireStatus(t, validateOK, http.StatusOK)
 
 	completeRR := testutil.Request(
 		t,
@@ -670,6 +725,7 @@ func TestServerCompatUsageMaintenanceRequiresAdminKey(t *testing.T) {
 		{method: http.MethodPost, path: "/v0/management/usage/archives/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/resume"},
 		{method: http.MethodPost, path: "/v0/management/usage/archives/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/verify"},
 		{method: http.MethodPost, path: "/v0/management/usage/archives/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/delete"},
+		{method: http.MethodPost, path: "/v0/management/usage/archives/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/cancel"},
 		{method: http.MethodGet, path: "/v0/management/usage/archives-legacy"},
 		{method: http.MethodHead, path: "/v0/management/usage/maintenance"},
 		{method: http.MethodGet, path: "/v0/management/usage/maintenance"},
@@ -698,6 +754,32 @@ func TestServerCompatUsageMaintenanceRequiresAdminKey(t *testing.T) {
 		malformed := testutil.Request(t, handler, http.MethodGet, path, "", testutil.AdminKey)
 		testutil.RequireStatus(t, malformed, http.StatusNotFound)
 	}
+}
+
+func TestServerCompatUsageArchiveCancelRequiresAdminAndReleasesRun(t *testing.T) {
+	cfg := testutil.NewConfig(t)
+	handler, db := newCompatHandler(t, cfg, nil)
+	ctx := context.Background()
+	event := compatEvent("archive-cancel-api", 1)
+	if _, err := db.InsertEvents(ctx, []usage.Event{event}); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	body := `{"cutoff_timestamp_ms":` + strconv.FormatInt(event.TimestampMS+1, 10) + `}`
+	createRR := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives", body, testutil.AdminKey)
+	testutil.RequireStatus(t, createRR, http.StatusCreated)
+	var created usagesvc.ArchiveStatusSummary
+	testutil.DecodeJSON(t, createRR, &created)
+	unauthorized := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives/"+created.Run.ID+"/cancel", "", "wrong-key")
+	testutil.RequireStatus(t, unauthorized, http.StatusUnauthorized)
+	cancelRR := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives/"+created.Run.ID+"/cancel", "", testutil.AdminKey)
+	testutil.RequireStatus(t, cancelRR, http.StatusOK)
+	var cancelled usagesvc.ArchiveStatusSummary
+	testutil.DecodeJSON(t, cancelRR, &cancelled)
+	if cancelled.Run.Status != usagearchive.StatusCancelled || cancelled.Run.RequestedStage != "" || cancelled.Run.ResumeStatus != "" {
+		t.Fatalf("cancel response = %#v", cancelled.Run)
+	}
+	createAgain := testutil.Request(t, handler, http.MethodPost, "/v0/management/usage/archives", body, testutil.AdminKey)
+	testutil.RequireStatus(t, createAgain, http.StatusCreated)
 }
 
 func TestServerCompatUsageArchiveLifecycleAndSanitizedResponses(t *testing.T) {

@@ -270,6 +270,157 @@ func TestRepositoryArchiveVerifyResumeAndBoundedDelete(t *testing.T) {
 	}
 }
 
+func TestRepositoryCancelRunIsIdempotentAndReleasesActiveRun(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "cancel-previewed", 2_500, 30_000)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	cancelled, err := repository.CancelRun(ctx, run.ID, 30_001)
+	if err != nil || cancelled.Status != StatusCancelled || cancelled.ResumeStatus != "" || cancelled.RequestedStage != "" {
+		t.Fatalf("cancelled run = %#v error = %v", cancelled, err)
+	}
+	if _, found, err := repository.ActiveRun(ctx); err != nil || found {
+		t.Fatalf("cancelled run active=%v error=%v", found, err)
+	}
+	again, err := repository.CancelRun(ctx, run.ID, 30_002)
+	if err != nil || again.Status != StatusCancelled {
+		t.Fatalf("idempotent cancel = %#v error = %v", again, err)
+	}
+	if _, err := repository.CreateRun(ctx, "after-cancel", 2_500, 30_003); err != nil {
+		t.Fatalf("create after cancel: %v", err)
+	}
+	// The follow-up previewed run intentionally remains active, so remove it
+	// before checking that the cancelled run itself does not block retention.
+	if _, err := db.Exec(`delete from usage_archive_runs where id = ?`, "after-cancel"); err != nil {
+		t.Fatalf("remove follow-up preview: %v", err)
+	}
+	if _, err := repository.CreateRetentionRun(ctx, "retention-after-cancel", 2_500, 30_004); err != nil {
+		t.Fatalf("retention create after cancel: %v", err)
+	}
+}
+
+func TestRepositoryCancelFailedRunWithoutDeletionReleasesRetentionLock(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "cancel-failed-safe", 2_500, 30_100)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := db.Exec(`update usage_archive_runs set status = ?, resume_status = ?, last_error = ? where id = ?`, StatusFailed, StatusArchiving, "temporary archive failure", run.ID); err != nil {
+		t.Fatalf("prepare failed run: %v", err)
+	}
+	cancelled, err := repository.CancelRun(ctx, run.ID, 30_101)
+	if err != nil || cancelled.Status != StatusCancelled {
+		t.Fatalf("cancel failed run = %#v error=%v", cancelled, err)
+	}
+	if _, err := repository.CreateRetentionRun(ctx, "retention-after-failed-cancel", 2_500, 30_102); err != nil {
+		t.Fatalf("retention create after failed cancel: %v", err)
+	}
+}
+
+func TestRepositoryCancelFailedArchivingRunWithPublishedSegmentIsRejected(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	events := archiveTestEvents()[:1]
+	if _, err := usageevent.New(db).InsertBatch(ctx, events); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "cancel-published-segment", 2_000, 30_200)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	run, err = repository.BeginArchive(ctx, run.ID, 30_201)
+	if err != nil {
+		t.Fatalf("begin archive: %v", err)
+	}
+	records, err := repository.Records(ctx, run.ID, 0, 10, 1<<20)
+	if err != nil {
+		t.Fatalf("read archive records: %v", err)
+	}
+	if _, err := repository.RecordSegment(ctx, run.ID, archiveTestSegment(run.ID, records), archiveRecordRefs(records), 30_202); err != nil {
+		t.Fatalf("record published segment: %v", err)
+	}
+	if _, err := repository.RecordFailure(ctx, run.ID, StatusArchiving, errors.New("simulated archive interruption"), 30_203); err != nil {
+		t.Fatalf("record archive failure: %v", err)
+	}
+	failed, err := repository.Run(ctx, run.ID)
+	if err != nil || failed.Status != StatusFailed || failed.ResumeStatus != StatusArchiving || failed.ArchivedEventCount != 1 {
+		t.Fatalf("failed archive = %#v error=%v", failed, err)
+	}
+	if _, err := repository.CancelRun(ctx, run.ID, 30_204); !errors.Is(err, ErrCancelPublished) {
+		t.Fatalf("cancel published archive error = %v, want ErrCancelPublished", err)
+	}
+	preview, err := repository.Preview(ctx, 2_000)
+	if err != nil {
+		t.Fatalf("preview after rejected cancel: %v", err)
+	}
+	if preview.EventCount != 0 {
+		t.Fatalf("published event became eligible after rejected cancel: %#v", preview)
+	}
+}
+
+func TestRepositoryCancelRunRejectsPartialDeletion(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+	repository := New(db)
+	for _, fixture := range []struct {
+		name   string
+		status string
+		resume string
+		count  int64
+	}{
+		{name: "deleting", status: StatusDeleting, count: 0},
+		{name: "failed-delete", status: StatusFailed, resume: StatusDeleting, count: 1},
+	} {
+		run, err := repository.CreateRun(ctx, "unsafe-"+fixture.name, 2_500, 31_000)
+		if err != nil {
+			t.Fatalf("create %s: %v", fixture.name, err)
+		}
+		if _, err := db.Exec(`update usage_archive_runs set status = ?, resume_status = ?, delete_started_at_ms = ?, deleted_event_count = ? where id = ?`, fixture.status, fixture.resume, 31_001, fixture.count, run.ID); err != nil {
+			t.Fatalf("prepare %s: %v", fixture.name, err)
+		}
+		if _, err := repository.CancelRun(ctx, run.ID, 31_002); !errors.Is(err, ErrCancelUnsafe) {
+			t.Fatalf("cancel %s error = %v, want ErrCancelUnsafe", fixture.name, err)
+		}
+		if _, err := db.Exec(`delete from usage_archive_runs where id = ?`, run.ID); err != nil {
+			t.Fatalf("remove %s fixture: %v", fixture.name, err)
+		}
+	}
+}
+
+func TestRepositoryCancelRunRejectsInconsistentCancelledPartialDeletion(t *testing.T) {
+	db := openArchiveTestDB(t)
+	ctx := context.Background()
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()); err != nil {
+		t.Fatalf("insert usage events: %v", err)
+	}
+	repository := New(db)
+	run, err := repository.CreateRun(ctx, "cancelled-partial-delete", 2_500, 31_100)
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := db.Exec(`update usage_archive_runs set status = ?, delete_started_at_ms = ?, deleted_event_count = ? where id = ?`, StatusCancelled, 31_101, 1, run.ID); err != nil {
+		t.Fatalf("prepare inconsistent cancelled run: %v", err)
+	}
+	if _, err := repository.CancelRun(ctx, run.ID, 31_102); !errors.Is(err, ErrCancelUnsafe) {
+		t.Fatalf("cancel inconsistent cancelled run error = %v, want ErrCancelUnsafe", err)
+	}
+}
+
 func TestRepositoryPersistsAndRecoversRequestedArchiveStages(t *testing.T) {
 	db := openArchiveTestDB(t)
 	ctx := context.Background()

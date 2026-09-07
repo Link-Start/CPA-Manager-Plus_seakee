@@ -69,6 +69,37 @@ func TestUsageArchiveRetentionWorkerDoesNotTakeOverManualRun(t *testing.T) {
 	}
 }
 
+func TestUsageArchiveRetentionWorkerContinuesAfterManualCancel(t *testing.T) {
+	// ActiveArchiveRun intentionally hides the cancelled manual run, matching
+	// the repository's terminal-state query. Retention must therefore proceed
+	// through its own lifecycle instead of waiting on the abandoned run.
+	service := &fakeUsageArchiveRetentionService{
+		found: false,
+		run: store.UsageArchiveRun{
+			ID:     "cancelled-manual-run",
+			Mode:   usagearchive.RunModeManual,
+			Status: usagearchive.StatusCancelled,
+		},
+	}
+	worker := NewUsageArchiveRetentionWorker(service, 30)
+	worker.now = func() time.Time { return time.UnixMilli(4_000_000_000) }
+	if worker.runOnce(context.Background()) {
+		t.Fatal("retention after manual cancel unexpectedly requested a retry")
+	}
+	wantCalls := []string{
+		"active",
+		"create:1408000000",
+		"resume:previewed",
+		"verify:archived",
+		"resume:verified",
+		"delete:verified",
+		"resume:completed",
+	}
+	if !reflect.DeepEqual(service.calls, wantCalls) {
+		t.Fatalf("retention after manual cancel calls = %#v, want %#v", service.calls, wantCalls)
+	}
+}
+
 func TestUsageArchiveRetentionWorkerResumesFailedRetentionRun(t *testing.T) {
 	for _, test := range []struct {
 		name         string

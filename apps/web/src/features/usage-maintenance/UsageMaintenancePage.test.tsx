@@ -31,6 +31,7 @@ const { mocks } = vi.hoisted(() => {
       resumeUsageArchive: vi.fn(),
       verifyUsageArchive: vi.fn(),
       deleteUsageArchive: vi.fn(),
+      cancelUsageArchive: vi.fn(),
       t: vi.fn((key: string, options?: Record<string, unknown>) => {
         if (
           [
@@ -76,6 +77,10 @@ vi.mock('@/stores', () => ({
 }));
 
 vi.mock('@/services/api/usageService', () => ({
+  getUsageServiceErrorCode: (error: unknown) =>
+    error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : '',
   usageServiceApi: {
     probeUsageMaintenance: mocks.probeUsageMaintenance,
     getUsageMaintenance: mocks.getUsageMaintenance,
@@ -86,6 +91,7 @@ vi.mock('@/services/api/usageService', () => ({
     resumeUsageArchive: mocks.resumeUsageArchive,
     verifyUsageArchive: mocks.verifyUsageArchive,
     deleteUsageArchive: mocks.deleteUsageArchive,
+    cancelUsageArchive: mocks.cancelUsageArchive,
   },
 }));
 
@@ -252,6 +258,9 @@ beforeEach(() => {
   );
   mocks.deleteUsageArchive.mockImplementation((_base: string, runId: string) =>
     Promise.resolve(archiveStatus(archive('completed', runId)))
+  );
+  mocks.cancelUsageArchive.mockImplementation((_base: string, runId: string) =>
+    Promise.resolve(archiveStatus(archive('cancelled', runId)))
   );
 });
 
@@ -439,6 +448,51 @@ describe('UsageMaintenancePage', () => {
       expect.any(AbortSignal)
     );
     expect(getText(renderer.root)).toContain('history-run-2');
+    act(() => renderer.unmount());
+  });
+
+  it('shows a confirmed abandon action for a previewed run and releases it through the API', async () => {
+    const run = archive('previewed', 'cancel-previewed-run');
+    const renderer = await renderHistoryPage(maintenance(), [run]);
+    const cancelButton = findButtons(renderer, 'Abandon task')[0];
+    expect(cancelButton).toBeDefined();
+
+    act(() => cancelButton.props.onClick());
+    const confirmation = mocks.showConfirmation.mock.calls[
+      mocks.showConfirmation.mock.calls.length - 1
+    ]?.[0] as {
+      message: string;
+      onConfirm: () => Promise<void>;
+    };
+    expect(confirmation.message).toContain('without deleting raw usage data');
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+
+    expect(mocks.cancelUsageArchive).toHaveBeenCalledWith(
+      'http://manager-a.local:18317',
+      run.id,
+      'management-key-a',
+      expect.any(AbortSignal)
+    );
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'Archive task abandoned; raw usage data was not deleted.',
+      'success'
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('does not expose abandon for a run that has entered raw deletion', async () => {
+    const partiallyDeleted = {
+      ...archive('failed', 'partial-delete-run'),
+      resume_status: 'deleting' as const,
+      deleted_event_count: 1,
+      delete_started_at_ms: 1_700_000_002_000,
+    };
+    const renderer = await renderHistoryPage(maintenance(), [partiallyDeleted]);
+
+    expect(findButtons(renderer, 'Abandon task')).toHaveLength(0);
+    expect(mocks.cancelUsageArchive).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 

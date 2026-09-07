@@ -23,7 +23,7 @@ export type UsageMaintenanceView =
 
 export type ArchiveHistoryFilter = 'all' | 'archiving' | 'archived' | 'verified' | 'failed';
 
-export type ArchiveRunAction = 'resume' | 'verify' | 'delete';
+export type ArchiveRunAction = 'resume' | 'verify' | 'delete' | 'cancel';
 
 export type RawEventRangeState =
   | { kind: 'empty' }
@@ -134,4 +134,31 @@ export const getArchiveRunAction = (status: string): ArchiveRunAction | null => 
   if (status === 'archived') return 'verify';
   if (status === 'verified') return 'delete';
   return null;
+};
+
+export const isArchiveRunCancellable = (run: {
+  status: string;
+  resume_status?: string;
+  requested_stage?: string;
+  archived_event_count: number;
+  deleted_event_count: number;
+  last_deleted_event_id?: number;
+  delete_started_at_ms?: number;
+}): boolean => {
+  if (
+    run.deleted_event_count > 0 ||
+    (run.last_deleted_event_id ?? 0) > 0 ||
+    (run.delete_started_at_ms ?? 0) > 0
+  ) {
+    return false;
+  }
+  if (run.status === 'deleting' || run.resume_status === 'deleting') return false;
+  if (
+    run.status === 'failed' &&
+    run.resume_status === 'archiving' &&
+    run.archived_event_count > 0
+  ) {
+    return false;
+  }
+  return ['previewed', 'archived', 'verified', 'failed'].includes(run.status);
 };

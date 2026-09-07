@@ -26,6 +26,8 @@ If the CPA connection is managed by environment variables or secret files, the C
 
 Archive files may contain event-level `fail_body` and `raw_json`, so protect them as sensitive data. SQLite, WAL/SHM, `data.key`, and `usage-archives/` must come from the same consistent backup point. With custom `dataDir` or `dbPath` settings, confirm the resolved archive location in the [Manager Server Guide](./manager-server.md); it can be separate from the SQLite directory. Never delete WAL manually or restore only selected archive runs.
 
+The Usage Maintenance “Export usage” action is a complete JSONL snapshot of the current raw `usage_events`. It is independent of `USAGE_QUERY_LIMIT`, streams bounded batches from a stable snapshot boundary, and excludes events written after the export began. It is not a complete CPAMP backup and does not automatically merge raw events already deleted from SQLite back out of `usage-archives/` segments; back up the complete data set above for migration or disaster recovery.
+
 ## Docker Backup Example
 
 If you use a named volume, stop the container first, then export through a temporary container:
@@ -99,6 +101,10 @@ On Windows, use a trusted gzip tool to produce the same `.jsonl` file. The decom
 6. Keep the original archive and complete backup until validation is finished. Do not overwrite a live production data directory with the recovery instance's SQLite file, and do not merge tables manually. A complete production rollback must restore the consistent backup set.
 
 If importing the same decompressed segment into the source database reports every event as `skipped`, the identity ledger is correctly preventing archived events from being resurrected. That is an idempotency check, not a failed recovery.
+
+When a browser resumes an import session with an uploaded prefix, it computes the selected file's prefix SHA-256 incrementally and the server compares it with the persisted digest. The selected file must have the same content, not merely the same filename, size, or `lastModified`; a mismatch stops resumable upload and requires a new session. Legacy sessions whose uploaded prefix has no digest are not treated as safe resume targets.
+
+The archive “Abandon task” action is allowed only for `previewed`, `archived`, `verified`, and `failed` runs that have neither published a segment nor entered raw deletion. It is rejected for `archiving`, `verifying`, `deleting`, failed runs with a published segment or partial deletion, and `completed` runs. Cancelling does not delete raw usage, published archive segments, or identity-ledger entries; a run that has started raw deletion must be resumed or completed.
 
 ## Reclaim Physical Space After Logical Deletion
 

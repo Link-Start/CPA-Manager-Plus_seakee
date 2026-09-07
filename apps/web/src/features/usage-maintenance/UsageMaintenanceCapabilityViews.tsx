@@ -341,9 +341,6 @@ export function UsageMaintenanceAdvancedView({
                 t('usage_maintenance.advanced_archive_browse', {
                   defaultValue: 'Archive file browsing / download',
                 }),
-                t('usage_maintenance.advanced_cancel_task', {
-                  defaultValue: 'Archive task cancellation',
-                }),
                 t('usage_maintenance.advanced_online_vacuum', { defaultValue: 'Online VACUUM' }),
                 t('usage_maintenance.advanced_failure_detail', {
                   defaultValue: 'Detailed internal failure text',

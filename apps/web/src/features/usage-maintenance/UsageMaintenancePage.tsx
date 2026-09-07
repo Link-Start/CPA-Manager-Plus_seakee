@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import {
+  getUsageServiceErrorCode,
   usageServiceApi,
   type UsageArchiveList,
   type UsageArchivePreview,
@@ -19,6 +20,7 @@ import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability
 import { formatDateTime, formatFileSize } from '@/utils/format';
 import {
   getArchiveRunPresentationStage,
+  isArchiveRunCancellable,
   archiveHistoryFilterStatus,
   recommendRetentionDays,
   resolveRawEventRange,
@@ -48,6 +50,32 @@ import styles from './UsageMaintenancePage.module.scss';
 const isUnsupportedError = (error: unknown) => {
   const candidate = error as { status?: number } | null;
   return candidate?.status === 404 || candidate?.status === 405;
+};
+
+const formatArchiveActionError = (
+  error: unknown,
+  t: (key: string, options?: Record<string, unknown>) => string
+) => {
+  const code = getUsageServiceErrorCode(error);
+  if (code === 'usage_archive_cancel_unsafe') {
+    return t('usage_maintenance.cancel_unsafe', {
+      defaultValue:
+        'This task has started raw deletion and cannot be abandoned. Continue or recover the deletion stage.',
+    });
+  }
+  if (code === 'usage_archive_cancel_cleanup_failed') {
+    return t('usage_maintenance.cancel_cleanup_failed', {
+      defaultValue:
+        'The task could not be abandoned because temporary-file cleanup failed. Retry the abandon action or inspect the server logs.',
+    });
+  }
+  if (code === 'usage_archive_cancel_published') {
+    return t('usage_maintenance.cancel_published', {
+      defaultValue:
+        'This task has already published archive segments and cannot be abandoned safely. Continue the archive stage first.',
+    });
+  }
+  return error instanceof Error ? error.message : String(error);
 };
 
 const activeRefreshIntervalMs = 5_000;
@@ -276,14 +304,17 @@ const statusAction = (status: UsageArchiveRunStatus): 'resume' | 'verify' | 'del
   return null;
 };
 
-const actionIsDestructive = (run: UsageArchiveRunSummary, action: 'resume' | 'verify' | 'delete') =>
+const actionIsDestructive = (
+  run: UsageArchiveRunSummary,
+  action: 'resume' | 'verify' | 'delete' | 'cancel'
+) =>
   action === 'delete' ||
   (action === 'resume' &&
     (run.status === 'deleting' || (run.status === 'failed' && run.resume_status === 'deleting')));
 
 const actionRequiresMigrationReady = (
   run: UsageArchiveRunSummary,
-  action: 'resume' | 'verify' | 'delete'
+  action: 'resume' | 'verify' | 'delete' | 'cancel'
 ) => {
   if (action !== 'resume') return false;
   const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
@@ -300,8 +331,9 @@ const resumeExpectedStage = (run: UsageArchiveRunSummary): UsageArchiveResumeSta
 
 const expectedActionStatuses = (
   run: UsageArchiveRunSummary,
-  action: 'resume' | 'verify' | 'delete'
+  action: 'resume' | 'verify' | 'delete' | 'cancel'
 ): ReadonlySet<string> => {
+  if (action === 'cancel') return new Set(['cancelled']);
   if (action === 'delete') return new Set(['completed']);
   if (action === 'verify') return new Set(['verified', 'deleting', 'completed']);
   const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
@@ -932,7 +964,7 @@ export function UsageMaintenancePage() {
     } catch (cause) {
       if (operationIsCurrent(operation)) {
         setGuidedArchiveStage('attention');
-        showNotification(cause instanceof Error ? cause.message : String(cause), 'error');
+        showNotification(formatArchiveActionError(cause, t), 'error');
         await load({ background: true });
       }
     } finally {
@@ -967,7 +999,7 @@ export function UsageMaintenancePage() {
 
   const runAction = async (
     run: UsageArchiveRunSummary,
-    action: 'resume' | 'verify' | 'delete',
+    action: 'resume' | 'verify' | 'delete' | 'cancel',
     confirmation?: ConfirmationToken
   ) => {
     if (confirmation && !confirmationIsCurrent(confirmation)) return;
@@ -1001,12 +1033,19 @@ export function UsageMaintenancePage() {
                 managementKey,
                 operation.controller.signal
               )
-            : await usageServiceApi.deleteUsageArchive(
+          : action === 'delete'
+            ? await usageServiceApi.deleteUsageArchive(
                 serviceBase,
                 run.id,
                 managementKey,
                 operation.controller.signal
-              );
+              )
+            : await usageServiceApi.cancelUsageArchive(
+              serviceBase,
+              run.id,
+              managementKey,
+              operation.controller.signal
+            );
       if (!operationIsCurrent(operation)) return;
       const updated = requireArchiveResponse(response, run.id, expectedActionStatuses(run, action));
       if (
@@ -1025,7 +1064,12 @@ export function UsageMaintenancePage() {
       } else {
         showNotification(
           t(`usage_maintenance.${destructive ? 'delete' : action}_success`, {
-            defaultValue: destructive ? 'Logical deletion completed.' : 'Archive run updated.',
+            defaultValue:
+              destructive
+                ? 'Logical deletion completed.'
+                : action === 'cancel'
+                  ? 'Archive task abandoned; raw usage data was not deleted.'
+                  : 'Archive run updated.',
           }),
           'success'
         );
@@ -1040,7 +1084,7 @@ export function UsageMaintenancePage() {
       }
     } catch (cause) {
       if (operationIsCurrent(operation)) {
-        showNotification(cause instanceof Error ? cause.message : String(cause), 'error');
+        showNotification(formatArchiveActionError(cause, t), 'error');
         await load({ background: true });
         if (operationIsCurrent(operation)) {
           setPreviewRefreshToken((value) => value + 1);
@@ -1133,7 +1177,33 @@ export function UsageMaintenancePage() {
     if (stageOrder === order[step]) return 'current';
     return 'pending';
   };
-  const confirmAction = (run: UsageArchiveRunSummary, action: 'resume' | 'verify' | 'delete') => {
+  const confirmAction = (
+    run: UsageArchiveRunSummary,
+    action: 'resume' | 'verify' | 'delete' | 'cancel'
+  ) => {
+    if (action === 'cancel') {
+      const confirmation = {
+        generation: contextGenerationRef.current,
+        serviceBase,
+        managementKey,
+      };
+      showConfirmation({
+        title: t('usage_maintenance.cancel_confirm_title', {
+          defaultValue: 'Abandon this archive task?',
+        }),
+        message: t('usage_maintenance.cancel_confirm_message', {
+          defaultValue:
+            'This will release the maintenance task without deleting raw usage data. Any published archive files remain available.',
+        }),
+        confirmText: t('usage_maintenance.cancel_confirm_button', {
+          defaultValue: 'Abandon task',
+        }),
+        cancelText: t('common.cancel'),
+        variant: 'primary',
+        onConfirm: () => runAction(run, action, confirmation),
+      });
+      return;
+    }
     if (!actionIsDestructive(run, action)) {
       void runAction(run, action);
       return;
@@ -1164,7 +1234,7 @@ export function UsageMaintenancePage() {
     });
   };
 
-  const actionLabel = (run: UsageArchiveRunSummary, action: ReturnType<typeof statusAction>) => {
+  const actionLabel = (run: UsageArchiveRunSummary, action: ArchiveRunAction | null) => {
     if (!action) return '';
     if (action === 'resume') {
       const resumeStage = run.status === 'failed' ? run.resume_status : run.status;
@@ -1178,6 +1248,9 @@ export function UsageMaintenancePage() {
           defaultValue: 'Continue deletion',
         });
       }
+    }
+    if (action === 'cancel') {
+      return t('usage_maintenance.action_cancel', { defaultValue: 'Abandon task' });
     }
     const fallback =
       action === 'resume'
@@ -1908,6 +1981,7 @@ export function UsageMaintenancePage() {
           ) : null}
           {archives.map((run) => {
             const action = statusAction(run.status);
+            const cancelAction = isArchiveRunCancellable(run) ? ('cancel' as const) : null;
             const destructive = action ? actionIsDestructive(run, action) : false;
             const waitingForMigration = Boolean(
               action && archiveReadinessPending && actionRequiresMigrationReady(run, action)
@@ -2013,6 +2087,17 @@ export function UsageMaintenancePage() {
                       onClick={() => confirmAction(run, action)}
                     >
                       {actionLabel(run, action)}
+                    </Button>
+                  ) : null}
+                  {cancelAction ? (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={working || archiveActionDisabled(run, cancelAction)}
+                      title={archiveActionTitle(run, cancelAction)}
+                      onClick={() => confirmAction(run, cancelAction)}
+                    >
+                      {actionLabel(run, cancelAction)}
                     </Button>
                   ) : null}
                 </div>

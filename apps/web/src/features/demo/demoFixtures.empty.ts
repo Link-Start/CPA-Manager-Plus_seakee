@@ -51,6 +51,7 @@ export const getDemoUsageArchives = (_limit = 20) => ({ runs: [] });
 export const resumeDemoUsageArchive = (_runId: string) => emptyObject;
 export const verifyDemoUsageArchive = (_runId: string) => emptyObject;
 export const deleteDemoUsageArchive = (_runId: string) => emptyObject;
+export const cancelDemoUsageArchive = (_runId: string) => emptyObject;
 export const getDemoUsageMaintenance = () => emptyObject;
 export const resetDemoUsageArchiveState = () => undefined;
 export const getDemoHeaderSnapshots = () => emptyObject;

@@ -39,15 +39,18 @@ const (
 )
 
 var (
-	ErrArchiveUnavailable        = errors.New("usage archive is not configured")
-	ErrArchiveInvalidRequest     = errors.New("invalid usage archive request")
-	ErrArchiveDeleteUnavailable  = errors.New("usage archive delete requires permanent hourly aggregate reads")
-	ErrArchiveInvalidID          = errors.New("invalid usage archive run id")
-	ErrArchiveNotFound           = usagearchive.ErrNotFound
-	ErrArchiveNoEvents           = usagearchive.ErrNoEvents
-	ErrArchiveInvalidState       = usagearchive.ErrInvalidState
-	ErrArchiveMaintenanceLocked  = usagearchive.ErrMaintenanceLocked
-	ErrArchiveCoverageIncomplete = usagearchive.ErrCoverageIncomplete
+	ErrArchiveUnavailable         = errors.New("usage archive is not configured")
+	ErrArchiveInvalidRequest      = errors.New("invalid usage archive request")
+	ErrArchiveDeleteUnavailable   = errors.New("usage archive delete requires permanent hourly aggregate reads")
+	ErrArchiveInvalidID           = errors.New("invalid usage archive run id")
+	ErrArchiveNotFound            = usagearchive.ErrNotFound
+	ErrArchiveNoEvents            = usagearchive.ErrNoEvents
+	ErrArchiveInvalidState        = usagearchive.ErrInvalidState
+	ErrArchiveCancelUnsafe        = usagearchive.ErrCancelUnsafe
+	ErrArchiveCancelPublished     = usagearchive.ErrCancelPublished
+	ErrArchiveCancelCleanupFailed = errors.New("usage archive cancel cleanup failed")
+	ErrArchiveMaintenanceLocked   = usagearchive.ErrMaintenanceLocked
+	ErrArchiveCoverageIncomplete  = usagearchive.ErrCoverageIncomplete
 )
 
 type ArchiveConfig struct {
@@ -660,6 +663,60 @@ func (s *Service) DeleteArchive(ctx context.Context, runID string) (ArchiveStatu
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	return manager.deleteLocked(ctx, runID)
+}
+
+func (s *Service) CancelArchive(ctx context.Context, runID string) (ArchiveStatus, error) {
+	if !validArchiveRunID(runID) {
+		return ArchiveStatus{}, ErrArchiveInvalidID
+	}
+	manager, err := s.requireArchiveManager()
+	if err != nil {
+		return ArchiveStatus{}, err
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	current, err := manager.store.UsageArchives.Run(ctx, runID)
+	if err != nil {
+		return ArchiveStatus{}, err
+	}
+	if current.Status == usagearchive.StatusDeleting || current.DeleteStartedAtMS > 0 ||
+		current.DeletedEventCount > 0 || current.LastDeletedEventID > 0 ||
+		(current.Status == usagearchive.StatusFailed && current.ResumeStatus == usagearchive.StatusDeleting) {
+		return ArchiveStatus{}, ErrArchiveCancelUnsafe
+	}
+	if current.Status == usagearchive.StatusFailed && current.ResumeStatus == usagearchive.StatusArchiving &&
+		current.ArchivedEventCount > 0 {
+		return ArchiveStatus{}, ErrArchiveCancelPublished
+	}
+	switch current.Status {
+	case usagearchive.StatusPreviewed, usagearchive.StatusArchived, usagearchive.StatusVerified,
+		usagearchive.StatusFailed, usagearchive.StatusCancelled:
+		// Cleanup is safe for these terminal/pre-delete states. The repository
+		// repeats the state and deletion-evidence checks in its transaction.
+	default:
+		return ArchiveStatus{}, fmt.Errorf("%w: cannot cancel run in %s", ErrArchiveInvalidState, current.Status)
+	}
+	if err := manager.cleanupCancelledRunFiles(runID); err != nil {
+		return ArchiveStatus{}, errors.Join(
+			ErrArchiveCancelCleanupFailed,
+			fmt.Errorf("temporary-file cleanup failed before cancelling archive run %s: %w", runID, err),
+		)
+	}
+	run, err := manager.store.UsageArchives.CancelRun(ctx, runID, time.Now().UnixMilli())
+	if err != nil {
+		return ArchiveStatus{}, err
+	}
+	if s.archiveJobs != nil {
+		// CancelRun clears the durable request before cleanup. Wake any callers
+		// waiting on a queued stage immediately, even if temporary-file cleanup
+		// later needs a retry.
+		s.archiveJobs.discardRun(run.ID)
+	}
+	segments, err := manager.store.UsageArchives.Segments(ctx, run.ID)
+	if err != nil {
+		return ArchiveStatus{}, err
+	}
+	return ArchiveStatus{Run: run, Segments: segments}, nil
 }
 
 func (s *Service) requireArchiveManager() (*archiveManager, error) {
@@ -1343,6 +1400,34 @@ func (m *archiveManager) resolveArchivePath(relativeName string) (string, error)
 		return "", errors.New("usage archive file escapes archive directory")
 	}
 	return path, nil
+}
+
+func (m *archiveManager) cleanupCancelledRunFiles(runID string) error {
+	runDirectory, err := m.resolveArchivePath(runID)
+	if err != nil {
+		return err
+	}
+	if err := validatePrivateDirectory(runDirectory); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	entries, err := os.ReadDir(runDirectory)
+	if err != nil {
+		return err
+	}
+	var cleanupErr error
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".archive-tmp-") {
+			continue
+		}
+		path := filepath.Join(runDirectory, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	return cleanupErr
 }
 
 func (m *archiveManager) callTestHook(point string) error {

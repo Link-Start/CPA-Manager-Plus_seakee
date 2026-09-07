@@ -799,6 +799,10 @@ func (s *Store) WriteExportJSONL(ctx context.Context, writer io.Writer, limit in
 	return s.UsageEvents.WriteExportJSONL(ctx, writer, limit)
 }
 
+func (s *Store) WriteFullExportJSONL(ctx context.Context, writer io.Writer) error {
+	return s.UsageEvents.WriteFullExportJSONL(ctx, writer)
+}
+
 // AggregateBetween computes summary metrics over [fromMs, toMs).
 func (s *Store) AggregateBetween(ctx context.Context, fromMs, toMs int64) (Aggregate, error) {
 	return s.UsageEvents.AggregateBetween(ctx, fromMs, toMs)

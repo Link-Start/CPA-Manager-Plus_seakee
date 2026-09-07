@@ -3,6 +3,7 @@ import {
   archiveHistoryFilterStatus,
   getArchiveRunAction,
   getArchiveRunPresentationStage,
+  isArchiveRunCancellable,
   recommendRetentionDays,
   resolveRawEventRange,
   resolveProgressPercent,
@@ -88,5 +89,27 @@ describe('usage maintenance model', () => {
     expect(getArchiveRunAction('verified')).toBe('delete');
     expect(getArchiveRunAction('failed')).toBe('resume');
     expect(getArchiveRunAction('completed')).toBeNull();
+  });
+
+  it('only marks pre-delete archive runs as cancellable', () => {
+    const base = { archived_event_count: 0, deleted_event_count: 0 };
+    for (const status of ['previewed', 'archived', 'verified', 'failed']) {
+      expect(isArchiveRunCancellable({ ...base, status })).toBe(true);
+    }
+    expect(
+      isArchiveRunCancellable({ ...base, status: 'failed', resume_status: 'deleting' })
+    ).toBe(false);
+    expect(
+      isArchiveRunCancellable({
+        ...base,
+        status: 'failed',
+        resume_status: 'archiving',
+        archived_event_count: 1,
+      })
+    ).toBe(false);
+    expect(
+      isArchiveRunCancellable({ ...base, status: 'deleting', delete_started_at_ms: 1 })
+    ).toBe(false);
+    expect(isArchiveRunCancellable({ ...base, status: 'completed' })).toBe(false);
   });
 });

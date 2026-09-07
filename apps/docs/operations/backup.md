@@ -26,6 +26,8 @@ CPAMP 的请求历史、配置和加密凭证都在本机。备份时最容易�
 
 归档文件可能包含事件级 `fail_body` 和 `raw_json`，应按敏感数据保护。备份或恢复时必须让 SQLite、WAL/SHM、`data.key` 和 `usage-archives/` 来自同一个一致时间点。使用自定义 `dataDir` 或 `dbPath` 时，应按 [Manager Server 指南](./manager-server.md) 确认归档实际位置；它可能与 SQLite 不在同一目录。不要单独删除 WAL，也不要只恢复归档目录中的部分 run。
 
+Usage Maintenance 的“导出用量”是当前 raw `usage_events` 的完整 JSONL snapshot：它不受 `USAGE_QUERY_LIMIT` 影响，按稳定的 snapshot boundary 分批流式导出，导出开始后新写入的事件不会混入。它不是完整 CPAMP 备份，也不会自动把已经删除的 raw events 从 `usage-archives/` segment 合并回 JSONL；需要迁移或灾备时仍应备份上面的完整数据组。
+
 ## Docker 备份示例
 
 如果使用 named volume，可以先停止容器，再用临时容器导出：
@@ -99,6 +101,10 @@ Windows 上使用可信的 gzip 解压工具生成同样的 `.jsonl` 文件。�
 6. 验证完成前保留原始归档和完整备份。不要把恢复实例的 SQLite 文件覆盖到仍在使用的生产数据目录，也不要手工合并表；生产环境完整回退应恢复一致时间点的整套备份。
 
 如果同一个解压 segment 导入源数据库后全部显示 `skipped`，说明 identity ledger 正在正常阻止已归档事件复活；这是幂等性检查，不是恢复失败。
+
+浏览器恢复已有 uploaded prefix 的可恢复导入会话时，会分块计算所选文件的 SHA-256 prefix，并由服务端比对持久化 digest。重新选择的文件必须与原文件内容一致，不能只依赖文件名、大小或 `lastModified`；不匹配时会停止续传并要求新建会话。旧的、已有上传 prefix 但没有 digest 的会话不会被当作安全续传目标。
+
+归档 run 的“放弃任务”只允许用于尚未发布 segment 且从未开始 raw delete 的 `previewed`、`archived`、`verified` 和 `failed` 状态；`archiving`、`verifying`、已发布 segment 或已经部分删除的 `failed`、`deleting` 以及 `completed` 不能取消。取消不会删除 raw usage、已发布归档 segment 或 identity ledger；已经开始 raw delete 的 run 必须继续恢复或完成。
 
 ## 逻辑删除后的物理空间回收
 
