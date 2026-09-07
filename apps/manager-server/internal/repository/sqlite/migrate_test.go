@@ -3939,3 +3939,167 @@ func assertTableAbsent(t *testing.T, db *sql.DB, table string) {
 		t.Fatalf("table %s exists, want absent", table)
 	}
 }
+
+func TestMigrationDevDBWithoutArchiveMetadataSucceeds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dev-db.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open new dev db: %v", err)
+	}
+	defer db.Close()
+
+	// Verify core tables exist and can be queried
+	for _, table := range []string{"usage_events", "usage_hourly_aggregate_v1", "usage_pricing_hourly_rollups_v1"} {
+		assertTableCount(t, db, table, 0)
+	}
+}
+
+func TestMigrationWithArchiveMetadataNoDeletionAllowsRebuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive-nodelete.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	// Insert archive run, segment, identity ledger, and ref without raw deletion
+	if _, err := db.Exec(`insert into usage_archive_runs(id, mode, schema_version, format, status, cutoff_timestamp_ms, target_event_id, event_count, created_at_ms, updated_at_ms)
+		values('run-1', 'manual', 1, 'jsonl.gz', 'archived', 2000, 10, 5, 1000, 1000)`); err != nil {
+		t.Fatalf("insert archive run: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_segments(run_id, sequence, status, file_name, first_event_id, last_event_id, min_timestamp_ms, max_timestamp_ms, event_count, uncompressed_bytes, compressed_bytes, content_sha256, event_hash_digest, created_at_ms)
+		values('run-1', 1, 'published', 'run-1/seg-1.jsonl.gz', 1, 10, 1000, 2000, 5, 100, 50, 'sha', 'digest', 1000)`); err != nil {
+		t.Fatalf("insert archive segment: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_event_identity_ledger(event_hash, timestamp_ms, bucket_ms, first_seen_at_ms, updated_at_ms)
+		values('hash-1', 1000, 1000, 1000, 1000)`); err != nil {
+		t.Fatalf("insert identity ledger: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs(event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms)
+		values('hash-1', 'run-1', 1, 1, 1000, 1000, null)`); err != nil {
+		t.Fatalf("insert archive event ref: %v", err)
+	}
+	// Intentionally mark hourly aggregate schema version as needing upgrade (version 2)
+	if _, err := db.Exec(`update usage_hourly_aggregate_state set schema_version = 2 where aggregate_name = 'hourly_core'`); err != nil {
+		t.Fatalf("set schema_version 2: %v", err)
+	}
+	_ = db.Close()
+
+	// Re-opening should succeed because raw_deleted_at_ms is NULL everywhere
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen with no raw deletion: %v", err)
+	}
+	defer reopened.Close()
+
+	var version int
+	if err := reopened.QueryRow(`select schema_version from usage_hourly_aggregate_state where aggregate_name = 'hourly_core'`).Scan(&version); err != nil {
+		t.Fatalf("query schema version: %v", err)
+	}
+	if version != usageaggregate.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, usageaggregate.SchemaVersion)
+	}
+}
+
+func TestMigrationWithRawDeletionAndCurrentRevisionStartsCleanly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive-deleted-current.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	// Insert archive run, segment, identity ledger, and ref with raw deletion recorded
+	if _, err := db.Exec(`insert into usage_archive_runs(id, mode, schema_version, format, status, cutoff_timestamp_ms, target_event_id, event_count, created_at_ms, updated_at_ms)
+		values('run-1', 'manual', 1, 'jsonl.gz', 'completed', 2000, 10, 5, 1000, 2000)`); err != nil {
+		t.Fatalf("insert archive run: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_segments(run_id, sequence, status, file_name, first_event_id, last_event_id, min_timestamp_ms, max_timestamp_ms, event_count, uncompressed_bytes, compressed_bytes, content_sha256, event_hash_digest, created_at_ms)
+		values('run-1', 1, 'published', 'run-1/seg-1.jsonl.gz', 1, 10, 1000, 2000, 5, 100, 50, 'sha', 'digest', 1000)`); err != nil {
+		t.Fatalf("insert archive segment: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_event_identity_ledger(event_hash, timestamp_ms, bucket_ms, first_seen_at_ms, updated_at_ms)
+		values('hash-1', 1000, 1000, 1000, 1000)`); err != nil {
+		t.Fatalf("insert identity ledger: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs(event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms)
+		values('hash-1', 'run-1', 1, 1, 1000, 1000, 1500)`); err != nil {
+		t.Fatalf("insert archive event ref: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen should succeed cleanly without error because all revisions are already current
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen with raw deletion and current revisions: %v", err)
+	}
+	defer reopened.Close()
+}
+
+func TestMigrationWithRawDeletionAndRebuildRequiredFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive-deleted-rebuild.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	// Insert dummy derived rows in usage_hourly_aggregate_v1
+	if _, err := db.Exec(`insert into usage_hourly_aggregate_v1(
+		bucket_ms, model, billing_model, service_tier, failed, updated_at_ms
+	) values (
+		3600000, 'gpt-4o', 'gpt-4o', 'default', 0, 1000
+	)`); err != nil {
+		t.Fatalf("insert dummy hourly aggregate: %v", err)
+	}
+
+	// Insert archive run, segment, identity ledger, and ref with raw deletion recorded
+	if _, err := db.Exec(`insert into usage_archive_runs(id, mode, schema_version, format, status, cutoff_timestamp_ms, target_event_id, event_count, created_at_ms, updated_at_ms)
+		values('run-1', 'manual', 1, 'jsonl.gz', 'completed', 2000, 10, 5, 1000, 2000)`); err != nil {
+		t.Fatalf("insert archive run: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_segments(run_id, sequence, status, file_name, first_event_id, last_event_id, min_timestamp_ms, max_timestamp_ms, event_count, uncompressed_bytes, compressed_bytes, content_sha256, event_hash_digest, created_at_ms)
+		values('run-1', 1, 'published', 'run-1/seg-1.jsonl.gz', 1, 10, 1000, 2000, 5, 100, 50, 'sha', 'digest', 1000)`); err != nil {
+		t.Fatalf("insert archive segment: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_event_identity_ledger(event_hash, timestamp_ms, bucket_ms, first_seen_at_ms, updated_at_ms)
+		values('hash-1', 1000, 1000, 1000, 1000)`); err != nil {
+		t.Fatalf("insert identity ledger: %v", err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs(event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms)
+		values('hash-1', 'run-1', 1, 1, 1000, 1000, 1500)`); err != nil {
+		t.Fatalf("insert archive event ref: %v", err)
+	}
+
+	// Set hourly aggregate schema version to 2 (triggering rebuild requirement)
+	if _, err := db.Exec(`update usage_hourly_aggregate_state set schema_version = 2 where aggregate_name = 'hourly_core'`); err != nil {
+		t.Fatalf("set schema_version 2: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must FAIL CLOSED because raw usage events were deleted and rebuild requires complete raw source!
+	reopened, err := Open(path)
+	if err == nil {
+		if reopened != nil {
+			_ = reopened.Close()
+		}
+		t.Fatal("expected Open to fail closed when rebuild is required after raw deletion, but it succeeded")
+	}
+
+	wantErrSubstring := "historical raw usage events have been archived and deleted"
+	if !strings.Contains(err.Error(), wantErrSubstring) {
+		t.Fatalf("error = %q, want containing %q", err.Error(), wantErrSubstring)
+	}
+
+	// Raw SQLite connection to inspect table: ensure original derived data was NOT wiped or parked
+	rawConn, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer rawConn.Close()
+
+	var aggregateCount int
+	if err := rawConn.QueryRow(`select count(*) from usage_hourly_aggregate_v1`).Scan(&aggregateCount); err != nil {
+		t.Fatalf("count hourly aggregate after failed migration: %v", err)
+	}
+	if aggregateCount != 1 {
+		t.Fatalf("hourly aggregate count = %d, want preserved 1 row", aggregateCount)
+	}
+}

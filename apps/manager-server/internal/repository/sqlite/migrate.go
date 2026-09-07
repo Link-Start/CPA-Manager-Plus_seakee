@@ -1142,6 +1142,10 @@ func ensureUsageAccountModelRollupPrimaryKeys(db *sql.DB) error {
 		return tx.Commit()
 	}
 
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "account and pricing rollups"); err != nil {
+		return err
+	}
+
 	if !accountMatches {
 		if err := parkDerivedTable(tx, usageAccountModelRollupsTable, usageAccountModelRollupsLegacy); err != nil {
 			return err
@@ -1733,6 +1737,9 @@ func ensureUsageMonitoringProjectionIdentity(db *sql.DB) error {
 	codexIdentityRevisionUpgrade := projectionRevisionMismatch && projectionRevision == legacyMonitoringProjectionRevisionV3
 	needsRebuild := versionErr != nil || projectionRevisionMismatch || !hasAccountKey || !hasRequestedModel || !hasAnalyticsModel || !hasAuthAccountID || !headerHasAuthAccountID || !selectorHasRevision || statsNeedsIdentityUpgrade || apiKeyStatsNeedsIdentityUpgrade
 	if needsRebuild {
+		if err := ensureCompleteRawSourceForDerivedRebuild(tx, "usage monitoring projection"); err != nil {
+			return err
+		}
 		if err := dropUsageMonitoringSearchTriggers(tx); err != nil {
 			return err
 		}
@@ -2088,6 +2095,10 @@ func ensureAccountHistoryIdentityFormatVersion(db *sql.DB) error {
 		return err
 	}
 
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "account history"); err != nil {
+		return err
+	}
+
 	hasRows, err := tableHasRows(tx, usageAccountModelRollupsTable)
 	if err != nil {
 		return err
@@ -2172,6 +2183,10 @@ func ensureDashboardHourlyRollupFormatVersion(db *sql.DB) error {
 	case err == nil && version != "2":
 		return fmt.Errorf("unsupported dashboard hourly rollup format version %q", version)
 	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "dashboard hourly rollups"); err != nil {
 		return err
 	}
 
@@ -2350,6 +2365,10 @@ func ensureUsageHourlyAggregateSchemaVersion(
 	case err == nil && version != 1 && version != 2 && version != usageHourlyAggregateSchemaVersion:
 		return fmt.Errorf("unsupported usage hourly aggregate schema version %d", version)
 	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "usage hourly aggregate"); err != nil {
 		return err
 	}
 
