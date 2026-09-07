@@ -1745,6 +1745,13 @@ func catchUpCompatUsageDerived(t *testing.T, st *store.Store) {
 			},
 		},
 		{
+			name: "codex legacy identity evidence",
+			run: func(ctx context.Context, limit int, nowMS int64) (bool, error) {
+				result, err := st.CatchUpCodexLegacyIdentityEvidence(ctx, limit, nowMS)
+				return result.Pending, err
+			},
+		},
+		{
 			name: "account history",
 			run: func(ctx context.Context, limit int, nowMS int64) (bool, error) {
 				result, err := st.CatchUpAccountHistoryRollups(ctx, limit, nowMS)

@@ -317,6 +317,7 @@ func TestUsageArchiveRetentionWorkerResumesPersistedStagesAfterStoreRestart(t *t
 				if _, err := fixture.service.ResumeArchive(ctx, fixture.runID); err != nil {
 					t.Fatalf("archive before delete restart: %v", err)
 				}
+				catchUpRetentionWorkerReadiness(t, fixture.store)
 				if _, err := fixture.service.VerifyArchive(ctx, fixture.runID); err != nil {
 					t.Fatalf("verify before delete restart: %v", err)
 				}
@@ -498,6 +499,7 @@ func catchUpRetentionWorkerReadiness(t *testing.T, st *store.Store) {
 		{name: "stats", run: st.CatchUpUsageMonitoringStats},
 		{name: "metadata", run: st.CatchUpUsageMonitoringMetadata},
 		{name: "projection", run: st.CatchUpUsageMonitoringProjection},
+		{name: "codex legacy identity evidence", run: st.CatchUpCodexLegacyIdentityEvidence},
 	} {
 		completed := false
 		for attempt := 0; attempt < 100; attempt++ {
