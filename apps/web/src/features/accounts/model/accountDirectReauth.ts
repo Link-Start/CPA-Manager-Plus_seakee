@@ -10,15 +10,16 @@ import {
 import type { CodexReauthTarget } from '@/features/oauth/codexReauthModel';
 import {
   readAuthFileStatusAccountId,
-  readAuthFileStatusAccountSnapshot,
   readAuthFileStatusAuthIndex,
+  readAuthFileStatusCodexMember,
   readAuthFileStatusPhysicalName,
   readAuthFileStatusProvider,
   readAuthFileStatusRuntimeId,
+  normalizeCodexMemberSnapshot,
 } from '@/utils/authFileCredentialIdentity';
 
-const STORAGE_KEY = 'cpa.accounts.direct-reauth.v1';
-const STORAGE_VERSION = 1;
+const STORAGE_KEY = 'cpa.accounts.direct-reauth.v3';
+const STORAGE_VERSION = 3;
 const MAX_PENDING_REAUTHS = 16;
 const MAX_PENDING_REAUTH_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -32,7 +33,23 @@ export interface AccountDirectReauthBaseline {
   credentialRefreshAtMs: number;
   updatedAtMs: number;
   statusMessage: string;
+  providerCredentials: AccountDirectReauthCredentialEvidence[];
 }
+
+export interface AccountDirectReauthCredentialEvidence {
+  identityKey: string;
+  accountId: string;
+  accountSnapshot: string;
+  credentialRefreshAtMs: number;
+  updatedAtMs: number;
+  statusMessage: string;
+}
+
+export type AccountDirectReauthReconciliation =
+  | { status: 'confirmed'; file: AuthFileItem }
+  | { status: 'identity-changed'; file: AuthFileItem; observedAccountId: string }
+  | { status: 'ambiguous' }
+  | { status: 'unconfirmed' };
 
 export interface PendingAccountDirectReauth extends AccountDirectReauthBaseline {
   id: string;
@@ -92,6 +109,23 @@ const normalizeResultKeys = (value: unknown): string[] =>
       )
     : [];
 
+const normalizeProviderCredentialEvidence = (
+  value: unknown
+): AccountDirectReauthCredentialEvidence | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const identityKey = normalizeString(record.identityKey);
+  if (!identityKey) return null;
+  return {
+    identityKey,
+    accountId: normalizeString(record.accountId),
+    accountSnapshot: normalizeCodexMemberSnapshot(record.accountSnapshot),
+    credentialRefreshAtMs: normalizeTimestamp(record.credentialRefreshAtMs),
+    updatedAtMs: normalizeTimestamp(record.updatedAtMs),
+    statusMessage: normalizeString(record.statusMessage),
+  };
+};
+
 const parsePendingReauth = (value: unknown): PendingAccountDirectReauth | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -114,6 +148,11 @@ const parsePendingReauth = (value: unknown): PendingAccountDirectReauth | null =
     credentialRefreshAtMs: normalizeTimestamp(record.credentialRefreshAtMs),
     updatedAtMs: normalizeTimestamp(record.updatedAtMs),
     statusMessage: normalizeString(record.statusMessage),
+    providerCredentials: Array.isArray(record.providerCredentials)
+      ? record.providerCredentials
+          .map(normalizeProviderCredentialEvidence)
+          .filter((item): item is AccountDirectReauthCredentialEvidence => item !== null)
+      : [],
   };
 };
 
@@ -195,22 +234,45 @@ const createPendingReauthId = (startedAtMs: number): string => {
 
 const buildTargetIdentityKey = (target: CodexReauthTarget): string =>
   JSON.stringify([
-    normalizeString(target.fileName),
     normalizeProvider(target.provider),
-    normalizeString(target.authIndex === null ? '' : String(target.authIndex ?? '')),
     normalizeString(target.accountId),
-    normalizeString(target.accountSnapshot),
+    normalizeCodexMemberSnapshot(target.accountSnapshot),
+    normalizeString(target.fileName),
     normalizeString(target.runtimeId),
+    normalizeString(target.authIndex === null ? '' : String(target.authIndex ?? '')),
   ]);
+
+const buildCredentialIdentityKey = (file: AuthFileItem): string =>
+  JSON.stringify([
+    readAuthFileStatusProvider(file),
+    readAuthFileStatusAccountId(file),
+    readAuthFileStatusCodexMember(file),
+    readAuthFileStatusPhysicalName(file),
+    readAuthFileStatusRuntimeId(file),
+    readAuthFileStatusAuthIndex(file) ?? '',
+  ]);
+
+const buildProviderCredentialEvidence = (
+  file: AuthFileItem
+): AccountDirectReauthCredentialEvidence => ({
+  identityKey: buildCredentialIdentityKey(file),
+  accountId: readAuthFileStatusAccountId(file),
+  accountSnapshot: readAuthFileStatusCodexMember(file),
+  credentialRefreshAtMs: readAuthFileCredentialRefreshAtMs(file) ?? 0,
+  updatedAtMs: readAuthFileUpdatedAtMs(file) ?? 0,
+  statusMessage: getAuthFileStatusMessage(file),
+});
 
 export const createAccountDirectReauthBaseline = ({
   target,
   file,
+  files = [file],
   resultKeys,
   startedAtMs = Date.now(),
 }: {
   target: CodexReauthTarget;
   file: AuthFileItem;
+  files?: readonly AuthFileItem[];
   resultKeys: Iterable<string>;
   startedAtMs?: number;
 }): AccountDirectReauthBaseline | null => {
@@ -225,6 +287,9 @@ export const createAccountDirectReauthBaseline = ({
     credentialRefreshAtMs: readAuthFileCredentialRefreshAtMs(file) ?? 0,
     updatedAtMs: readAuthFileUpdatedAtMs(file) ?? 0,
     statusMessage: getAuthFileStatusMessage(file),
+    providerCredentials: files
+      .filter((candidate) => readAuthFileStatusProvider(candidate) === 'codex')
+      .map(buildProviderCredentialEvidence),
   };
 };
 
@@ -276,59 +341,81 @@ export const acknowledgePendingAccountDirectReauths = (
   );
 };
 
-const fileMatchesTargetIdentity = (file: AuthFileItem, target: CodexReauthTarget): boolean => {
-  const fileName = normalizeString(target.fileName);
-  if (readAuthFileStatusProvider(file) !== normalizeProvider(target.provider)) return false;
-
-  const accountId = normalizeString(target.accountId);
-  if (accountId) return readAuthFileStatusAccountId(file) === accountId;
-
-  const accountSnapshot = normalizeString(target.accountSnapshot || target.account);
-  if (accountSnapshot && accountSnapshot !== fileName) {
-    return readAuthFileStatusAccountSnapshot(file) === accountSnapshot;
-  }
-
-  if (!fileName || readAuthFileStatusPhysicalName(file) !== fileName) return false;
-
-  const authIndex = normalizeString(
-    target.authIndex === null || target.authIndex === undefined ? '' : String(target.authIndex)
+const hasChangedCredentialEvidence = (
+  current: AccountDirectReauthCredentialEvidence,
+  baseline: AccountDirectReauthCredentialEvidence | undefined
+): boolean => {
+  if (!baseline) return true;
+  const statusImproved =
+    baseline.statusMessage.length > 0 &&
+    current.statusMessage !== baseline.statusMessage &&
+    (current.statusMessage.length === 0 || isHealthyAuthFileStatusMessage(current.statusMessage));
+  return (
+    current.credentialRefreshAtMs > baseline.credentialRefreshAtMs ||
+    current.updatedAtMs > baseline.updatedAtMs ||
+    statusImproved
   );
-  if (authIndex) return readAuthFileStatusAuthIndex(file) === authIndex;
-
-  const runtimeId = normalizeString(target.runtimeId);
-  return Boolean(runtimeId && readAuthFileStatusRuntimeId(file) === runtimeId);
 };
 
-const resolveTargetFile = (
-  files: readonly AuthFileItem[],
-  target: CodexReauthTarget
-): AuthFileItem | null => {
-  const matches = files.filter((file) => fileMatchesTargetIdentity(file, target));
-  return matches.length === 1 ? matches[0] : null;
+export const reconcileAccountDirectReauth = (
+  pending: AccountDirectReauthBaseline,
+  files: readonly AuthFileItem[]
+): AccountDirectReauthReconciliation => {
+  const providerFiles = files.filter((file) => readAuthFileStatusProvider(file) === 'codex');
+  const expectedWorkspace = normalizeString(pending.target.accountId);
+  const expectedMember = normalizeCodexMemberSnapshot(pending.target.accountSnapshot);
+
+  // A Workspace id without a strong member snapshot is not enough to identify a
+  // Team credential. Fail closed instead of treating a display value or a
+  // shared Workspace id as a user identity.
+  if (!expectedWorkspace || !expectedMember) return { status: 'unconfirmed' };
+
+  const baselineByIdentity = new Map(
+    pending.providerCredentials.map((item) => [item.identityKey, item])
+  );
+  const matchingFiles = providerFiles.filter((file) => {
+    const evidence = buildProviderCredentialEvidence(file);
+    return evidence.accountId === expectedWorkspace && evidence.accountSnapshot === expectedMember;
+  });
+  const changedMatchingFiles = matchingFiles.filter((file) => {
+    const evidence = buildProviderCredentialEvidence(file);
+    return hasChangedCredentialEvidence(evidence, baselineByIdentity.get(evidence.identityKey));
+  });
+  if (changedMatchingFiles.length > 1) return { status: 'ambiguous' };
+  if (changedMatchingFiles.length === 1) {
+    return { status: 'confirmed', file: changedMatchingFiles[0] };
+  }
+
+  // Timestamp/status changes on an existing unrelated credential are not causal
+  // evidence for this reauth: CPA may refresh other Codex credentials in the
+  // background. A new credential identity with a strong Workspace/member pair
+  // is the only evidence strong enough to report a different identity.
+  const changedDifferentIdentityFiles = providerFiles.filter((file) => {
+    const evidence = buildProviderCredentialEvidence(file);
+    return (
+      Boolean(evidence.accountId && evidence.accountSnapshot) &&
+      (evidence.accountId !== expectedWorkspace || evidence.accountSnapshot !== expectedMember) &&
+      !baselineByIdentity.has(evidence.identityKey)
+    );
+  });
+  if (changedDifferentIdentityFiles.length === 1) {
+    const file = changedDifferentIdentityFiles[0];
+    return {
+      status: 'identity-changed',
+      file,
+      observedAccountId: readAuthFileStatusAccountId(file),
+    };
+  }
+  if (changedDifferentIdentityFiles.length > 1) return { status: 'ambiguous' };
+  return { status: 'unconfirmed' };
 };
 
 export const confirmAccountDirectReauth = (
   pending: AccountDirectReauthBaseline,
   files: readonly AuthFileItem[]
 ): AuthFileItem | null => {
-  const file = resolveTargetFile(files, pending.target);
-  if (!file) return null;
-
-  const credentialRefreshAtMs = readAuthFileCredentialRefreshAtMs(file) ?? 0;
-  const updatedAtMs = readAuthFileUpdatedAtMs(file) ?? 0;
-  const statusMessage = getAuthFileStatusMessage(file);
-  const statusImproved =
-    pending.statusMessage.length > 0 &&
-    statusMessage !== pending.statusMessage &&
-    (statusMessage.length === 0 || isHealthyAuthFileStatusMessage(statusMessage));
-  if (
-    credentialRefreshAtMs > pending.credentialRefreshAtMs ||
-    updatedAtMs > pending.updatedAtMs ||
-    statusImproved
-  ) {
-    return file;
-  }
-  return null;
+  const result = reconcileAccountDirectReauth(pending, files);
+  return result.status === 'confirmed' ? result.file : null;
 };
 
 export const clearPendingAccountDirectReauthsForTests = (): void => {

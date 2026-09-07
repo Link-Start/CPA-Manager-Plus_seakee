@@ -2,6 +2,8 @@ package monitoring
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -9,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/codexquota"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/pricing"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usagehourly"
 	monitoringrollup "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usagemonitoring"
@@ -259,6 +262,7 @@ type AccountHistoryTarget struct {
 	AuthLabelSnapshot     string `json:"auth_label_snapshot,omitempty"`
 	AuthFileSnapshot      string `json:"auth_file_snapshot,omitempty"`
 	AuthProviderSnapshot  string `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
 	AuthIndex             string `json:"auth_index,omitempty"`
 	Source                string `json:"source,omitempty"`
@@ -320,19 +324,73 @@ type AccountWindowUsageTarget struct {
 	FromMS                int64                   `json:"from_ms"`
 	ToMS                  int64                   `json:"to_ms"`
 	ModelScope            AccountWindowModelScope `json:"model_scope,omitempty"`
+	ModelScopeProvided    bool                    `json:"-"`
+	ModelScopeCompleteSet bool                    `json:"-"`
 	AccountSnapshot       string                  `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot     string                  `json:"auth_label_snapshot,omitempty"`
 	AuthFileSnapshot      string                  `json:"auth_file_snapshot,omitempty"`
 	AuthProviderSnapshot  string                  `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string                  `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot string                  `json:"auth_project_id_snapshot,omitempty"`
 	AuthIndex             string                  `json:"auth_index,omitempty"`
 	Source                string                  `json:"source,omitempty"`
 }
 
+func (target *AccountWindowUsageTarget) UnmarshalJSON(data []byte) error {
+	type alias AccountWindowUsageTarget
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	// This type has a custom unmarshaler so it can distinguish an omitted
+	// legacy model_scope from an explicitly incomplete scope. Keep the
+	// controller's DisallowUnknownFields contract for the target itself while
+	// allowing forward-compatible metadata inside model_scope.
+	knownFields := map[string]struct{}{
+		"request_key": {}, "row_key": {}, "window_key": {}, "provider_window_id": {},
+		"period": {}, "from_ms": {}, "to_ms": {}, "model_scope": {},
+		"account_snapshot": {}, "auth_label_snapshot": {}, "auth_file_snapshot": {},
+		"auth_provider_snapshot": {}, "auth_account_id_snapshot": {}, "auth_project_id_snapshot": {}, "auth_index": {},
+		"source": {},
+	}
+	for field := range fields {
+		if _, ok := knownFields[field]; ok {
+			continue
+		}
+		matched := false
+		for known := range knownFields {
+			if strings.EqualFold(field, known) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("json: unknown field %q", field)
+		}
+	}
+	*target = AccountWindowUsageTarget(decoded)
+	rawScope, provided := fields["model_scope"]
+	if !provided || strings.TrimSpace(string(rawScope)) == "null" {
+		return nil
+	}
+	target.ModelScopeProvided = true
+	var scopeFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawScope, &scopeFields); err != nil {
+		return err
+	}
+	_, target.ModelScopeCompleteSet = scopeFields["complete"]
+	return nil
+}
+
 type AccountWindowModelScope struct {
-	Kind   string   `json:"kind,omitempty"`
-	Key    string   `json:"key,omitempty"`
-	Models []string `json:"models,omitempty"`
+	Kind     string   `json:"kind,omitempty"`
+	Key      string   `json:"key,omitempty"`
+	Models   []string `json:"models,omitempty"`
+	Complete bool     `json:"complete,omitempty"`
 }
 
 type AccountWindowUsageResponse struct {
@@ -504,17 +562,18 @@ type ModelStat struct {
 }
 
 type ChannelShareRow struct {
-	AuthIndex            string   `json:"auth_index"`
-	Source               string   `json:"source,omitempty"`
-	AccountSnapshot      string   `json:"account_snapshot,omitempty"`
-	AuthLabelSnapshot    string   `json:"auth_label_snapshot,omitempty"`
-	AuthProviderSnapshot string   `json:"auth_provider_snapshot,omitempty"`
-	Calls                int64    `json:"calls"`
-	Success              int64    `json:"success"`
-	Failure              int64    `json:"failure"`
-	Tokens               int64    `json:"tokens"`
-	Cost                 float64  `json:"cost"`
-	AvgLatencyMS         *float64 `json:"average_latency_ms"`
+	AuthIndex             string   `json:"auth_index"`
+	Source                string   `json:"source,omitempty"`
+	AccountSnapshot       string   `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot     string   `json:"auth_label_snapshot,omitempty"`
+	AuthProviderSnapshot  string   `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string   `json:"auth_account_id_snapshot,omitempty"`
+	Calls                 int64    `json:"calls"`
+	Success               int64    `json:"success"`
+	Failure               int64    `json:"failure"`
+	Tokens                int64    `json:"tokens"`
+	Cost                  float64  `json:"cost"`
+	AvgLatencyMS          *float64 `json:"average_latency_ms"`
 }
 
 type FailureSourceRow struct {
@@ -563,6 +622,7 @@ type CredentialStatRow struct {
 	AccountSnapshot       string                `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot     string                `json:"auth_label_snapshot,omitempty"`
 	AuthProviderSnapshot  string                `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string                `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot string                `json:"auth_project_id_snapshot,omitempty"`
 	Calls                 int64                 `json:"calls"`
 	SuccessCalls          int64                 `json:"success_calls"`
@@ -590,6 +650,7 @@ type CredentialTimelinePoint struct {
 	AccountSnapshot       string   `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot     string   `json:"auth_label_snapshot,omitempty"`
 	AuthProviderSnapshot  string   `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string   `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot string   `json:"auth_project_id_snapshot,omitempty"`
 	BucketMS              int64    `json:"bucket_ms"`
 	BucketLabel           string   `json:"bucket_label"`
@@ -747,6 +808,7 @@ type RecentFailure struct {
 	AccountSnapshot        string                        `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot      string                        `json:"auth_label_snapshot,omitempty"`
 	AuthProviderSnapshot   string                        `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot  string                        `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot  string                        `json:"auth_project_id_snapshot,omitempty"`
 	Endpoint               string                        `json:"endpoint"`
 	DurationMS             *int64                        `json:"duration_ms"`
@@ -764,11 +826,16 @@ type RecentFailure struct {
 type HeaderSnapshot struct {
 	EventHash              string                        `json:"event_hash"`
 	TimestampMS            int64                         `json:"timestamp_ms"`
+	Model                  string                        `json:"model,omitempty"`
+	AnalyticsModel         string                        `json:"analytics_model,omitempty"`
+	RequestedModel         string                        `json:"requested_model,omitempty"`
+	ResolvedModel          string                        `json:"resolved_model,omitempty"`
 	AuthFileSnapshot       string                        `json:"auth_file_snapshot,omitempty"`
 	AuthIndex              string                        `json:"auth_index,omitempty"`
 	AccountSnapshot        string                        `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot      string                        `json:"auth_label_snapshot,omitempty"`
 	AuthProviderSnapshot   string                        `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot  string                        `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot  string                        `json:"auth_project_id_snapshot,omitempty"`
 	Source                 string                        `json:"source,omitempty"`
 	SourceHash             string                        `json:"source_hash,omitempty"`
@@ -811,6 +878,7 @@ type EventRow struct {
 	AuthLabelSnapshot      string                        `json:"auth_label_snapshot"`
 	AuthFileSnapshot       string                        `json:"auth_file_snapshot,omitempty"`
 	AuthProviderSnapshot   string                        `json:"auth_provider_snapshot"`
+	AuthAccountIDSnapshot  string                        `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot  string                        `json:"auth_project_id_snapshot,omitempty"`
 	ReasoningEffort        string                        `json:"reasoning_effort,omitempty"`
 	ServiceTier            string                        `json:"service_tier,omitempty"`
@@ -1638,7 +1706,10 @@ func (s *Service) accountHistory(ctx context.Context, req AccountHistoryRequest)
 		return AccountHistoryResponse{}, err
 	}
 
-	keys := make([]string, 0, len(req.Accounts))
+	keys := make([]string, 0, len(req.Accounts)*2)
+	stableKeys := make([]string, 0, len(req.Accounts))
+	legacyAliases := make(map[string]string)
+	legacyConflicts := make(map[string]struct{})
 	targetKeys := make([]string, len(req.Accounts))
 	validTargets := make([]bool, len(req.Accounts))
 	latestRequestTargets := make([]store.LatestAccountRequestQuery, 0, len(req.Accounts))
@@ -1648,29 +1719,76 @@ func (s *Service) accountHistory(ctx context.Context, req AccountHistoryRequest)
 		validTargets[index] = valid
 		if valid {
 			keys = append(keys, key)
+			stableKeys = append(stableKeys, key)
+			legacyKey, allowed, err := s.store.UsageEvents.ResolveCodexLegacyAccountKey(ctx, accountHistoryIdentityFields(account))
+			if err != nil {
+				return AccountHistoryResponse{}, err
+			}
+			if allowed && legacyKey != "" && legacyKey != key {
+				keys = append(keys, legacyKey)
+				if _, conflicted := legacyConflicts[legacyKey]; conflicted {
+					continue
+				}
+				if owner, exists := legacyAliases[legacyKey]; exists && owner != key {
+					// A blank-ID legacy bucket cannot be assigned to two stable
+					// accounts in one request. Keep both targets fail-closed.
+					delete(legacyAliases, legacyKey)
+					legacyConflicts[legacyKey] = struct{}{}
+				} else {
+					legacyAliases[legacyKey] = key
+				}
+			}
 		}
 		if latestAccountRequestTargetValid(account) {
 			latestRequestTargets = append(latestRequestTargets, store.LatestAccountRequestQuery{
-				RequestIndex:     index,
-				AuthFileSnapshot: accountHistoryAuthFileSnapshot(account),
-				AuthIndex:        account.AuthIndex,
+				RequestIndex:          index,
+				AuthFileSnapshot:      accountHistoryAuthFileSnapshot(account),
+				AuthIndex:             account.AuthIndex,
+				Provider:              account.AuthProviderSnapshot,
+				AuthAccountIDSnapshot: account.AuthAccountIDSnapshot,
+				AuthProjectIDSnapshot: account.AuthProjectIDSnapshot,
+				AccountSnapshot:       account.AccountSnapshot,
 			})
 		}
 	}
-	pricingSnapshot, err := s.store.LoadUsagePricingAccountSnapshot(ctx, keys)
+	keys = uniqueAccountHistoryKeys(keys)
+	stableKeys = uniqueAccountHistoryKeys(stableKeys)
+	loadTotals := func(readKeys []string) (map[string]*accountHistoryTotal, error) {
+		pricingSnapshot, err := s.store.LoadUsagePricingAccountSnapshot(ctx, readKeys)
+		if err != nil {
+			return nil, err
+		}
+		prices := pricingSnapshot.Prices
+		if pricingSnapshot.Available {
+			return buildPricingAccountHistoryTotals(pricingSnapshot.Rows, prices), nil
+		}
+		rows, err := s.store.AccountHistoryRollupRows(ctx, readKeys)
+		if err != nil {
+			return nil, err
+		}
+		return buildAccountHistoryTotals(rows, prices), nil
+	}
+	totals, err := loadTotals(keys)
 	if err != nil {
 		return AccountHistoryResponse{}, err
 	}
-	prices := pricingSnapshot.Prices
-	var totals map[string]*accountHistoryTotal
-	if pricingSnapshot.Available {
-		totals = buildPricingAccountHistoryTotals(pricingSnapshot.Rows, prices)
-	} else {
-		rows, err := s.store.AccountHistoryRollupRows(ctx, keys)
-		if err != nil {
-			return AccountHistoryResponse{}, err
+	mergeAliasedAccountHistoryTotals(totals, legacyAliases)
+	if len(legacyAliases) > 0 {
+		fencedLatestID, fenceErr := s.store.LatestUsageEventID(ctx)
+		if fenceErr != nil {
+			return AccountHistoryResponse{}, fenceErr
 		}
-		totals = buildAccountHistoryTotals(rows, prices)
+		if fencedLatestID != latestID {
+			// A writer raced the identity check. Do not expose a possibly
+			// conflicting legacy bucket from the old snapshot; stable events are
+			// still safe and the next refresh will pick up the new tail.
+			latestID = fencedLatestID
+			legacyAliases = nil
+			totals, err = loadTotals(stableKeys)
+			if err != nil {
+				return AccountHistoryResponse{}, err
+			}
+		}
 	}
 	recentRequests, err := s.store.RecentAccountRequests(
 		ctx,
@@ -1794,7 +1912,16 @@ func (s *Service) accountWindowUsage(ctx context.Context, req AccountWindowUsage
 		if window.Period == "" {
 			return AccountWindowUsageResponse{}, errors.New("period must be current, previous, or previous_equal_range")
 		}
-		window.ModelScope = normalizeAccountWindowModelScope(window.ModelScope)
+		modelScopeProvided := window.ModelScopeProvided ||
+			strings.TrimSpace(window.ModelScope.Kind) != "" ||
+			strings.TrimSpace(window.ModelScope.Key) != "" ||
+			len(window.ModelScope.Models) > 0 || window.ModelScope.Complete
+		modelScopeCompleteSet := window.ModelScopeCompleteSet || window.ModelScope.Complete
+		window.ModelScope = normalizeAccountWindowModelScope(
+			window.ModelScope,
+			modelScopeProvided,
+			modelScopeCompleteSet,
+		)
 		if window.ModelScope.Kind == "" {
 			return AccountWindowUsageResponse{}, errors.New("model_scope is invalid")
 		}
@@ -1820,6 +1947,7 @@ func (s *Service) accountWindowUsage(ctx context.Context, req AccountWindowUsage
 			AuthLabelSnapshot:     window.AuthLabelSnapshot,
 			AuthFileSnapshot:      window.AuthFileSnapshot,
 			AuthProviderSnapshot:  window.AuthProviderSnapshot,
+			AuthAccountIDSnapshot: window.AuthAccountIDSnapshot,
 			AuthProjectIDSnapshot: window.AuthProjectIDSnapshot,
 			Source:                window.Source,
 			AuthIndex:             window.AuthIndex,
@@ -2183,6 +2311,9 @@ func channelModelStatsFromAccountStats(stats []store.AccountModelStat) []store.C
 		if stat.AuthLabelSnapshot > entry.row.AuthLabelSnapshot {
 			entry.row.AuthLabelSnapshot = stat.AuthLabelSnapshot
 		}
+		if stat.AuthAccountIDSnapshot > entry.row.AuthAccountIDSnapshot {
+			entry.row.AuthAccountIDSnapshot = stat.AuthAccountIDSnapshot
+		}
 		if stat.Provider > entry.provider {
 			entry.provider = stat.Provider
 		}
@@ -2311,12 +2442,15 @@ func countAPIKeySelectors(values store.FilterSelectorValues) int {
 func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatRow {
 	grouped := map[string]*accountStatAccumulator{}
 	for _, selector := range values.AccountSelectors {
-		id := accountGroupKey(
-			selector.AccountSnapshot,
-			selector.AuthLabelSnapshot,
-			selector.Source,
-			selector.AuthIndex,
-		)
+		identity := monitoringAccountIdentity{
+			Provider:          selector.AuthProviderSnapshot,
+			AccountSnapshot:   selector.AccountSnapshot,
+			AuthLabelSnapshot: selector.AuthLabelSnapshot,
+			Source:            selector.Source,
+			AuthIndex:         selector.AuthIndex,
+			SourceHash:        selector.SourceHash,
+		}
+		id := identity.key()
 		if id == "-" && strings.TrimSpace(selector.SourceHash) == "" {
 			continue
 		}
@@ -2327,7 +2461,7 @@ func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatR
 					ID:                   id,
 					AccountSnapshot:      selector.AccountSnapshot,
 					AuthLabelSnapshot:    selector.AuthLabelSnapshot,
-					AuthProviderSnapshot: selector.AuthProviderSnapshot,
+					AuthProviderSnapshot: identity.provider(),
 					SuccessRate:          1,
 				},
 				authIndices:  map[string]struct{}{},
@@ -2941,7 +3075,15 @@ type credentialStatAccumulator struct {
 func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
 	grouped := map[string]*accountStatAccumulator{}
 	for _, stat := range stats {
-		id := accountGroupKey(stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.Source, stat.AuthIndex)
+		identity := monitoringAccountIdentity{
+			Provider:          stat.AuthProviderSnapshot,
+			AccountSnapshot:   stat.AccountSnapshot,
+			AuthLabelSnapshot: stat.AuthLabelSnapshot,
+			Source:            stat.Source,
+			AuthIndex:         stat.AuthIndex,
+			SourceHash:        stat.SourceHash,
+		}
+		id := identity.key()
 		entry := grouped[id]
 		if entry == nil {
 			entry = &accountStatAccumulator{
@@ -2949,7 +3091,7 @@ func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.M
 					ID:                   id,
 					AccountSnapshot:      stat.AccountSnapshot,
 					AuthLabelSnapshot:    stat.AuthLabelSnapshot,
-					AuthProviderSnapshot: stat.AuthProviderSnapshot,
+					AuthProviderSnapshot: identity.provider(),
 				},
 				authIndices:  map[string]struct{}{},
 				sources:      map[string]struct{}{},
@@ -3032,6 +3174,7 @@ func buildCredentialStats(stats []store.CredentialModelStat, prices map[string]s
 					AccountSnapshot:       stat.AccountSnapshot,
 					AuthLabelSnapshot:     stat.AuthLabelSnapshot,
 					AuthProviderSnapshot:  stat.AuthProviderSnapshot,
+					AuthAccountIDSnapshot: stat.AuthAccountIDSnapshot,
 					AuthProjectIDSnapshot: stat.AuthProjectIDSnapshot,
 				},
 				models: map[string]*AccountModelStatRow{},
@@ -3119,6 +3262,7 @@ func buildCredentialTimeline(points []store.CredentialTimelinePoint, granularity
 					AccountSnapshot:       point.AccountSnapshot,
 					AuthLabelSnapshot:     point.AuthLabelSnapshot,
 					AuthProviderSnapshot:  point.AuthProviderSnapshot,
+					AuthAccountIDSnapshot: point.AuthAccountIDSnapshot,
 					AuthProjectIDSnapshot: point.AuthProjectIDSnapshot,
 					BucketMS:              point.BucketMS,
 					BucketLabel:           timelineLabel(point.BucketMS, granularity, location),
@@ -3318,22 +3462,61 @@ func fillChannelShareSnapshots(row *ChannelShareRow, stat store.ChannelModelStat
 	if row.AuthProviderSnapshot == "" {
 		row.AuthProviderSnapshot = stat.AuthProviderSnapshot
 	}
+	if row.AuthAccountIDSnapshot == "" {
+		row.AuthAccountIDSnapshot = stat.AuthAccountIDSnapshot
+	}
 }
 
-func accountGroupKey(accountSnapshot, authLabelSnapshot, source, authIndex string) string {
-	if strings.TrimSpace(accountSnapshot) != "" {
-		return accountSnapshot
+type monitoringAccountIdentity struct {
+	Provider          string
+	AccountSnapshot   string
+	AuthLabelSnapshot string
+	Source            string
+	AuthIndex         string
+	SourceHash        string
+}
+
+// normalizeMonitoringProvider applies the minimal normalization used by the
+// monitoring account identity (trim, lowercase). It deliberately does NOT
+// replace '_' with '-' or fold provider aliases such as x-ai/grok -> xai,
+// matching the backend provider filter which only lowercases provider values.
+func normalizeMonitoringProvider(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func (identity monitoringAccountIdentity) provider() string {
+	return normalizeMonitoringProvider(identity.Provider)
+}
+
+func (identity monitoringAccountIdentity) key() string {
+	kind := ""
+	value := ""
+	for _, candidate := range []struct {
+		kind  string
+		value string
+	}{
+		{kind: "account", value: identity.AccountSnapshot},
+		{kind: "label", value: identity.AuthLabelSnapshot},
+		{kind: "source", value: identity.Source},
+		{kind: "auth", value: identity.AuthIndex},
+		{kind: "source-hash", value: identity.SourceHash},
+	} {
+		if trimmed := strings.TrimSpace(candidate.value); trimmed != "" {
+			kind = candidate.kind
+			value = trimmed
+			break
+		}
 	}
-	if strings.TrimSpace(authLabelSnapshot) != "" {
-		return authLabelSnapshot
+	if kind == "" {
+		return "-"
 	}
-	if strings.TrimSpace(source) != "" {
-		return source
-	}
-	if strings.TrimSpace(authIndex) != "" {
-		return authIndex
-	}
-	return "-"
+	return strings.Join([]string{
+		"monitoring-account",
+		"1",
+		kind,
+		strings.ToUpper(hex.EncodeToString([]byte(identity.provider()))),
+		strings.ToUpper(hex.EncodeToString([]byte(value))),
+	}, ":")
 }
 
 func apiKeyGroupKey(apiKeyHash, sourceHash, authIndex, source, provider string) string {
@@ -3466,6 +3649,9 @@ func fillCredentialTimelineSnapshots(row *CredentialTimelinePoint, point store.C
 	}
 	if row.AuthProviderSnapshot == "" {
 		row.AuthProviderSnapshot = point.AuthProviderSnapshot
+	}
+	if row.AuthAccountIDSnapshot == "" {
+		row.AuthAccountIDSnapshot = point.AuthAccountIDSnapshot
 	}
 	if row.AuthProjectIDSnapshot == "" {
 		row.AuthProjectIDSnapshot = point.AuthProjectIDSnapshot
@@ -3703,6 +3889,7 @@ func buildRecentFailures(failures []store.RecentFailure) []RecentFailure {
 			AccountSnapshot:        failure.AccountSnapshot,
 			AuthLabelSnapshot:      failure.AuthLabelSnapshot,
 			AuthProviderSnapshot:   failure.AuthProviderSnapshot,
+			AuthAccountIDSnapshot:  failure.AuthAccountIDSnapshot,
 			AuthProjectIDSnapshot:  failure.AuthProjectIDSnapshot,
 			Endpoint:               failure.Endpoint,
 			DurationMS:             nullableInt(failure.LatencyMS.Valid, failure.LatencyMS.Int64),
@@ -3745,6 +3932,7 @@ func buildEvents(page store.EventsPage, totalCount int64) *EventsResponse {
 			AuthLabelSnapshot:      item.AuthLabelSnapshot,
 			AuthFileSnapshot:       item.AuthFileSnapshot,
 			AuthProviderSnapshot:   item.AuthProviderSnapshot,
+			AuthAccountIDSnapshot:  item.AuthAccountIDSnapshot,
 			AuthProjectIDSnapshot:  item.AuthProjectIDSnapshot,
 			ReasoningEffort:        item.ReasoningEffort,
 			ServiceTier:            item.ServiceTier,
@@ -3779,11 +3967,16 @@ func buildHeaderSnapshots(items []store.HeaderSnapshot) []HeaderSnapshot {
 		result = append(result, HeaderSnapshot{
 			EventHash:              item.EventHash,
 			TimestampMS:            item.TimestampMS,
+			Model:                  item.Model,
+			AnalyticsModel:         item.AnalyticsModel,
+			RequestedModel:         item.RequestedModel,
+			ResolvedModel:          item.ResolvedModel,
 			AuthFileSnapshot:       item.AuthFileSnapshot,
 			AuthIndex:              item.AuthIndex,
 			AccountSnapshot:        item.AccountSnapshot,
 			AuthLabelSnapshot:      item.AuthLabelSnapshot,
 			AuthProviderSnapshot:   item.AuthProviderSnapshot,
+			AuthAccountIDSnapshot:  item.AuthAccountIDSnapshot,
 			AuthProjectIDSnapshot:  item.AuthProjectIDSnapshot,
 			Source:                 item.Source,
 			SourceHash:             item.SourceHash,
@@ -3813,19 +4006,69 @@ func accountHistoryTargetKey(target AccountHistoryTarget) (string, bool) {
 	if !AccountHistoryTargetHasRequiredProvider(target) {
 		return "", false
 	}
-	if key, valid := usageidentity.AccountKey(usageidentity.Fields{
+	fields := usageidentity.Fields{
 		AuthFileSnapshot:      target.AuthFileSnapshot,
 		AuthIndex:             target.AuthIndex,
 		AuthProviderSnapshot:  target.AuthProviderSnapshot,
+		AuthAccountIDSnapshot: target.AuthAccountIDSnapshot,
 		AuthProjectIDSnapshot: target.AuthProjectIDSnapshot,
 		AccountSnapshot:       target.AccountSnapshot,
 		AuthLabelSnapshot:     target.AuthLabelSnapshot,
 		Source:                target.Source,
-	}); valid {
+	}
+	if key, valid := usageidentity.AccountKey(fields); valid {
 		return key, true
 	}
+	// The server owns the account-history identity. In particular, a Codex
+	// Workspace-only target must not smuggle the pre-member `codex-account` key
+	// back in through the request body when its canonical identity is invalid.
+	if strings.EqualFold(strings.TrimSpace(target.AuthProviderSnapshot), "codex") {
+		return "", false
+	}
 	key := strings.TrimSpace(target.AccountKey)
+	// A caller cannot establish the owner of the pre-member Codex bucket from
+	// an opaque account_key alone. Reject it even when the rest of the target
+	// omits provider/member fields; otherwise the old Workspace-level bucket
+	// remains an injectable cross-member alias.
+	if isLegacyCodexWorkspaceAccountKey(key) {
+		return "", false
+	}
 	return key, key != ""
+}
+
+func isLegacyCodexWorkspaceAccountKey(key string) bool {
+	key = strings.TrimSpace(key)
+	return strings.HasPrefix(key, "usage-account-history:") && strings.Contains(key, ":codex-account:")
+}
+
+func accountHistoryIdentityFields(target AccountHistoryTarget) usageidentity.Fields {
+	return usageidentity.Fields{
+		AuthFileSnapshot:      target.AuthFileSnapshot,
+		AuthIndex:             target.AuthIndex,
+		AuthProviderSnapshot:  target.AuthProviderSnapshot,
+		AuthAccountIDSnapshot: target.AuthAccountIDSnapshot,
+		AuthProjectIDSnapshot: target.AuthProjectIDSnapshot,
+		AccountSnapshot:       target.AccountSnapshot,
+		AuthLabelSnapshot:     target.AuthLabelSnapshot,
+		Source:                target.Source,
+	}
+}
+
+func uniqueAccountHistoryKeys(keys []string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, key)
+	}
+	return result
 }
 
 func latestAccountRequestTargetValid(target AccountHistoryTarget) bool {
@@ -3939,6 +4182,33 @@ func buildPricingAccountHistoryTotals(rows []store.UsagePricingAccountRow, price
 	return totals
 }
 
+func mergeAliasedAccountHistoryTotals(totals map[string]*accountHistoryTotal, aliases map[string]string) {
+	for legacyKey, primaryKey := range aliases {
+		legacy := totals[legacyKey]
+		if legacy == nil {
+			continue
+		}
+		primary := totals[primaryKey]
+		if primary == nil {
+			totals[primaryKey] = legacy
+			delete(totals, legacyKey)
+			continue
+		}
+		primary.requests += legacy.requests
+		primary.successCalls += legacy.successCalls
+		primary.failureCalls += legacy.failureCalls
+		primary.totalTokens += legacy.totalTokens
+		primary.cost += legacy.cost
+		if primary.firstSeenMS == 0 || (legacy.firstSeenMS > 0 && legacy.firstSeenMS < primary.firstSeenMS) {
+			primary.firstSeenMS = legacy.firstSeenMS
+		}
+		if legacy.lastSeenMS > primary.lastSeenMS {
+			primary.lastSeenMS = legacy.lastSeenMS
+		}
+		delete(totals, legacyKey)
+	}
+}
+
 func accountWindowUsageTargetKey(target AccountWindowUsageTarget) (string, bool) {
 	if !AccountWindowUsageTargetHasCredentialIdentity(target) {
 		return "", false
@@ -3947,6 +4217,7 @@ func accountWindowUsageTargetKey(target AccountWindowUsageTarget) (string, bool)
 		AuthFileSnapshot:      target.AuthFileSnapshot,
 		AuthIndex:             target.AuthIndex,
 		AuthProviderSnapshot:  target.AuthProviderSnapshot,
+		AuthAccountIDSnapshot: target.AuthAccountIDSnapshot,
 		AuthProjectIDSnapshot: target.AuthProjectIDSnapshot,
 		AccountSnapshot:       target.AccountSnapshot,
 		AuthLabelSnapshot:     target.AuthLabelSnapshot,
@@ -3987,6 +4258,7 @@ func AccountWindowUsageTargetHasCredentialIdentity(target AccountWindowUsageTarg
 		return false
 	}
 	return strings.TrimSpace(target.AuthIndex) != "" ||
+		strings.TrimSpace(target.AuthAccountIDSnapshot) != "" ||
 		strings.TrimSpace(target.AuthProjectIDSnapshot) != "" ||
 		account != "" || label != ""
 }
@@ -4027,10 +4299,18 @@ func normalizeAccountWindowPeriod(value string) string {
 	}
 }
 
-func normalizeAccountWindowModelScope(scope AccountWindowModelScope) AccountWindowModelScope {
+func normalizeAccountWindowModelScope(
+	scope AccountWindowModelScope,
+	provided bool,
+	completeSet bool,
+) AccountWindowModelScope {
 	scope.Kind = strings.ToLower(strings.TrimSpace(scope.Kind))
 	if scope.Kind == "" {
+		if provided {
+			return AccountWindowModelScope{}
+		}
 		scope.Kind = "all"
+		scope.Complete = true
 	}
 	switch scope.Kind {
 	case "all", "family", "models", "product", "feature":
@@ -4058,6 +4338,12 @@ func normalizeAccountWindowModelScope(scope AccountWindowModelScope) AccountWind
 	if (scope.Kind == "family" || scope.Kind == "product" || scope.Kind == "feature") && scope.Key == "" && len(scope.Models) == 0 {
 		return AccountWindowModelScope{}
 	}
+	if !completeSet {
+		switch scope.Kind {
+		case "all", "family", "models":
+			scope.Complete = true
+		}
+	}
 	return scope
 }
 
@@ -4084,23 +4370,24 @@ func classifyQuotaModelFamily(modelName string) string {
 }
 
 func accountWindowStatMatchesScope(row store.AccountWindowModelStat, scope AccountWindowModelScope) (matched bool, unmatched bool) {
+	if !scope.Complete {
+		return false, false
+	}
 	if scope.Kind == "all" {
 		return true, false
 	}
-	models := map[string]struct{}{}
-	for _, modelName := range scope.Models {
-		models[modelName] = struct{}{}
+	if codexquota.IsMainScope(scope.Kind, scope.Key) {
+		return codexquota.MatchMainUsage(row.Model, row.BillingModel)
+	}
+	if len(scope.Models) > 0 {
+		return codexquota.MatchModelScope(row.Model, row.BillingModel, scope.Models)
 	}
 	rowModels := []string{normalizeQuotaModelName(row.Model), normalizeQuotaModelName(row.BillingModel)}
-	if len(models) > 0 {
-		for _, modelName := range rowModels {
-			if _, ok := models[modelName]; ok {
-				return true, false
-			}
-		}
-		if scope.Kind != "family" {
-			return false, false
-		}
+	if scope.Kind != "family" {
+		return false, false
+	}
+	if len(rowModels) == 2 && rowModels[1] != "" {
+		rowModels = rowModels[1:]
 	}
 	if scope.Kind == "family" {
 		families := map[string]struct{}{}
@@ -4113,7 +4400,7 @@ func accountWindowStatMatchesScope(row store.AccountWindowModelStat, scope Accou
 		_, unknown := families["unknown"]
 		return false, unknown
 	}
-	return false, len(models) == 0
+	return false, true
 }
 
 func buildScopedAccountWindowUsageTotals(
@@ -4125,7 +4412,7 @@ func buildScopedAccountWindowUsageTotals(
 	results := make(map[int]accountWindowScopeResult, len(windows))
 	for index, window := range windows {
 		status := "complete"
-		if window.ModelScope.Kind != "all" {
+		if !window.ModelScope.Complete {
 			status = "unmatched"
 		}
 		results[index] = accountWindowScopeResult{status: status}
@@ -4141,9 +4428,6 @@ func buildScopedAccountWindowUsageTotals(
 		}
 		if matched {
 			filtered = append(filtered, row)
-			if result.status == "unmatched" {
-				result.status = "complete"
-			}
 		}
 		results[row.RequestIndex] = result
 	}

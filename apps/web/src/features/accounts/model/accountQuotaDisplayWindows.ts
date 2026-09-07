@@ -17,6 +17,10 @@ import {
   parseQuotaResetLabelMs,
   resolveAbsoluteQuotaReset,
 } from '@/utils/quota/formatters';
+import {
+  inferCodexQuotaScopeFromProviderWindowId,
+  isCodexMainQuotaModelScope,
+} from '@/utils/quota/codexQuota';
 import type { AccountRow } from './accountRows';
 import type { AccountQuotaStores } from './accountQuotaSummary';
 
@@ -57,10 +61,12 @@ export interface AccountQuotaDisplayWindow {
   source?: AccountQuotaWindowSource;
   observationSource?: QuotaObservationSource;
   observedAtMs?: number | null;
+  quotaProgressObservedAtMs?: number | null;
   windowMode?: QuotaWindowMode;
   cycleStartMs?: number | null;
   cycleEndMs?: number | null;
   modelScope?: QuotaModelScope;
+  providerWindowAliases?: string[];
 }
 
 export type TranslateQuotaWindowLabel = (
@@ -97,6 +103,64 @@ export const remainingPercentFromUsed = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) ? clampDisplayPercent(100 - value) : null;
 
 export { parseQuotaResetLabelMs };
+
+export const isIntervalAccountQuotaWindow = (
+  window: Pick<AccountQuotaDisplayWindow, 'windowMode'>
+): boolean =>
+  window.windowMode === 'fixed' ||
+  window.windowMode === 'calendar' ||
+  window.windowMode === 'rolling';
+
+export const isModelScopedAccountQuotaWindow = (
+  window: Pick<AccountQuotaDisplayWindow, 'modelScope' | 'source'>
+): boolean =>
+  window.modelScope?.complete === false ||
+  (window.modelScope?.kind !== undefined &&
+    window.modelScope.kind !== 'all' &&
+    !(window.source === 'codex' && isCodexMainQuotaModelScope(window.modelScope)));
+
+export const isStandardAccountQuotaListWindow = (
+  window: Pick<AccountQuotaDisplayWindow, 'kind' | 'windowMode' | 'modelScope' | 'source'>
+): boolean =>
+  isIntervalAccountQuotaWindow(window) &&
+  !isModelScopedAccountQuotaWindow(window) &&
+  window.kind !== 'billing' &&
+  window.kind !== 'payg' &&
+  window.kind !== 'product' &&
+  window.kind !== 'summary';
+
+export type AccountQuotaSemanticGroup = 'standard' | 'model' | 'other';
+
+export const getAccountQuotaSemanticGroup = (
+  window: Pick<AccountQuotaDisplayWindow, 'kind' | 'windowMode' | 'modelScope' | 'source'>
+): AccountQuotaSemanticGroup => {
+  const { kind, windowMode } = window;
+
+  if (
+    windowMode === 'non_window' ||
+    kind === 'billing' ||
+    kind === 'payg' ||
+    kind === 'product' ||
+    kind === 'summary'
+  ) {
+    return 'other';
+  }
+
+  if (
+    kind === 'five_hour' ||
+    kind === 'daily' ||
+    kind === 'weekly' ||
+    kind === 'monthly'
+  ) {
+    return isModelScopedAccountQuotaWindow(window) ? 'model' : 'standard';
+  }
+
+  if ((kind === undefined || kind === 'unknown') && isIntervalAccountQuotaWindow(window)) {
+    return isModelScopedAccountQuotaWindow(window) ? 'model' : 'standard';
+  }
+
+  return 'other';
+};
 
 const normalizeText = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -279,6 +343,28 @@ export const buildQuotaWindowRange = (
   return { resetAtMs, fromMs, toMs };
 };
 
+const resolveQuotaProgressObservedAtMs = ({
+  usedPercent,
+  quotaProgressObservedAtMs,
+  observedAtMs,
+}: {
+  usedPercent: number | null;
+  quotaProgressObservedAtMs: number | null | undefined;
+  observedAtMs: number | null | undefined;
+}): number | null => {
+  if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent)) return null;
+  if (quotaProgressObservedAtMs !== undefined) {
+    return typeof quotaProgressObservedAtMs === 'number' &&
+      Number.isFinite(quotaProgressObservedAtMs) &&
+      quotaProgressObservedAtMs > 0
+      ? quotaProgressObservedAtMs
+      : null;
+  }
+  return typeof observedAtMs === 'number' && Number.isFinite(observedAtMs) && observedAtMs > 0
+    ? observedAtMs
+    : null;
+};
+
 export const buildAccountQuotaDisplayWindow = ({
   key,
   label,
@@ -295,10 +381,12 @@ export const buildAccountQuotaDisplayWindow = ({
   source,
   observationSource = 'api_query',
   observedAtMs = null,
+  quotaProgressObservedAtMs,
   windowMode,
   cycleStartMs,
   cycleEndMs,
   modelScope = { kind: 'all', complete: true },
+  providerWindowAliases,
   nowMs,
 }: {
   key: string;
@@ -316,10 +404,12 @@ export const buildAccountQuotaDisplayWindow = ({
   source?: AccountQuotaWindowSource;
   observationSource?: QuotaObservationSource;
   observedAtMs?: number | null;
+  quotaProgressObservedAtMs?: number | null;
   windowMode?: QuotaWindowMode;
   cycleStartMs?: number | null;
   cycleEndMs?: number | null;
   modelScope?: QuotaModelScope;
+  providerWindowAliases?: string[];
   nowMs?: number;
 }): AccountQuotaDisplayWindow => {
   const normalizedResetLabel = resetLabel || '-';
@@ -364,10 +454,16 @@ export const buildAccountQuotaDisplayWindow = ({
     source,
     observationSource,
     observedAtMs,
+    quotaProgressObservedAtMs: resolveQuotaProgressObservedAtMs({
+      usedPercent,
+      quotaProgressObservedAtMs,
+      observedAtMs,
+    }),
     windowMode: resolvedMode,
     cycleStartMs: cycleStartMs ?? range.fromMs,
     cycleEndMs: cycleEndMs ?? range.resetAtMs,
     modelScope,
+    providerWindowAliases,
     ...range,
   };
 };
@@ -390,6 +486,8 @@ const buildCodexQuotaDisplayWindows = (
       resetAtMs: window.resetAtMs,
       resetAccuracy: window.resetAccuracy,
       limitWindowSeconds: window.limitWindowSeconds ?? null,
+      modelScope: window.modelScope ?? inferCodexQuotaScopeFromProviderWindowId(window.id),
+      providerWindowAliases: window.providerWindowAliases,
       source: 'codex',
       observationSource:
         window.observationSource ??
@@ -397,6 +495,7 @@ const buildCodexQuotaDisplayWindows = (
           ? 'response_header'
           : 'api_query'),
       observedAtMs: window.observedAtMs ?? quota.observedAtMs ?? quota.fetchedAtMs ?? null,
+      quotaProgressObservedAtMs: window.quotaProgressObservedAtMs,
       nowMs: options.nowMs,
     })
   );
@@ -432,12 +531,13 @@ const buildClaudeQuotaDisplayWindows = (
       buildAccountQuotaDisplayWindow({
         key: 'extra-usage',
         label: options.t('claude_quota.extra_usage_label'),
-        kind: 'monthly',
+        kind: 'billing',
         remainingPercent: remainingPercentFromUsed(usedPercent),
         usedPercent,
         resetLabel: '-',
         amountLabel: formatClaudeExtraUsageAmount(quota.extraUsage),
         source: 'claude',
+        observedAtMs: quota.fetchedAtMs ?? null,
         nowMs: options.nowMs,
       })
     );
@@ -590,10 +690,7 @@ const buildXaiQuotaDisplayWindows = (
       ? clampDisplayPercent(billing.usedPercent)
       : null;
 
-  if (
-    monthlyUsedPercent !== null ||
-    billing.monthlyLimitCents !== null
-  ) {
+  if (monthlyUsedPercent !== null || billing.monthlyLimitCents !== null) {
     windows.push(
       buildAccountQuotaDisplayWindow({
         key: 'billing',

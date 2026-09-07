@@ -126,6 +126,61 @@ describe('QuotaWindowCard', () => {
     expect(previousText).not.toContain('accounts.detail_used');
   });
 
+  it('treats the Codex main family scope as an account-wide standard quota', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'family', key: 'codex_main', complete: true },
+      })
+    );
+
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'standard' })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ 'data-quota-standard-comparison': 'true' })).toHaveLength(
+      1
+    );
+    expect(renderer.root.findAllByProps({ 'data-quota-model-comparison': 'true' })).toHaveLength(0);
+  });
+
+  it('infers other mode for a fixed billing interval', () => {
+    const renderer = renderCard(
+      makeWindow({
+        kind: 'billing',
+        windowMode: 'fixed',
+        limitWindowSeconds: 30 * 24 * 60 * 60,
+        cycleStartMs: 1_000,
+        cycleEndMs: 30 * 24 * 60 * 60 * 1_000,
+      })
+    );
+
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'other' })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ 'data-quota-standard-comparison': 'true' })).toHaveLength(
+      0
+    );
+  });
+
+  it('renders standard card with incomplete boundary notice for unknown boundary standard window', () => {
+    const renderer = renderCard(
+      makeWindow({
+        kind: 'weekly',
+        windowMode: 'unknown',
+        modelScope: { kind: 'all', complete: true },
+        limitWindowSeconds: null,
+        fromMs: null,
+        toMs: null,
+        cycleStartMs: null,
+        cycleEndMs: null,
+        usage: undefined,
+        currentUsage: undefined,
+        previousUsage: undefined,
+        forecast: undefined,
+      })
+    );
+
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'standard' })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'other' })).toHaveLength(0);
+    const cardText = readText(renderer.root);
+    expect(cardText).toContain('accounts.detail_window_boundary_incomplete');
+  });
+
   it('uses semantic colors for the current usage metric icons', () => {
     const renderer = renderCard(makeWindow());
     const current = renderer.root.findByProps({ 'data-quota-usage-period': 'current' });
@@ -157,6 +212,20 @@ describe('QuotaWindowCard', () => {
     ]);
   });
 
+  it('uses the shared compact formatter for large token counts', () => {
+    const renderer = renderCard(
+      makeWindow({
+        currentUsage: usage({ totalTokens: 1_000_190_000 }),
+      })
+    );
+    const currentText = readText(
+      renderer.root.findByProps({ 'data-quota-usage-period': 'current' })
+    );
+
+    expect(currentText).toContain('1.0B');
+    expect(currentText).not.toContain('1000.2M');
+  });
+
   it('uses complete fixed-cycle boundaries instead of the current data cutoff', () => {
     const cycleStartMs = Date.parse('2026-08-05T10:00:00Z');
     const cycleEndMs = Date.parse('2026-08-05T15:00:00Z');
@@ -176,6 +245,58 @@ describe('QuotaWindowCard', () => {
       expect(currentText).toContain(formatDisplayRange(cycleStartMs, cycleEndMs));
       expect(currentText).not.toContain(formatDisplayRange(cycleStartMs, dataEndMs));
     }
+  });
+
+  it('does not present a provisional current candidate as a confirmed range', () => {
+    const currentStartMs = Date.parse('2026-08-28T17:42:00Z');
+    const currentEndMs = Date.parse('2026-08-28T22:42:00Z');
+    const previousStartMs = Date.parse('2026-08-28T07:23:00Z');
+    const previousEndMs = Date.parse('2026-08-28T12:23:00Z');
+    const window = makeWindow({
+      boundaryAccuracy: 'unknown',
+      cycleStartMs: currentStartMs,
+      cycleEndMs: currentEndMs,
+      usage: null,
+      currentUsage: null,
+      previousUsage: usage({ fromMs: previousStartMs, toMs: previousEndMs }),
+      forecast: null,
+      currentCycle: {
+        id: 2,
+        activationId: 1,
+        state: 'provisional',
+        scheduledStartMs: currentStartMs,
+        scheduledEndMs: currentEndMs,
+        actualStartMs: currentStartMs,
+        actualEndMs: null,
+        durationSeconds: 5 * 60 * 60,
+        boundaryAccuracy: 'unknown',
+        endReason: '',
+        parentCycleId: null,
+        forecastEligible: false,
+      },
+      previousCycle: {
+        id: 1,
+        activationId: 1,
+        state: 'closed',
+        scheduledStartMs: previousStartMs,
+        scheduledEndMs: previousEndMs,
+        actualStartMs: previousStartMs,
+        actualEndMs: previousEndMs,
+        durationSeconds: 5 * 60 * 60,
+        boundaryAccuracy: 'exact',
+        endReason: 'scheduled',
+        parentCycleId: null,
+        forecastEligible: false,
+      },
+    });
+
+    const renderer = renderCard(window);
+    const current = renderer.root.findByProps({ 'data-quota-usage-period': 'current' });
+    const previous = renderer.root.findByProps({ 'data-quota-usage-period': 'previous' });
+
+    expect(readText(current)).toContain('accounts.detail_current_window_boundary_unconfirmed');
+    expect(readText(current)).not.toContain(formatDisplayRange(currentStartMs, currentEndMs));
+    expect(readText(previous)).toContain(formatDisplayRange(previousStartMs, previousEndMs));
   });
 
   it('shows scheduled previous-cycle bounds while retaining actual usage bounds', () => {
@@ -357,6 +478,34 @@ describe('QuotaWindowCard', () => {
     );
   });
 
+  it('shows an incomplete boundary for model quota without model statistics warning or comparisons', () => {
+    const renderer = renderCard(
+      makeWindow({
+        kind: 'weekly',
+        windowMode: 'unknown',
+        modelScope: { kind: 'models', models: ['gpt-5'], complete: true },
+        limitWindowSeconds: null,
+        fromMs: null,
+        toMs: null,
+        cycleStartMs: null,
+        cycleEndMs: null,
+        usage: usage(),
+        currentUsage: usage(),
+        previousUsage: usage({ fromMs: -604_799_000, toMs: 1_000 }),
+        forecast: { requests: 200, tokens: 2_000_000, cost: 200, basis: 'quota' },
+      }),
+      'model'
+    );
+
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'model' })).toHaveLength(1);
+    expect(readText(renderer.root)).toContain('accounts.detail_window_boundary_incomplete');
+    expect(readText(renderer.root)).not.toContain('accounts.detail_model_window_stats_unavailable');
+    expect(readText(renderer.root)).not.toContain(
+      'accounts.detail_model_window_stats_unavailable_desc'
+    );
+    expect(renderer.root.findAllByProps({ 'data-quota-model-comparison': 'true' })).toHaveLength(0);
+  });
+
   it('keeps model comparisons when only the previous window has actual usage', () => {
     const renderer = renderCard(
       makeWindow({
@@ -417,13 +566,29 @@ describe('QuotaWindowCard', () => {
   it('explains when provider model scope is not queryable', () => {
     const renderer = renderCard(
       makeWindow({
-        modelScope: { kind: 'models', models: [], complete: false },
+        modelScope: { kind: 'feature', key: 'future_feature', complete: false },
         usage: null,
         currentUsage: null,
         previousUsage: null,
         forecast: null,
       })
     );
+    expect(readText(renderer.root)).toContain('accounts.detail_scope_unknown');
+  });
+
+  it('fails closed for an incomplete all scope instead of rendering account-wide comparison stats', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'all', complete: false },
+        usage: usage({ totalRequests: 250, totalTokens: 29_000_000, totalCost: 21.23 }),
+        currentUsage: usage({ totalRequests: 250, totalTokens: 29_000_000, totalCost: 21.23 }),
+        previousUsage: usage({ totalRequests: 250, totalTokens: 29_000_000, totalCost: 21.23 }),
+        forecast: { requests: 250, tokens: 29_000_000, cost: 21.23, basis: 'previous' },
+      })
+    );
+
+    expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'model' })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ 'data-quota-model-comparison': 'true' })).toHaveLength(0);
     expect(readText(renderer.root)).toContain('accounts.detail_scope_unknown');
   });
 
@@ -440,7 +605,7 @@ describe('QuotaWindowCard', () => {
     expect(renderer.root.findByProps({ 'data-quota-standard-comparison': 'true' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ 'data-quota-extra-toggle': 'true' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ 'data-quota-source-warnings': 'true' })).toHaveLength(0);
-    expect(readText(renderer.root)).toContain('accounts.detail_quota_provider_sync_time');
+    expect(readText(renderer.root)).toContain('accounts.detail_quota_latest_observation_time');
   });
 
   it('hides interval usage and folds amount-only windows into the compact shape', () => {
@@ -473,6 +638,9 @@ describe('QuotaWindowCard', () => {
     const warnings = renderer.root.findByProps({ 'data-quota-source-warnings': 'true' });
     const text = readText(warnings);
     expect(text).toContain('accounts.detail_quota_snapshot_stale');
-    expect(text).toContain('accounts.detail_scope_unknown');
+    expect(text).not.toContain('accounts.detail_scope_unknown');
+    expect(readText(renderer.root.findByProps({ 'data-quota-model-warning': 'true' }))).toContain(
+      'accounts.detail_scope_unknown'
+    );
   });
 });

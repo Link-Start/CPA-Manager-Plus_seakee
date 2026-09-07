@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CODEX_CODE_REVIEW_SCOPE_KEY,
+  CODEX_MAIN_QUOTA_SCOPE_KEY,
+  CODEX_SPARK_MODEL_ID,
   classifyCodexRateLimitWindows,
   deriveCodexRateLimitUsedPercent,
   isCodexRateLimitReached,
   buildCodexQuotaWindowInfos,
+  canonicalizeCodexProviderWindowId,
+  inferCodexQuotaScopeFromProviderWindowId,
+  isCodexLegacyAllScopeReplacement,
+  isCodexMainQuotaWindow,
+  normalizeCodexModelId,
+  resolveCodexUsageQuotaScope,
+  shouldClearInheritedCodexQuotaProgress,
 } from './codexQuota';
-import type { CodexQuotaWindowInfo } from './codexQuota';
+import type { CodexQuotaCycleEvidence, CodexQuotaWindowInfo } from './codexQuota';
 
 describe('buildCodexQuotaWindowInfos', () => {
   it('distinguishes exact absolute resets from relative estimates anchored to observation time', () => {
@@ -292,6 +302,50 @@ describe('buildCodexQuotaWindowInfos', () => {
     ]);
   });
 
+  it('builds a Team weekly bonus window with its structural monthly cadence suffix', () => {
+    const windows = buildCodexQuotaWindowInfos({
+      plan_type: 'team',
+      additional_rate_limits: [
+        {
+          limit_name: 'Weekly Bonus',
+          rate_limit: {
+            secondary_window: { used_percent: 80 },
+          },
+        },
+      ],
+    });
+
+    expect(windows).toMatchObject([
+      {
+        id: 'weekly-bonus-monthly-0',
+        usedPercent: 80,
+        limitWindowSeconds: null,
+      },
+    ]);
+  });
+
+  it('builds a non-Team five hour bonus window with its structural weekly cadence suffix', () => {
+    const windows = buildCodexQuotaWindowInfos({
+      plan_type: 'plus',
+      additional_rate_limits: [
+        {
+          limit_name: 'Five Hour Bonus',
+          rate_limit: {
+            secondary_window: { used_percent: 80 },
+          },
+        },
+      ],
+    });
+
+    expect(windows).toMatchObject([
+      {
+        id: 'five-hour-bonus-weekly-0',
+        usedPercent: 80,
+        limitWindowSeconds: null,
+      },
+    ]);
+  });
+
   it('normalizes additional rate limit labels into stable ids and params', () => {
     const windows = buildCodexQuotaWindowInfos({
       additional_rate_limits: [
@@ -327,6 +381,204 @@ describe('buildCodexQuotaWindowInfos', () => {
         usedPercent: 55,
       },
     ]);
+  });
+
+  it('assigns account-wide, model, and fail-closed feature scopes', () => {
+    const windows = buildCodexQuotaWindowInfos({
+      rate_limit: {
+        secondary_window: { used_percent: 36, limit_window_seconds: 604_800 },
+      },
+      code_review_rate_limit: {
+        secondary_window: { used_percent: 20, limit_window_seconds: 604_800 },
+      },
+      additional_rate_limits: [
+        {
+          limit_name: 'Spark',
+          metered_feature: 'codex_spark',
+          rate_limit: {
+            secondary_window: { used_percent: 0, limit_window_seconds: 604_800 },
+          },
+        },
+        {
+          limit_name: 'Future Feature',
+          metered_feature: 'future_feature',
+          rate_limit: {
+            secondary_window: { used_percent: 10, limit_window_seconds: 604_800 },
+          },
+        },
+      ],
+    });
+    const byId = new Map(windows.map((window) => [window.id, window]));
+
+    expect(byId.get('weekly')?.modelScope).toEqual({
+      kind: 'family',
+      key: CODEX_MAIN_QUOTA_SCOPE_KEY,
+      complete: true,
+    });
+    expect(byId.get('weekly')?.providerWindowAliases).toContain('secondary');
+    expect(byId.get('spark-weekly-0')?.modelScope).toEqual({
+      kind: 'models',
+      models: [CODEX_SPARK_MODEL_ID],
+      complete: true,
+    });
+    expect(byId.get('spark-weekly-0')?.providerWindowAliases).toContain('codex-spark-weekly-0');
+    expect(byId.get('code-review-weekly')?.modelScope).toEqual({
+      kind: 'feature',
+      key: CODEX_CODE_REVIEW_SCOPE_KEY,
+      complete: false,
+    });
+    expect(byId.get('future-feature-weekly-0')?.modelScope).toEqual({
+      kind: 'feature',
+      key: 'future_feature',
+      complete: false,
+    });
+  });
+
+  it('keeps the legacy display-label id as a Spark snapshot alias', () => {
+    const [window] = buildCodexQuotaWindowInfos({
+      additional_rate_limits: [
+        {
+          limit_name: 'Fast coding',
+          metered_feature: 'codex_spark',
+          rate_limit: {
+            secondary_window: { used_percent: 0, limit_window_seconds: 604_800 },
+          },
+        },
+      ],
+    });
+
+    expect(window).toMatchObject({
+      id: 'spark-weekly-0',
+      providerWindowAliases: expect.arrayContaining(['fast-coding-weekly-0']),
+    });
+  });
+
+  it('emits the legacy primary alias for the Codex five-hour window', () => {
+    const [window] = buildCodexQuotaWindowInfos({
+      rate_limit: {
+        primary_window: { used_percent: 0, limit_window_seconds: 18_000 },
+      },
+    });
+
+    expect(window).toMatchObject({
+      id: 'five-hour',
+      providerWindowAliases: expect.arrayContaining(['primary']),
+    });
+  });
+
+  it('restores a legacy fast-coding window as Spark without rewriting its identity', () => {
+    expect(inferCodexQuotaScopeFromProviderWindowId('fast-coding-weekly-0')).toEqual({
+      kind: 'models',
+      models: [CODEX_SPARK_MODEL_ID],
+      complete: true,
+    });
+  });
+
+  it('canonicalizes legacy primary and secondary ids without confusing team monthly windows', () => {
+    expect(canonicalizeCodexProviderWindowId('primary')).toBe('five-hour');
+    expect(canonicalizeCodexProviderWindowId('secondary', 'weekly')).toBe('weekly');
+    expect(canonicalizeCodexProviderWindowId('secondary', 'monthly')).toBe('monthly');
+  });
+
+  it('replaces non-main legacy all scopes even when the replacement remains incomplete', () => {
+    expect(
+      isCodexLegacyAllScopeReplacement('future-feature-weekly-0', {
+        kind: 'all',
+        complete: false,
+      })
+    ).toBe(true);
+    expect(
+      isCodexLegacyAllScopeReplacement('future-feature-weekly-0', {
+        kind: 'all',
+        complete: true,
+      })
+    ).toBe(false);
+    expect(
+      isCodexLegacyAllScopeReplacement('weekly', {
+        kind: 'all',
+        complete: false,
+      })
+    ).toBe(false);
+  });
+
+  it('does not treat an explicitly incomplete main-shaped scope as account-wide', () => {
+    expect(
+      isCodexMainQuotaWindow({
+        id: 'weekly',
+        modelScope: { kind: 'all', complete: false },
+      })
+    ).toBe(false);
+  });
+
+  it('resolves direct and aliased Spark usage from the full model identity', () => {
+    expect(resolveCodexUsageQuotaScope({ model: CODEX_SPARK_MODEL_ID })).toMatchObject({
+      providerWindowIdPrefix: 'spark',
+      modelScope: { kind: 'models', models: [CODEX_SPARK_MODEL_ID], complete: true },
+    });
+    expect(
+      resolveCodexUsageQuotaScope({
+        model: 'my-spark',
+        analyticsModel: 'my-spark',
+        requestedModel: 'my-spark',
+        resolvedModel: CODEX_SPARK_MODEL_ID,
+      })
+    ).toMatchObject({
+      providerWindowIdPrefix: 'spark',
+      modelScope: { kind: 'models', models: [CODEX_SPARK_MODEL_ID], complete: true },
+    });
+    expect(
+      resolveCodexUsageQuotaScope({
+        model: 'my-codex',
+        requestedModel: 'my-codex',
+        resolvedModel: 'gpt-5.6-sol',
+      })
+    ).toEqual({
+      providerWindowIdPrefix: '',
+      modelScope: { kind: 'family', key: CODEX_MAIN_QUOTA_SCOPE_KEY, complete: true },
+    });
+    expect(
+      resolveCodexUsageQuotaScope({
+        model: CODEX_SPARK_MODEL_ID,
+        analyticsModel: CODEX_SPARK_MODEL_ID,
+        requestedModel: CODEX_SPARK_MODEL_ID,
+        resolvedModel: 'gpt-5.6-sol',
+      })
+    ).toEqual({
+      providerWindowIdPrefix: '',
+      modelScope: { kind: 'family', key: CODEX_MAIN_QUOTA_SCOPE_KEY, complete: true },
+    });
+    expect(resolveCodexUsageQuotaScope({}).modelScope).toEqual({
+      kind: 'feature',
+      key: 'request_scope_unknown',
+      complete: false,
+    });
+  });
+
+  it('uses the shared analytics model normalizer for scoped model identity', () => {
+    expect(normalizeCodexModelId(`${CODEX_SPARK_MODEL_ID}(+12)`)).toBe(CODEX_SPARK_MODEL_ID);
+    expect(normalizeCodexModelId('custom-model(9223372036854775808)')).toBe(
+      'custom-model(9223372036854775808)'
+    );
+  });
+
+  it('lets a stable provider feature override a conflicting Spark display label', () => {
+    const windows = buildCodexQuotaWindowInfos({
+      additional_rate_limits: [
+        {
+          limit_name: 'Spark',
+          metered_feature: 'future_feature',
+          rate_limit: {
+            secondary_window: { used_percent: 10, limit_window_seconds: 604_800 },
+          },
+        },
+      ],
+    });
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({
+      id: 'future-feature-weekly-0',
+      modelScope: { kind: 'feature', key: 'future_feature', complete: false },
+    });
   });
 
   it('keeps generic windows unique across main, code-review, and repeated additional families', () => {
@@ -426,6 +678,32 @@ describe('buildCodexQuotaWindowInfos', () => {
     expect(idsByUsage(reverse)).toEqual(idsByUsage(forward));
   });
 
+  it('keeps anonymous and otherwise ambiguous additional limits stable across reorder', () => {
+    const family = (usedPercent: number, seconds: number) => ({
+      rate_limit: {
+        primary_window: {
+          used_percent: usedPercent,
+          limit_window_seconds: seconds,
+        },
+      },
+    });
+    const forward = buildCodexQuotaWindowInfos({
+      additional_rate_limits: [family(30, 18_000), family(40, 18_000), family(50, 604_800)],
+    });
+    const reverse = buildCodexQuotaWindowInfos({
+      additional_rate_limits: [family(50, 604_800), family(40, 18_000), family(30, 18_000)],
+    });
+
+    const idsByUsage = (windows: CodexQuotaWindowInfo[]) =>
+      Object.fromEntries(windows.map((window) => [window.usedPercent, window.id]));
+    expect(idsByUsage(forward)).toEqual({
+      30: 'additional-p-18000-s-none-five-hour-0',
+      40: 'additional-p-18000-s-none-five-hour-1',
+      50: 'additional-p-604800-s-none-weekly-0',
+    });
+    expect(idsByUsage(reverse)).toEqual(idsByUsage(forward));
+  });
+
   it('shares rate-limit helpers used by Codex inspection', () => {
     const rateLimit = {
       allowed: true,
@@ -445,5 +723,235 @@ describe('buildCodexQuotaWindowInfos', () => {
     expect(classified.weeklyWindow?.used_percent).toBe(65);
     expect(deriveCodexRateLimitUsedPercent(rateLimit)).toBe(100);
     expect(isCodexRateLimitReached(rateLimit)).toBe(true);
+  });
+});
+
+describe('shouldClearInheritedCodexQuotaProgress', () => {
+  const base = (overrides: Partial<CodexQuotaCycleEvidence> = {}): CodexQuotaCycleEvidence => ({
+    providerWindowId: 'five-hour',
+    endMs: 1_000_000,
+    durationSeconds: 18_000,
+    boundaryAccuracy: 'exact',
+    ...overrides,
+  });
+
+  it('keeps the same boundary within the 60 second jitter', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base(),
+        base({ endMs: 1_030_000, boundaryAccuracy: 'estimated' })
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    ['five-hour next cycle', 18_000_000, 'five-hour'],
+    ['skipped fixed cycles', 36_000_000, 'five-hour'],
+    ['weekly next cycle', 604_800_000, 'weekly'],
+    ['skipped weekly cycles', 1_209_600_000, 'weekly'],
+  ])('%s clears inherited progress', (_label, deltaMs, providerWindowId) => {
+    const durationSeconds = providerWindowId === 'weekly' ? 604_800 : 18_000;
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId, durationSeconds }),
+        base({
+          providerWindowId,
+          endMs: 1_000_000 + deltaMs,
+          durationSeconds,
+        })
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    [28 * 24 * 60 * 60, 31 * 24 * 60 * 60],
+    [30 * 24 * 60 * 60, 31 * 24 * 60 * 60],
+  ])(
+    'accepts monthly calendar variation from %sd to %sd as rollover',
+    (activeDays, observedDays) => {
+      expect(
+        shouldClearInheritedCodexQuotaProgress(
+          base({ providerWindowId: 'monthly', durationSeconds: activeDays }),
+          base({
+            providerWindowId: 'monthly',
+            endMs: 1_000_000 + observedDays * 1000,
+            durationSeconds: observedDays,
+          })
+        )
+      ).toBe(true);
+    }
+  );
+
+  it('uses the observed duration when the active duration is missing', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'weekly', durationSeconds: null }),
+        base({ providerWindowId: 'weekly', endMs: 1_000_000 + 604_800_000 })
+      )
+    ).toBe(true);
+  });
+
+  it('uses the active duration when the observed duration is missing', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ durationSeconds: 18_000 }),
+        base({ endMs: 1_000_000 + 18_000_000, durationSeconds: null })
+      )
+    ).toBe(true);
+  });
+
+  it('uses standard cadence when both durations are missing', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ durationSeconds: null }),
+        base({ endMs: 1_000_000 + 18_000_000, durationSeconds: null })
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    ['indexed five-hour', 'spark-five-hour-0', 5 * 60 * 60 * 1000],
+    ['indexed weekly', 'spark-weekly-0', 7 * 24 * 60 * 60 * 1000],
+    ['indexed monthly', 'spark-monthly-0', 31 * 24 * 60 * 60 * 1000],
+    ['indexed generic weekly', 'future-feature-weekly-0', 7 * 24 * 60 * 60 * 1000],
+  ])(
+    '%s uses the provider window cadence when duration is missing',
+    (_label, providerWindowId, deltaMs) => {
+      expect(
+        shouldClearInheritedCodexQuotaProgress(
+          base({ providerWindowId, durationSeconds: null, boundaryAccuracy: 'estimated' }),
+          base({
+            providerWindowId,
+            endMs: 1_000_000 + deltaMs,
+            durationSeconds: null,
+            boundaryAccuracy: 'estimated',
+          })
+        )
+      ).toBe(true);
+    }
+  );
+
+  it('keeps an indexed scoped window compatible within boundary jitter when duration is missing', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'spark-weekly-0', durationSeconds: null }),
+        base({
+          providerWindowId: 'spark-weekly-0',
+          endMs: 1_030_000,
+          durationSeconds: null,
+          boundaryAccuracy: 'estimated',
+        })
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    ['weekly bonus monthly', 'weekly-bonus-monthly-0', 30 * 24 * 60 * 60 * 1000],
+    ['five hour bonus weekly', 'five-hour-bonus-weekly-0', 7 * 24 * 60 * 60 * 1000],
+    [
+      'cadence-like prefix with five-hour suffix',
+      'monthly-preview-five-hour-3',
+      5 * 60 * 60 * 1000,
+    ],
+  ])(
+    '%s clears inherited progress from the structural cadence suffix',
+    (_label, providerWindowId, deltaMs) => {
+      expect(
+        shouldClearInheritedCodexQuotaProgress(
+          base({ providerWindowId, durationSeconds: null, boundaryAccuracy: 'estimated' }),
+          base({
+            providerWindowId,
+            endMs: 1_000_000 + deltaMs,
+            durationSeconds: null,
+            boundaryAccuracy: 'estimated',
+          })
+        )
+      ).toBe(true);
+    }
+  );
+
+  it('does not infer cadence from a feature prefix without a structural suffix', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({
+          providerWindowId: 'weekly-bonus',
+          durationSeconds: null,
+          boundaryAccuracy: 'estimated',
+        }),
+        base({
+          providerWindowId: 'weekly-bonus',
+          endMs: 1_000_000 + 7 * 24 * 60 * 60 * 1000,
+          durationSeconds: null,
+          boundaryAccuracy: 'estimated',
+        })
+      )
+    ).toBe(false);
+  });
+
+  it('keeps trusted duration authoritative over a conflicting provider id suffix', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'weekly-bonus-monthly-0', durationSeconds: 604_800 }),
+        base({
+          providerWindowId: 'weekly-bonus-monthly-0',
+          endMs: 1_000_000 + 7 * 24 * 60 * 60 * 1000,
+          durationSeconds: 604_800,
+          boundaryAccuracy: 'estimated',
+        })
+      )
+    ).toBe(true);
+
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'weekly-bonus-monthly-0', durationSeconds: 604_800 }),
+        base({
+          providerWindowId: 'weekly-bonus-monthly-0',
+          endMs: 1_000_000 + 30 * 24 * 60 * 60 * 1000,
+          durationSeconds: 604_800,
+          boundaryAccuracy: 'estimated',
+        })
+      )
+    ).toBe(false);
+  });
+
+  it('uses strong exact boundary evidence when cadence is unavailable', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'future-window', durationSeconds: null }),
+        base({
+          providerWindowId: 'future-window',
+          endMs: 1_120_000,
+          durationSeconds: null,
+          boundaryAccuracy: 'exact',
+        })
+      )
+    ).toBe(true);
+  });
+
+  it('keeps a small estimated boundary drift conservative', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ boundaryAccuracy: 'estimated' }),
+        base({ endMs: 1_120_000, boundaryAccuracy: 'estimated' })
+      )
+    ).toBe(false);
+  });
+
+  it('clears a materially backward boundary', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base(),
+        base({ endMs: 900_000, boundaryAccuracy: 'estimated' })
+      )
+    ).toBe(true);
+  });
+
+  it('clears an incompatible duration class', () => {
+    expect(
+      shouldClearInheritedCodexQuotaProgress(
+        base({ providerWindowId: 'five-hour', durationSeconds: 18_000 }),
+        base({ providerWindowId: 'five-hour', durationSeconds: 604_800 })
+      )
+    ).toBe(true);
   });
 });

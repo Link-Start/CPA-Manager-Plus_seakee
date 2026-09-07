@@ -48,6 +48,7 @@ var compatibleUsageDetailQueryPrefix = `select
 		coalesce(auth_label_snapshot, ''),
 		coalesce(auth_file_snapshot, ''),
 		coalesce(auth_provider_snapshot, ''),
+			coalesce(auth_account_id_snapshot, ''),
 			coalesce(auth_project_id_snapshot, ''),
 			auth_snapshot_at_ms,
 			latency_ms,
@@ -583,7 +584,7 @@ func (r *repository) exportBatchOn(ctx context.Context, snapshot usageSnapshot, 
 		id,
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_account_id_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
 		requested_model, resolved_model, reasoning_effort, service_tier,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		latency_ms, ttft_ms, failed, fail_status_code, fail_summary,
@@ -647,6 +648,7 @@ func scanCompatibleDetail(rows *sql.Rows) (compatibleExportRow, error) {
 		&detail.AuthLabelSnapshot,
 		&detail.AuthFileSnapshot,
 		&detail.AuthProviderSnapshot,
+		&detail.AuthAccountIDSnapshot,
 		&detail.AuthProjectIDSnapshot,
 		&authSnapshotAt,
 		&latency,
@@ -708,7 +710,7 @@ func scanCompatibleDetail(rows *sql.Rows) (compatibleExportRow, error) {
 func scanExportRow(rows *sql.Rows) (exportRow, error) {
 	var row exportRow
 	event := &row.event
-	var requestID, provider, executorType, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, reasoningEffort, serviceTier, failSummary sql.NullString
+	var requestID, provider, executorType, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authAccountIDSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, reasoningEffort, serviceTier, failSummary sql.NullString
 	var responseMetadataJSON, quotaPlanType, errorKind, errorCode, traceID string
 	var authSnapshotAt sql.NullInt64
 	var latency, ttft sql.NullInt64
@@ -737,6 +739,7 @@ func scanExportRow(rows *sql.Rows) (exportRow, error) {
 		&authLabelSnapshot,
 		&authFileSnapshot,
 		&authProviderSnapshot,
+		&authAccountIDSnapshot,
 		&authProjectIDSnapshot,
 		&authSnapshotAt,
 		&requestedModel,
@@ -783,6 +786,7 @@ func scanExportRow(rows *sql.Rows) (exportRow, error) {
 	event.AuthLabelSnapshot = authLabelSnapshot.String
 	event.AuthFileSnapshot = authFileSnapshot.String
 	event.AuthProviderSnapshot = authProviderSnapshot.String
+	event.AuthAccountIDSnapshot = authAccountIDSnapshot.String
 	event.AuthProjectIDSnapshot = authProjectIDSnapshot.String
 	event.RequestedModel = requestedModel.String
 	event.ResolvedModel = resolvedModel.String

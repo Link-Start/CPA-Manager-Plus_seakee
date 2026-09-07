@@ -11,6 +11,9 @@ import (
 type eventSourceOptions struct {
 	AfterID            int64
 	UseAfter           bool
+	MaxID              int64
+	UseMax             bool
+	CodexMarkerOnly    bool
 	BeforeMS           int64
 	BeforeID           int64
 	ProjectionComplete bool
@@ -31,6 +34,16 @@ func filteredEventSourceSQL(
 		projectionArgs = append(projectionArgs, options.AfterID)
 		rawConditions = append(rawConditions, "e.id > ?")
 		rawArgs = append(rawArgs, options.AfterID)
+	}
+	if options.UseMax {
+		projectionConditions = append(projectionConditions, "p.event_id <= ?")
+		projectionArgs = append(projectionArgs, options.MaxID)
+		rawConditions = append(rawConditions, "e.id <= ?")
+		rawArgs = append(rawArgs, options.MaxID)
+	}
+	if options.CodexMarkerOnly {
+		projectionConditions = append(projectionConditions, codexAccountDailyExcludedSQL("p"))
+		rawConditions = append(rawConditions, codexAccountDailyExcludedSQL("e"))
 	}
 	if options.BeforeMS > 0 {
 		if options.BeforeID > 0 {
@@ -112,6 +125,8 @@ func eventFilterConditions(filter AnalyticsFilter, prefix string, projected bool
 				expression := column(searchColumn)
 				if searchColumn == "analytics_model" {
 					expression = usageidentity.SQLRequestAnalyticsModelExpression(column("model"), column("requested_model"))
+				} else if searchColumn == "auth_project_id_snapshot" {
+					expression = usageidentity.SQLProjectIDSnapshotExpression(prefix)
 				}
 				searchConditions = append(searchConditions, fmt.Sprintf("lower(coalesce(%s, '')) like ?", expression))
 				args = append(args, like)
@@ -148,7 +163,7 @@ func eventFilterConditions(filter AnalyticsFilter, prefix string, projected bool
 	addInCondition(column("auth_index"), filter.AuthIndices)
 	addInCondition(column("api_key_hash"), filter.APIKeyHashes)
 	addInCondition(column("source_hash"), filter.SourceHashes)
-	addInCondition(column("auth_project_id_snapshot"), filter.ProjectIDs)
+	addInCondition(usageidentity.SQLProjectIDSnapshotExpression(prefix), filter.ProjectIDs)
 	addInCondition(column("executor_type"), filter.RequestTypes)
 	addInCondition(column("header_error_kind"), filter.HeaderErrorKinds)
 	addInCondition(column("header_error_code"), filter.HeaderErrorCodes)

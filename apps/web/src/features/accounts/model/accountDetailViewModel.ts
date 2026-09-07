@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next';
 import type { CodexQuotaState, QuotaResetAccuracy, XaiQuotaState } from '@/types';
 import { getSortedCodexResetCreditExpiries } from '@/components/quota/quotaConfigs';
 import type {
@@ -11,9 +12,9 @@ import type {
   QuotaCooldownInfo,
 } from '@/services/api';
 import type { AuthFileCodexStatusSummary } from '@/features/authFiles/model/credentialStatus';
-import { normalizePlanType, parseIdTokenPayload } from '@/utils/quota/parsers';
+import { normalizeStringValue, parseIdTokenPayload } from '@/utils/quota/parsers';
 import { isValidQuotaResetAtMs } from '@/utils/quota/formatters';
-import { resolveCodexPlanType } from '@/utils/quota/resolvers';
+import { isCodexMainQuotaWindow } from '@/utils/quota/codexQuota';
 import { parseTimestampMs } from '@/utils/timestamp';
 import { sumRecentRequests, type RecentRequestBucket } from '@/utils/recentRequests';
 import type { AccountRow } from './accountRows';
@@ -43,6 +44,7 @@ import {
   type AccountRecommendationPriority,
 } from './quotaRecommendations';
 import type { UsageValueRow, UsageValueSource } from './usageValueRows';
+import { getPlanPresentation, resolveAuthFilePlanType, type PlanPresentation } from '@/utils/plans';
 import {
   classifyAccountCredentialStatusEvidence,
   getAccountRequestCredentialEvidence,
@@ -286,6 +288,7 @@ export interface AccountDetailViewModel {
     accountLabel: string;
     provider: string;
     planType: string | null;
+    planPresentation: PlanPresentation | null;
     authIndex: string;
     projectId: string;
     priority: number;
@@ -337,6 +340,7 @@ export interface AccountDetailViewModel {
 }
 
 export interface BuildAccountDetailViewModelOptions {
+  t?: TFunction;
   recommendation?: AccountRecommendation | null;
   quotaCooldown?: QuotaCooldownInfo | null;
   codexStatus?: AuthFileCodexStatusSummary | null;
@@ -618,6 +622,8 @@ const buildValueSummary = (
   };
 };
 
+const FORECAST_COST_EPSILON = 1e-9;
+
 const buildQuotaWindows = (
   row: AccountRow,
   quotaWindows: AccountDetailQuotaWindowInput[],
@@ -631,8 +637,10 @@ const buildQuotaWindows = (
           kind: window.modelScope.kind,
           key: window.modelScope.key,
           models: window.modelScope.models,
+          complete: window.modelScope.complete,
         }
       : undefined;
+    const scopeAllowsUsage = modelScope?.complete !== false;
     const currentUsage = toWindowUsageSummary(
       windowUsageByKey.get(
         accountWindowUsageRequestKey(row.selectionKey, providerWindowId, 'current', modelScope)
@@ -667,19 +675,34 @@ const buildQuotaWindows = (
     const currentForecastEligible = window.currentCycle
       ? window.currentCycle.forecastEligible
       : !hasLifecycleEvidence;
-    const quotaObservedAtMs =
-      typeof window.observedAtMs === 'number' &&
-      Number.isFinite(window.observedAtMs) &&
-      window.observedAtMs > 0
-        ? window.observedAtMs
+    const canForecastCurrentWindow =
+      !hasLifecycleEvidence || (currentForecastEligible && window.stale !== true);
+    const quotaProgressObservedAtMs =
+      typeof window.quotaProgressObservedAtMs === 'number' &&
+      Number.isFinite(window.quotaProgressObservedAtMs) &&
+      window.quotaProgressObservedAtMs > 0
+        ? window.quotaProgressObservedAtMs
         : null;
-    const currentForecastUsage =
-      currentUsage?.matched &&
+    const hasReliableQuotaProgress =
+      typeof window.usedPercent === 'number' &&
+      Number.isFinite(window.usedPercent) &&
+      quotaProgressObservedAtMs !== null;
+    const hasReliableCurrentUsage =
+      currentUsage?.matched === true &&
       currentUsage.scopeMatchStatus === 'complete' &&
-      currentForecastEligible &&
-      quotaObservedAtMs !== null &&
+      currentForecastEligible;
+    const currentUsageAheadOfQuotaProgressObservation =
+      hasReliableCurrentUsage &&
+      hasReliableQuotaProgress &&
+      quotaProgressObservedAtMs !== null &&
       currentUsage.lastSeenMs !== null &&
-      currentUsage.lastSeenMs <= quotaObservedAtMs
+      currentUsage.lastSeenMs > quotaProgressObservedAtMs;
+    const currentForecastUsage =
+      hasReliableCurrentUsage &&
+      hasReliableQuotaProgress &&
+      quotaProgressObservedAtMs !== null &&
+      currentUsage.lastSeenMs !== null &&
+      currentUsage.lastSeenMs <= quotaProgressObservedAtMs
         ? {
             requests: currentUsage.totalRequests,
             tokens: currentUsage.totalTokens,
@@ -687,7 +710,9 @@ const buildQuotaWindows = (
           }
         : null;
     const forecast =
+      scopeAllowsUsage &&
       lifecycleActive &&
+      canForecastCurrentWindow &&
       (window.windowMode === 'fixed' || window.windowMode === 'calendar') &&
       typeof window.cycleStartMs === 'number' &&
       typeof window.cycleEndMs === 'number'
@@ -695,8 +720,9 @@ const buildQuotaWindows = (
             usedPercent: window.usedPercent,
             current: currentForecastUsage,
             previous:
+              !currentUsageAheadOfQuotaProgressObservation &&
               previousForecastEligible &&
-              previousUsage?.matched &&
+              previousUsage?.matched === true &&
               previousUsage.scopeMatchStatus === 'complete'
                 ? {
                     requests: previousUsage.totalRequests,
@@ -706,6 +732,27 @@ const buildQuotaWindows = (
                 : null,
           })
         : null;
+    const trustedCurrentActual =
+      currentUsage?.matched === true &&
+      currentUsage.scopeMatchStatus === 'complete' &&
+      Number.isFinite(currentUsage.totalRequests) &&
+      currentUsage.totalRequests >= 0 &&
+      Number.isFinite(currentUsage.totalTokens) &&
+      currentUsage.totalTokens >= 0 &&
+      Number.isFinite(currentUsage.totalCost) &&
+      currentUsage.totalCost >= 0
+        ? {
+            requests: currentUsage.totalRequests,
+            tokens: currentUsage.totalTokens,
+            cost: currentUsage.totalCost,
+          }
+        : null;
+    const forecastIsConsistentWithCurrentActual =
+      forecast === null ||
+      trustedCurrentActual === null ||
+      (forecast.requests >= trustedCurrentActual.requests &&
+        forecast.tokens >= trustedCurrentActual.tokens &&
+        forecast.cost + FORECAST_COST_EPSILON >= trustedCurrentActual.cost);
     return {
       ...window,
       providerWindowId,
@@ -715,7 +762,7 @@ const buildQuotaWindows = (
       currentUsage,
       previousUsage,
       previousPeriod,
-      forecast,
+      forecast: forecastIsConsistentWithCurrentActual ? forecast : null,
     };
   });
 
@@ -1131,7 +1178,8 @@ const buildOverviewCapacity = (
 
 const buildOverviewCredential = (
   row: AccountRow,
-  codexQuota: CodexQuotaState | null | undefined
+  codexQuota: CodexQuotaState | null | undefined,
+  t?: TFunction
 ): AccountDetailOverviewCredential => {
   const parseValidSubscriptionUntilMs = (value: unknown): number | null => {
     const numeric =
@@ -1149,11 +1197,18 @@ const buildOverviewCredential = (
     if (!Number.isFinite(parsed) || parsed <= 0) return null;
     return Number.isNaN(new Date(parsed).getTime()) ? null : parsed;
   };
-  const effectivePlanType = normalizePlanType(
-    codexQuota?.planType ?? row.planType ?? resolveCodexPlanType(row.raw)
+  const effectivePlanType = normalizeStringValue(
+    codexQuota?.planType ?? row.planType ?? resolveAuthFilePlanType(row.raw)
   );
+  const planPresentation = getPlanPresentation({
+    provider: row.provider,
+    planType: effectivePlanType,
+    t,
+  });
   const hasPaidCodexSubscription =
-    row.provider === 'codex' && effectivePlanType !== null && effectivePlanType !== 'free';
+    row.provider === 'codex' &&
+    effectivePlanType !== null &&
+    planPresentation?.canonicalPlanType !== 'free';
   const liveSubscriptionUntilMs = hasPaidCodexSubscription
     ? parseValidSubscriptionUntilMs(codexQuota?.subscriptionActiveUntil)
     : null;
@@ -1190,7 +1245,7 @@ const buildOverviewCredential = (
       : 'accounts.detail_local_auth_file',
     fields: compactFields([
       field('provider', 'accounts.col_provider', row.provider),
-      field('planType', 'accounts.col_plan', effectivePlanType),
+      field('planType', 'accounts.col_plan', planPresentation?.fullLabel ?? effectivePlanType),
       field('updatedAtMs', 'accounts.detail_updated_at', row.updatedAtMs, 'timestamp'),
       field('subscriptionUntilMs', subscriptionUntilLabelKey, subscriptionUntilMs, 'quota_reset'),
       field('authIndex', 'accounts.detail_auth_index', presentOverviewText(row.authIndex)),
@@ -1517,11 +1572,14 @@ export const buildAccountDetailViewModel = (
       };
     }
   );
+  const accountQuotaWindows =
+    row.provider === 'codex' ? quotaWindows.filter(isCodexMainQuotaWindow) : quotaWindows;
   const listItem = buildAccountListItem(row, {
+    t: options.t,
     recommendation,
     quotaCooldown,
     codexStatus: options.codexStatus ?? null,
-    quotaWindows,
+    quotaWindows: accountQuotaWindows,
     requestEvidence,
   });
   const value = buildValueSummary(row, options.valueRow);
@@ -1553,8 +1611,8 @@ export const buildAccountDetailViewModel = (
   const overviewDecision = buildOverviewDecision(row, listItem, quotaCooldown);
   const overview = {
     decision: overviewDecision,
-    capacity: buildOverviewCapacity(row, quotaWindows, listItem),
-    credential: buildOverviewCredential(row, options.codexQuota),
+    capacity: buildOverviewCapacity(row, accountQuotaWindows, listItem),
+    credential: buildOverviewCredential(row, options.codexQuota, options.t),
     recentStatus: buildOverviewRecentStatus(
       row,
       overviewDecision,
@@ -1583,6 +1641,11 @@ export const buildAccountDetailViewModel = (
       accountLabel: row.accountLabel,
       provider: row.provider,
       planType: row.planType,
+      planPresentation: getPlanPresentation({
+        provider: row.provider,
+        planType: options.codexQuota?.planType ?? row.planType ?? resolveAuthFilePlanType(row.raw),
+        t: options.t,
+      }),
       authIndex: row.authIndex,
       projectId: row.projectId,
       priority: row.priority ?? 0,

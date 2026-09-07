@@ -31,8 +31,10 @@ export interface AccountQuotaWindowDefinition {
   kind: AccountQuotaWindowKind;
   windowMode: QuotaWindowMode;
   modelScope: QuotaModelScope;
+  providerWindowAliases?: string[];
   observationSource: QuotaObservationSource;
   observedAtMs: number | null;
+  quotaProgressObservedAtMs: number | null;
   boundaryAccuracy: AccountQuotaBoundaryAccuracy;
   cycleStartMs: number | null;
   cycleEndMs: number | null;
@@ -62,6 +64,17 @@ export interface AccountQuotaUsageRange {
 
 const isReliableBoundary = (accuracy: AccountQuotaBoundaryAccuracy) =>
   accuracy === 'exact' || accuracy === 'derived';
+
+const hasLifecycleEvidence = (definition: AccountQuotaWindowDefinition): boolean =>
+  definition.availability !== undefined ||
+  definition.currentCycle !== undefined ||
+  definition.previousCycle !== undefined;
+
+const isValidUsageRange = (range: AccountQuotaUsageRange): boolean =>
+  Number.isFinite(range.fromMs) &&
+  Number.isFinite(range.toMs) &&
+  range.fromMs > 0 &&
+  range.fromMs < range.toMs;
 
 const resolveBoundaryAccuracy = (
   window: AccountQuotaDisplayWindow
@@ -105,8 +118,10 @@ export const buildAccountQuotaWindowDefinitions = (
         kind: window.kind ?? 'unknown',
         windowMode: window.windowMode ?? 'unknown',
         modelScope: window.modelScope ?? { kind: 'all', complete: false },
+        providerWindowAliases: window.providerWindowAliases,
         observationSource: window.observationSource ?? 'api_query',
         observedAtMs: window.observedAtMs ?? null,
+        quotaProgressObservedAtMs: window.quotaProgressObservedAtMs ?? null,
         boundaryAccuracy,
         cycleStartMs: window.cycleStartMs ?? null,
         cycleEndMs: window.cycleEndMs ?? null,
@@ -150,41 +165,61 @@ export const buildAccountQuotaUsageRanges = (
     return ranges.filter((range) => range.fromMs > 0 && range.fromMs < range.toMs);
   }
 
+  if (definition.windowMode !== 'fixed' && definition.windowMode !== 'calendar') {
+    return [];
+  }
+
+  if (hasLifecycleEvidence(definition)) {
+    const ranges: AccountQuotaUsageRange[] = [];
+    const currentCycle = definition.currentCycle;
+    const currentEndMs =
+      currentCycle?.scheduledEndMs ??
+      (isReliableBoundary(definition.boundaryAccuracy) ? definition.cycleEndMs : null);
+    if (
+      currentCycle &&
+      !definition.stale &&
+      (definition.availability === undefined || definition.availability === 'active') &&
+      currentCycle.state === 'active' &&
+      currentCycle.actualEndMs === null &&
+      isReliableBoundary(currentCycle.boundaryAccuracy) &&
+      Number.isFinite(currentCycle.actualStartMs) &&
+      typeof currentEndMs === 'number' &&
+      Number.isFinite(currentEndMs)
+    ) {
+      const currentEnd = Math.min(nowMs, currentEndMs);
+      ranges.push({
+        period: 'current',
+        fromMs: currentCycle.actualStartMs,
+        toMs: currentEnd,
+      });
+    }
+
+    const previousCycle = definition.previousCycle;
+    if (
+      previousCycle &&
+      isReliableBoundary(previousCycle.boundaryAccuracy) &&
+      Number.isFinite(previousCycle.actualStartMs) &&
+      typeof previousCycle.actualEndMs === 'number' &&
+      Number.isFinite(previousCycle.actualEndMs) &&
+      previousCycle.actualStartMs < previousCycle.actualEndMs
+    ) {
+      ranges.push({
+        period: 'previous',
+        fromMs: previousCycle.actualStartMs,
+        toMs: previousCycle.actualEndMs,
+      });
+    }
+
+    return ranges.filter(isValidUsageRange);
+  }
+
   if (
-    (definition.windowMode !== 'fixed' && definition.windowMode !== 'calendar') ||
     !isReliableBoundary(definition.boundaryAccuracy) ||
     definition.stale ||
     definition.cycleStartMs === null ||
     definition.cycleEndMs === null
   ) {
     return [];
-  }
-
-  if (definition.currentCycle) {
-    const currentEnd = Math.min(
-      nowMs,
-      definition.currentCycle.scheduledEndMs ?? definition.cycleEndMs
-    );
-    const ranges: AccountQuotaUsageRange[] = [];
-    if (definition.currentCycle.actualStartMs < currentEnd) {
-      ranges.push({
-        period: 'current',
-        fromMs: definition.currentCycle.actualStartMs,
-        toMs: currentEnd,
-      });
-    }
-    if (
-      definition.previousCycle?.actualEndMs !== null &&
-      definition.previousCycle?.actualEndMs !== undefined &&
-      definition.previousCycle.actualStartMs < definition.previousCycle.actualEndMs
-    ) {
-      ranges.push({
-        period: 'previous',
-        fromMs: definition.previousCycle.actualStartMs,
-        toMs: definition.previousCycle.actualEndMs,
-      });
-    }
-    return ranges.filter((range) => range.fromMs > 0 && range.fromMs < range.toMs);
   }
 
   const currentEnd = Math.min(nowMs, definition.cycleEndMs);
@@ -201,5 +236,5 @@ export const buildAccountQuotaUsageRanges = (
     fromMs: definition.cycleStartMs - durationMs,
     toMs: definition.cycleStartMs,
   });
-  return ranges.filter((range) => range.fromMs > 0 && range.fromMs < range.toMs);
+  return ranges.filter(isValidUsageRange);
 };
