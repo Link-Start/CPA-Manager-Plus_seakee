@@ -164,8 +164,7 @@ func (r *repository) catchUp(
 	if err != nil {
 		return CatchUpResult{}, err
 	}
-	if state.StructureRevision != revision ||
-		(rollupName == usageevent.CodexLegacyIdentityRollupName && latestID < state.CoverageEventID) {
+	if state.StructureRevision != revision {
 		if err := resetForRevision(ctx, tx, rollupName, revision, latestID, nowMS); err != nil {
 			return CatchUpResult{}, err
 		}
