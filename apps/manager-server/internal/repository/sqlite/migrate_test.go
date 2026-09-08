@@ -4103,3 +4103,241 @@ func TestMigrationWithRawDeletionAndRebuildRequiredFailsClosed(t *testing.T) {
 		t.Fatalf("hourly aggregate count = %d, want preserved 1 row", aggregateCount)
 	}
 }
+
+// Test M1：raw deleted + monitoring damage
+func TestMigrationEarlyRecoveryFailsClosedOnMonitoringDamageWithRawDeleted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial open: %v", err)
+	}
+
+	// Insert sentinel row into usageMonitoringAccountDailyTable
+	if _, err := db.Exec(`insert into ` + usageMonitoringAccountDailyTable + ` (
+		structure_revision, bucket_ms, account_snapshot, auth_label_snapshot,
+		provider, auth_provider_snapshot, auth_account_id_snapshot, auth_index,
+		source, source_hash, auth_file_snapshot, api_key_hash, executor_type,
+		model, billing_model, pricing_model, service_tier, context_threshold_tokens, failed,
+		last_seen_ms, updated_at_ms
+	) values (
+		'1', 1000, 'acc-1', 'label-1',
+		'provider-1', 'auth-1', 'account-a', 'idx-1',
+		'src', 'srchash', 'file.json', 'keyhash', 'exec',
+		'gpt-4', 'gpt-4', 'gpt-4', 'standard', -1, 0,
+		1000, 1000
+	)`); err != nil {
+		t.Fatalf("insert sentinel: %v", err)
+	}
+
+	// Record raw deletion in archive refs
+	if _, err := db.Exec(`pragma foreign_keys = off`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs (
+		event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms
+	) values ('hash-1', 'run-1', 1, 1, 1000, 1000, 1500)`); err != nil {
+		t.Fatalf("insert raw deletion ref: %v", err)
+	}
+
+	// Cause damage: drop usageMonitoringAPIKeyDailyTable so statsDamaged becomes true
+	if _, err := db.Exec(`drop table ` + usageMonitoringAPIKeyDailyTable); err != nil {
+		t.Fatalf("drop table to cause damage: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must fail closed
+	reopened, err := Open(path)
+	if err == nil {
+		if reopened != nil {
+			_ = reopened.Close()
+		}
+		t.Fatal("expected Open to fail closed, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "historical raw usage events have been archived and deleted") {
+		t.Fatalf("expected raw deletion error message, got: %v", err)
+	}
+
+	// Inspect with raw connection: sentinel data must NOT be parked or deleted
+	rawConn, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer rawConn.Close()
+
+	var parkedCount int
+	if err := rawConn.QueryRow(`select count(*) from sqlite_master where type = 'table' and name = '` + usageMonitoringAccountLegacy + `'`).Scan(&parkedCount); err != nil {
+		t.Fatal(err)
+	}
+	if parkedCount != 0 {
+		t.Fatalf("table was parked despite fail closed")
+	}
+
+	var sentinelCount int
+	if err := rawConn.QueryRow(`select count(*) from ` + usageMonitoringAccountDailyTable + ` where account_snapshot = 'acc-1'`).Scan(&sentinelCount); err != nil {
+		t.Fatal(err)
+	}
+	if sentinelCount != 1 {
+		t.Fatalf("sentinel row missing: got %d, want 1", sentinelCount)
+	}
+}
+
+// Test M2：raw complete + 相同 monitoring damage
+func TestMigrationEarlyRecoverySucceedsWithoutRawDeletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial open: %v", err)
+	}
+
+	// Cause damage: drop usageMonitoringAPIKeyDailyTable
+	if _, err := db.Exec(`drop table ` + usageMonitoringAPIKeyDailyTable); err != nil {
+		t.Fatalf("drop table to cause damage: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must succeed and recreate damaged derivations
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("expected Open to succeed without raw deletion, got: %v", err)
+	}
+	defer reopened.Close()
+
+	var tableExists int
+	if err := reopened.QueryRow(`select count(*) from sqlite_master where type = 'table' and name = '` + usageMonitoringAPIKeyDailyTable + `'`).Scan(&tableExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists != 1 {
+		t.Fatalf("damaged table was not recreated")
+	}
+}
+
+// Test M3：raw deleted + Codex evidence damaged recovery
+func TestMigrationEarlyRecoveryFailsClosedOnCodexEvidenceDamageWithRawDeleted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial open: %v", err)
+	}
+
+	// Insert sentinel row into usageCodexLegacyIdentityEvidenceTable
+	if _, err := db.Exec(`insert into ` + usageCodexLegacyIdentityEvidenceTable + ` (
+		structure_revision, physical_kind, physical_file, auth_index,
+		provider, auth_provider_snapshot, auth_account_id_snapshot,
+		auth_project_id_snapshot, account_snapshot,
+		min_evidence_at_ms, max_evidence_at_ms, chronology_unknown
+	) values ('1', 0, 'codex-a.json', 'auth-a', 'codex', 'codex', 'account-a',
+		'', 'same@example.com', 1, 1, 0)`); err != nil {
+		t.Fatalf("insert sentinel evidence: %v", err)
+	}
+
+	// Record raw deletion in archive refs
+	if _, err := db.Exec(`pragma foreign_keys = off`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs (
+		event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms
+	) values ('hash-1', 'run-1', 1, 1, 1000, 1000, 1500)`); err != nil {
+		t.Fatalf("insert raw deletion ref: %v", err)
+	}
+
+	// Cause identityEvidenceDamaged: delete state row for codex_legacy_identity_v1
+	if _, err := db.Exec(`delete from usage_monitoring_rollup_state where rollup_name = 'codex_legacy_identity_v1'`); err != nil {
+		t.Fatalf("delete state row: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must fail closed
+	reopened, err := Open(path)
+	if err == nil {
+		if reopened != nil {
+			_ = reopened.Close()
+		}
+		t.Fatal("expected Open to fail closed, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "historical raw usage events have been archived and deleted") {
+		t.Fatalf("expected raw deletion error message, got: %v", err)
+	}
+
+	// Inspect with raw connection: evidence table must NOT be parked
+	rawConn, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer rawConn.Close()
+
+	var parkedCount int
+	if err := rawConn.QueryRow(`select count(*) from sqlite_master where type = 'table' and name = '` + usageCodexLegacyIdentityEvidenceLegacy + `'`).Scan(&parkedCount); err != nil {
+		t.Fatal(err)
+	}
+	if parkedCount != 0 {
+		t.Fatalf("evidence table was parked despite fail closed")
+	}
+
+	var sentinelCount int
+	if err := rawConn.QueryRow(`select count(*) from ` + usageCodexLegacyIdentityEvidenceTable + ` where auth_account_id_snapshot = 'account-a'`).Scan(&sentinelCount); err != nil {
+		t.Fatal(err)
+	}
+	if sentinelCount != 1 {
+		t.Fatalf("sentinel evidence missing: got %d, want 1", sentinelCount)
+	}
+}
+
+// Test M4：raw deleted + healthy derived state
+func TestMigrationSucceedsWithRawDeletedWhenDerivedStateIsHealthy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial open: %v", err)
+	}
+
+	// Record raw deletion in archive refs
+	if _, err := db.Exec(`pragma foreign_keys = off`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs (
+		event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms
+	) values ('hash-1', 'run-1', 1, 1, 1000, 1000, 1500)`); err != nil {
+		t.Fatalf("insert raw deletion ref: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must succeed because all derived data is healthy
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("expected Open to succeed for healthy derived state, got: %v", err)
+	}
+	_ = reopened.Close()
+}
+
+// Test M5：archive refs exist but none deleted
+func TestMigrationEarlyRecoverySucceedsWhenArchiveRefsExistWithoutDeletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial open: %v", err)
+	}
+
+	// Record archive ref with raw_deleted_at_ms = NULL
+	if _, err := db.Exec(`pragma foreign_keys = off`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into usage_archive_event_refs (
+		event_hash, run_id, segment_sequence, raw_event_id, timestamp_ms, archived_at_ms, raw_deleted_at_ms
+	) values ('hash-1', 'run-1', 1, 1, 1000, 1000, null)`); err != nil {
+		t.Fatalf("insert null deletion ref: %v", err)
+	}
+
+	// Cause damage: drop usageMonitoringAPIKeyDailyTable
+	if _, err := db.Exec(`drop table ` + usageMonitoringAPIKeyDailyTable); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen must succeed
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("expected Open to succeed when no raw events deleted, got: %v", err)
+	}
+	_ = reopened.Close()
+}
+

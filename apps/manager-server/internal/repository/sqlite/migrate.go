@@ -1386,6 +1386,9 @@ func resetDamagedUsageMonitoringDerivations(db *sql.DB, snapshot usageMonitoring
 		return fmt.Errorf("begin usage monitoring derivation recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "damaged usage monitoring derivations"); err != nil {
+		return err
+	}
 	if !snapshot.tables[usageprojection.SearchIndexTable] {
 		if err := dropUsageMonitoringSearchTriggers(tx); err != nil {
 			return err
@@ -1548,6 +1551,9 @@ func resetUsageDerivedDataWithoutSource(db *sql.DB, snapshot usageMonitoringMigr
 		return fmt.Errorf("begin usage source recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := ensureCompleteRawSourceForDerivedRebuild(tx, "usage derived data without source"); err != nil {
+		return err
+	}
 	for tableName, legacyName := range map[string]string{
 		usageAccountModelRollupsTable:       usageAccountModelSourceLegacy,
 		"usage_dashboard_hourly_rollups":    usageDashboardHourlySourceLegacy,
