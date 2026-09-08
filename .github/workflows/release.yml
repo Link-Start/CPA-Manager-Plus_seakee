@@ -565,6 +565,8 @@ jobs:
           tags: |
             type=raw,value=${{ env.RELEASE_TAG }}
             type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+          flavor: |
+            latest=false
           labels: |
             org.opencontainers.image.title=CPA Manager Plus
             org.opencontainers.image.description=CPA Manager Plus Manager Server container image

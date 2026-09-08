@@ -233,6 +233,128 @@ func TestChannelMigrationAndBadMetadata(t *testing.T) {
 	}
 }
 
+func TestSetChannelChecksNewChannelImmediatelyWithIndependentCooldowns(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	stable := fixture("v1.1.0")
+	beta := fixture("v1.2.0-beta.1")
+	index := Index{
+		SchemaVersion: 1,
+		Revision:      1,
+		GeneratedAt:   clock,
+		Channels: map[string]*Target{
+			"stable": {Version: stable.Release.Version},
+			"rc":     {Version: "v1.1.0-rc.1"},
+			"beta":   {Version: beta.Release.Version},
+		},
+	}
+	var indexRequests, stableDownloads, betaDownloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index" {
+			indexRequests.Add(1)
+			_ = json.NewEncoder(w).Encode(index)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1.1.0":
+			stableDownloads.Add(1)
+			_ = json.NewEncoder(w).Encode(stable)
+		case "/v1.2.0-beta.1":
+			betaDownloads.Add(1)
+			_ = json.NewEncoder(w).Encode(beta)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	store := &memoryStore{}
+	s := New(store, "v1.0.0", "test", false)
+	s.now = func() time.Time { return clock }
+	s.client = server.Client()
+	s.indexURL = server.URL + "/index"
+	s.releaseURL = func(tag string) string { return server.URL + "/" + tag }
+
+	if status, err := s.Check(ctx); err != nil || status.State != "update_available" {
+		t.Fatalf("initial stable check: %+v %v", status, err)
+	}
+	if stableDownloads.Load() != 1 || betaDownloads.Load() != 0 {
+		t.Fatalf("initial downloads: stable=%d beta=%d", stableDownloads.Load(), betaDownloads.Load())
+	}
+
+	status, err := s.SetChannel(ctx, "beta")
+	if err != nil {
+		t.Fatalf("switch channel: %v", err)
+	}
+	if status.Channel != "beta" || status.Target == nil || status.Target.Release.Version != beta.Release.Version || status.State != "update_available" {
+		t.Fatalf("switched status: %+v", status)
+	}
+	if betaDownloads.Load() != 1 {
+		t.Fatalf("beta target was not fetched immediately: %d", betaDownloads.Load())
+	}
+
+	if status, err = s.SetChannel(ctx, "stable"); err != nil || status.Target == nil || status.Target.Release.Version != stable.Release.Version {
+		t.Fatalf("switch back to stable: %+v %v", status, err)
+	}
+	if indexRequests.Load() != 2 || stableDownloads.Load() != 1 || betaDownloads.Load() != 1 {
+		t.Fatalf("independent cooldowns not respected: index=%d stable=%d beta=%d", indexRequests.Load(), stableDownloads.Load(), betaDownloads.Load())
+	}
+}
+
+func TestLegacyGlobalAttemptMigratesToEffectiveChannel(t *testing.T) {
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	legacy := State{
+		SchemaVersion: 1,
+		Preference:    "stable",
+		LastAttempt:   clock,
+		Releases:      map[string]ReleaseInfo{},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{data: data}
+	s := New(store, "v1.0.0", "test", false)
+	s.now = func() time.Time { return clock }
+	if err := s.load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.state.LastAttemptByChannel["stable"]; !got.Equal(clock) {
+		t.Fatalf("legacy attempt was not assigned to effective channel: %v", got)
+	}
+	if _, ok := s.state.LastAttemptByChannel["beta"]; ok {
+		t.Fatal("legacy attempt incorrectly assigned to beta")
+	}
+}
+
+func TestSetChannelKeepsPreferenceWhenImmediateCheckFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{}
+	s := New(store, "v1.0.0", "test", false)
+	s.client = server.Client()
+	s.indexURL = server.URL + "/index"
+
+	status, err := s.SetChannel(context.Background(), "beta")
+	if err != nil {
+		t.Fatalf("failed channel check should return its status: %v", err)
+	}
+	if status.ChannelPreference != "beta" || status.LastError == "" {
+		t.Fatalf("unexpected failed channel status: %+v", status)
+	}
+
+	var persisted State
+	if err := json.Unmarshal(store.data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Preference != "beta" {
+		t.Fatalf("channel preference was not persisted: %q", persisted.Preference)
+	}
+}
+
 func TestReleasePolicyAndLinksFailClosed(t *testing.T) {
 	for _, guide := range []string{
 		Repository + "/../../untrusted/guide",

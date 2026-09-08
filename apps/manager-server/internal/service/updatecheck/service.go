@@ -20,13 +20,14 @@ type Store interface {
 	DismissUpdateNotification(context.Context, string) error
 }
 type State struct {
-	SchemaVersion int                    `json:"schema_version"`
-	Preference    string                 `json:"channel_preference"`
-	LastAttempt   time.Time              `json:"last_attempt_at"`
-	LastSuccess   time.Time              `json:"last_success_at"`
-	LastError     string                 `json:"last_error,omitempty"`
-	Index         *Index                 `json:"index,omitempty"`
-	Releases      map[string]ReleaseInfo `json:"releases"`
+	SchemaVersion        int                    `json:"schema_version"`
+	Preference           string                 `json:"channel_preference"`
+	LastAttempt          time.Time              `json:"last_attempt_at"`
+	LastAttemptByChannel map[string]time.Time   `json:"last_attempt_by_channel,omitempty"`
+	LastSuccess          time.Time              `json:"last_success_at"`
+	LastError            string                 `json:"last_error,omitempty"`
+	Index                *Index                 `json:"index,omitempty"`
+	Releases             map[string]ReleaseInfo `json:"releases"`
 }
 type Status struct {
 	CurrentVersion    string       `json:"current_version"`
@@ -74,7 +75,7 @@ func (s *Service) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	st := State{SchemaVersion: 1, Preference: "auto", Releases: map[string]ReleaseInfo{}}
+	st := State{SchemaVersion: 1, Preference: "auto", LastAttemptByChannel: map[string]time.Time{}, Releases: map[string]ReleaseInfo{}}
 	if len(data) > 0 {
 		if err = json.Unmarshal(data, &st); err != nil {
 			return errors.New("invalid persisted update state")
@@ -93,7 +94,15 @@ func (s *Service) load(ctx context.Context) error {
 			}
 		}
 	}
+	if st.LastAttemptByChannel == nil {
+		st.LastAttemptByChannel = map[string]time.Time{}
+	}
 	s.state = st
+	if !st.LastAttempt.IsZero() {
+		if _, ok := s.state.LastAttemptByChannel[s.channel()]; !ok {
+			s.state.LastAttemptByChannel[s.channel()] = st.LastAttempt
+		}
+	}
 	s.loaded = true
 	return nil
 }
@@ -185,7 +194,7 @@ func (s *Service) SetChannel(ctx context.Context, p string) (Status, error) {
 		s.state.Preference = old
 		return Status{}, err
 	}
-	return s.snapshot(), nil
+	return s.checkLocked(ctx)
 }
 func (s *Service) fetch(ctx context.Context, raw string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
@@ -219,20 +228,28 @@ func (s *Service) fetch(ctx context.Context, raw string, dst any) error {
 }
 
 // The mutex serializes discovery/download/persistence. Concurrent checks reuse the
-// 60-second cooldown result; failed persistence retains downloaded data in memory.
+// current channel's 60-second cooldown result; failed persistence retains downloaded data in memory.
 func (s *Service) Check(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.load(ctx); err != nil {
 		return Status{}, err
 	}
-	if !s.state.LastAttempt.IsZero() && s.now().Sub(s.state.LastAttempt) < time.Minute {
+	return s.checkLocked(ctx)
+}
+
+func (s *Service) checkLocked(ctx context.Context) (Status, error) {
+	channel := s.channel()
+	now := s.now()
+	lastAttempt := s.state.LastAttemptByChannel[channel]
+	if !lastAttempt.IsZero() && now.Sub(lastAttempt) < time.Minute {
 		if err := s.save(ctx); err != nil {
 			return s.snapshot(), err
 		}
 		return s.snapshot(), nil
 	}
-	s.state.LastAttempt = s.now()
+	s.state.LastAttempt = now
+	s.state.LastAttemptByChannel[channel] = now
 	err := s.discover(ctx)
 	if err != nil {
 		s.state.LastError = err.Error()
