@@ -6,6 +6,7 @@ import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import {
   IconCheck,
+  IconChevronRight,
   IconExternalLink,
   IconInfo,
   IconRefreshCw,
@@ -18,7 +19,8 @@ import { versionApi } from '@/services/api';
 import type { UsageServiceStatus } from '@/services/api/usageService';
 import type { ConnectionStatus } from '@/types';
 import { compareVersions, type VersionComparison } from '@/utils/version';
-import { readApiLatestVersion, readManagerLatestTag } from '@/features/system/versionChecks';
+import { readApiLatestVersion } from '@/features/system/versionChecks';
+import { useManagerUpdates } from '@/features/system/ManagerUpdates';
 import { buildDashboardVersionReleaseURL } from '@/features/dashboard/versionReleaseLinks';
 import styles from './VersionCard.module.scss';
 
@@ -40,7 +42,6 @@ interface VersionCardProps {
 }
 
 interface LatestVersions {
-  latestApp: string;
   latestApi: string;
 }
 
@@ -83,12 +84,18 @@ const renderBadge = (
 
 const renderVersionValue = (value: string, releaseUrl: string): ReactNode => {
   if (!releaseUrl) {
-    return <span className={styles.value}>{value}</span>;
+    return (
+      <span className={styles.value} title={value}>
+        {value}
+      </span>
+    );
   }
 
   return (
     <a className={styles.versionLink} href={releaseUrl} target="_blank" rel="noopener noreferrer">
-      <span className={styles.value}>{value}</span>
+      <span className={styles.value} title={value}>
+        {value}
+      </span>
       <IconExternalLink size={12} />
     </a>
   );
@@ -127,19 +134,15 @@ export function VersionCard({
 }: VersionCardProps) {
   const { t, i18n } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
-  const [latest, setLatest] = useState<LatestVersions>({ latestApp: '', latestApi: '' });
-  const [checkingAppVersion, setCheckingAppVersion] = useState(false);
+  const updates = useManagerUpdates();
+  const managerVersion = updates.status?.current_version || appVersion;
+  const [latest, setLatest] = useState<LatestVersions>({ latestApi: '' });
   const [checkingApiVersion, setCheckingApiVersion] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    const tasks: Array<Promise<Partial<LatestVersions>>> = [
-      versionApi
-        .checkManagerLatest()
-        .then((data) => ({ latestApp: readManagerLatestTag(data) }))
-        .catch(() => ({})),
-    ];
+    const tasks: Array<Promise<Partial<LatestVersions>>> = [];
 
     if (connectionStatus === 'connected') {
       tasks.push(
@@ -154,10 +157,9 @@ export function VersionCard({
       if (cancelled) return;
       const merged = results.reduce<LatestVersions>(
         (acc, partial) => ({
-          latestApp: partial.latestApp ?? acc.latestApp,
           latestApi: partial.latestApi ?? acc.latestApi,
         }),
-        { latestApp: '', latestApi: '' }
+        { latestApi: '' }
       );
       setLatest(merged);
     });
@@ -166,41 +168,6 @@ export function VersionCard({
       cancelled = true;
     };
   }, [connectionStatus, refreshSignal]);
-
-  const handleAppVersionCheck = useCallback(async () => {
-    setCheckingAppVersion(true);
-    try {
-      const data = await versionApi.checkManagerLatest();
-      const latestApp = readManagerLatestTag(data);
-      const comparison = compareVersions(latestApp, appVersion);
-      setLatest((prev) => ({ ...prev, latestApp }));
-
-      if (!latestApp) {
-        showNotification(t('system_info.manager_version_check_error'), 'error');
-        return;
-      }
-
-      if (comparison === null) {
-        showNotification(t('system_info.manager_version_current_missing'), 'warning');
-        return;
-      }
-
-      if (comparison > 0) {
-        showNotification(
-          t('system_info.manager_version_update_available', { version: latestApp }),
-          'warning'
-        );
-      } else {
-        showNotification(t('system_info.manager_version_is_latest'), 'success');
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-      const suffix = message ? `: ${message}` : '';
-      showNotification(`${t('system_info.manager_version_check_error')}${suffix}`, 'error');
-    } finally {
-      setCheckingAppVersion(false);
-    }
-  }, [appVersion, showNotification, t]);
 
   const handleApiVersionCheck = useCallback(async () => {
     setCheckingApiVersion(true);
@@ -221,12 +188,16 @@ export function VersionCard({
       }
 
       if (comparison > 0) {
-        showNotification(t('system_info.version_update_available', { version: latestApi }), 'warning');
+        showNotification(
+          t('system_info.version_update_available', { version: latestApi }),
+          'warning'
+        );
       } else {
         showNotification(t('system_info.version_is_latest'), 'success');
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       const suffix = message ? `: ${message}` : '';
       showNotification(`${t('system_info.version_check_error')}${suffix}`, 'error');
     } finally {
@@ -235,31 +206,24 @@ export function VersionCard({
   }, [apiVersion, showNotification, t]);
 
   const appReleaseUrl = useMemo(
-    () => buildDashboardVersionReleaseURL('manager', appVersion),
-    [appVersion]
+    () => buildDashboardVersionReleaseURL('manager', managerVersion),
+    [managerVersion]
   );
   const apiReleaseUrl = useMemo(
     () => buildDashboardVersionReleaseURL('core', apiVersion),
     [apiVersion]
   );
-  const latestAppReleaseUrl = useMemo(
-    () => buildDashboardVersionReleaseURL('manager', latest.latestApp),
-    [latest.latestApp]
-  );
   const latestApiReleaseUrl = useMemo(
     () => buildDashboardVersionReleaseURL('core', latest.latestApi),
     [latest.latestApi]
   );
-  const appBadge = useMemo(
-    () =>
-      renderBadge(
-        compareVersions(latest.latestApp, appVersion),
-        latest.latestApp,
-        latestAppReleaseUrl,
-        t
-      ),
-    [appVersion, latest.latestApp, latestAppReleaseUrl, t]
-  );
+  const managerUpdateAvailable =
+    updates.available &&
+    !updates.error &&
+    !updates.status?.last_error &&
+    !updates.status?.stale &&
+    updates.status?.state === 'update_available' &&
+    !!updates.status.target;
   const apiBadge = useMemo(
     () =>
       renderBadge(
@@ -321,7 +285,8 @@ export function VersionCard({
           }
         : {
             label: t('dashboard.collector_status_title'),
-            value: collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal'),
+            value:
+              collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal'),
             tone: collectorLoading && !collectorStatus ? 'muted' : 'ok',
             icon: <IconCheck size={16} />,
           };
@@ -342,7 +307,9 @@ export function VersionCard({
         }
       : {
           label: t('dashboard.health_queue_status'),
-          value: collector?.queue || (collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal')),
+          value:
+            collector?.queue ||
+            (collectorLoading && !collectorStatus ? '...' : t('dashboard.health_status_normal')),
           tone: collectorLoading && !collectorStatus ? 'muted' : 'ok',
           icon: <IconCheck size={16} />,
         };
@@ -367,36 +334,50 @@ export function VersionCard({
         <h2 className={styles.heading}>{t('dashboard.system_overview')}</h2>
         <div className={`${styles.grid} ${styles.systemGrid}`}>
           <div className={styles.item}>
-            <div className={styles.icon}><IconSettings size={18} /></div>
+            <div className={styles.icon}>
+              <IconSettings size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.versionHeader}>
-                <div className={styles.label}>{t('dashboard.app_version')}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  iconOnly
-                  className={styles.versionAction}
-                  onClick={() => void handleAppVersionCheck()}
-                  loading={checkingAppVersion}
-                  title={t('system_info.version_check_button')}
-                  aria-label={t('system_info.version_check_button')}
+                <div
+                  className={styles.label}
+                  title={t(
+                    updates.status?.current_version
+                      ? 'manager_updates.server_version'
+                      : 'dashboard.app_version'
+                  )}
                 >
-                  {!checkingAppVersion && <IconRefreshCw size={14} />}
-                </Button>
+                  {t('title.abbr')}
+                </div>
+                {managerUpdateAvailable && (
+                  <Link
+                    to="/system/updates"
+                    className={`${styles.badge} ${styles.managerUpdateBadge}`}
+                    title={t('manager_updates.view_version', {
+                      version: updates.status?.target?.release.version,
+                    })}
+                    aria-label={t('manager_updates.view_version', {
+                      version: updates.status?.target?.release.version,
+                    })}
+                  >
+                    {t('manager_updates.available_badge')}
+                    <IconChevronRight size={12} aria-hidden="true" />
+                  </Link>
+                )}
               </div>
               <div className={styles.valueWrap}>
                 {renderVersionValue(
-                  appVersion || t('dashboard.version_unknown'),
+                  managerVersion || t('dashboard.version_unknown'),
                   appReleaseUrl
                 )}
-                {renderBadgeValue(appBadge)}
               </div>
             </div>
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconSatellite size={18} /></div>
+            <div className={styles.icon}>
+              <IconSatellite size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.versionHeader}>
                 <div className={styles.label}>{t('dashboard.api_version')}</div>
@@ -415,17 +396,16 @@ export function VersionCard({
                 </Button>
               </div>
               <div className={styles.valueWrap}>
-                {renderVersionValue(
-                  apiVersion || t('dashboard.version_unknown'),
-                  apiReleaseUrl
-                )}
+                {renderVersionValue(apiVersion || t('dashboard.version_unknown'), apiReleaseUrl)}
                 {renderBadgeValue(apiBadge)}
               </div>
             </div>
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconTimer size={18} /></div>
+            <div className={styles.icon}>
+              <IconTimer size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.label}>{t('dashboard.build_time')}</div>
               <div className={styles.value}>{buildTimeDisplay}</div>
@@ -433,7 +413,9 @@ export function VersionCard({
           </div>
 
           <div className={styles.item}>
-            <div className={styles.icon}><IconExternalLink size={18} /></div>
+            <div className={styles.icon}>
+              <IconExternalLink size={18} />
+            </div>
             <div className={styles.content}>
               <div className={styles.label}>{t('dashboard.cpa_base')}</div>
               <div className={styles.value}>{cpaBase || '-'}</div>
@@ -451,13 +433,19 @@ export function VersionCard({
                 <div className={`${styles.healthIcon} ${styles[item.tone]}`}>{item.icon}</div>
                 <div className={styles.content}>
                   <div className={styles.label}>{item.label}</div>
-                  <div className={`${styles.value} ${styles[`${item.tone}Text`]}`}>{item.value}</div>
+                  <div className={`${styles.value} ${styles[`${item.tone}Text`]}`}>
+                    {item.value}
+                  </div>
                 </div>
               </>
             );
 
             return item.to ? (
-              <Link key={item.label} to={item.to} className={`${styles.healthItem} ${styles.healthLink}`}>
+              <Link
+                key={item.label}
+                to={item.to}
+                className={`${styles.healthItem} ${styles.healthLink}`}
+              >
                 {content}
               </Link>
             ) : (
@@ -468,7 +456,6 @@ export function VersionCard({
           })}
         </div>
       </section>
-
     </div>
   );
 }

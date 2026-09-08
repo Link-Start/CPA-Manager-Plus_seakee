@@ -12,7 +12,18 @@ const { mocks } = vi.hoisted(() => ({
     checkManagerLatest: vi.fn(),
     checkLatest: vi.fn(),
     showNotification: vi.fn(),
+    updates: {
+      status: {} as Record<string, unknown>,
+      check: vi.fn(),
+      available: true,
+      busy: false,
+      error: false,
+    },
   },
+}));
+
+vi.mock('@/features/system/ManagerUpdates', () => ({
+  useManagerUpdates: () => mocks.updates,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -62,14 +73,29 @@ const renderCard = async ({
   latestApp = '1.12.6',
   latestApi = '7.2.143',
   connectionStatus = 'connected' as ConnectionStatus,
+  statusOverrides = {},
+  error = false,
 }: {
   appVersion?: string;
   apiVersion?: string;
   latestApp?: string;
   latestApi?: string;
   connectionStatus?: ConnectionStatus;
+  statusOverrides?: Record<string, unknown>;
+  error?: boolean;
 } = {}) => {
   mocks.checkManagerLatest.mockResolvedValue({ tag_name: latestApp });
+  mocks.updates.status = {
+    current_version: appVersion,
+    state: latestApp.includes('gabcdef')
+      ? 'never_checked'
+      : latestApp === appVersion
+        ? 'up_to_date'
+        : 'update_available',
+    target: { release: { version: latestApp } },
+    ...statusOverrides,
+  };
+  mocks.updates.error = error;
   mocks.checkLatest.mockResolvedValue({ 'latest-version': latestApi });
 
   await act(async () => {
@@ -117,7 +143,7 @@ describe('VersionCard release links', () => {
     expect(findAnchor(renderer, styles.versionLink, '7.2.143').props.href).toBe(
       'https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.143'
     );
-    expect(mocks.checkManagerLatest).toHaveBeenCalledTimes(1);
+    expect(mocks.checkManagerLatest).not.toHaveBeenCalled();
     expect(mocks.checkLatest).toHaveBeenCalledTimes(1);
   });
 
@@ -132,15 +158,21 @@ describe('VersionCard release links', () => {
     expect(badge.props.rel).toBe('noopener noreferrer');
   });
 
-  it('links a Manager update badge to the detected latest Manager release', async () => {
+  it('opens the internal update page from a compact Manager badge and preserves the current release link', async () => {
     const renderer = await renderCard({ latestApp: 'v1.12.7' });
-    const badge = findBadge(renderer, 'a', 'v1.12.7');
-
-    expect(badge.props.href).toBe(
-      'https://github.com/seakee/CPA-Manager-Plus/releases/tag/v1.12.7'
+    const badge = findAnchor(
+      renderer,
+      styles.managerUpdateBadge,
+      'manager_updates.available_badge'
     );
-    expect(badge.props.target).toBe('_blank');
-    expect(badge.props.rel).toBe('noopener noreferrer');
+
+    expect(badge.props.href).toBe('/system/updates');
+    expect(badge.props.target).toBeUndefined();
+    expect(badge.props.title).toBe('manager_updates.view_version:v1.12.7');
+    expect(getText(badge)).not.toContain('v1.12.7');
+    expect(findAnchor(renderer, styles.versionLink, '1.12.6').props.href).toContain('/tag/v1.12.6');
+    expect(renderer.root.findAllByType('select')).toHaveLength(0);
+    expect(renderer.root.findAllByType('code')).toHaveLength(0);
   });
 
   it('does not create a badge link for an invalid latest version', async () => {
@@ -156,7 +188,7 @@ describe('VersionCard release links', () => {
     );
   });
 
-  it('keeps the latest badge as plain text when there is no update', async () => {
+  it('keeps the Manager overview quiet when there is no update', async () => {
     const renderer = await renderCard();
 
     expect(
@@ -166,6 +198,31 @@ describe('VersionCard release links', () => {
           node.props.className?.includes(styles.badgeLatest) &&
           getText(node) === 'dashboard.version_is_latest'
       )
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+  });
+
+  it.each([{ stale: true }, { last_error: 'offline' }])(
+    'hides an untrusted Manager update badge: %j',
+    async (statusOverrides) => {
+      const renderer = await renderCard({ latestApp: 'v1.12.7', statusOverrides });
+      expect(
+        renderer.root.findAll((node) => node.type === 'a' && node.props.href === '/system/updates')
+      ).toHaveLength(0);
+    }
+  );
+
+  it('hides the Manager update badge after a failed request', async () => {
+    const renderer = await renderCard({ latestApp: 'v1.12.7', error: true });
+    expect(
+      renderer.root.findAll((node) => node.type === 'a' && node.props.href === '/system/updates')
+    ).toHaveLength(0);
+  });
+
+  it('shows the running Manager version when it differs from the panel', async () => {
+    const renderer = await renderCard({ statusOverrides: { current_version: 'v1.12.5' } });
+    expect(findAnchor(renderer, styles.versionLink, 'v1.12.5').props.href).toContain(
+      '/tag/v1.12.5'
+    );
+    expect(getText(renderer.root)).not.toContain('manager_updates.panel_version');
   });
 });
