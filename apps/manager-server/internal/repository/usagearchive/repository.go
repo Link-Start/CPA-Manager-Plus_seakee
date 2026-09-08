@@ -1631,12 +1631,29 @@ func validateCurrentDeleteReadiness(
 
 	for _, stateRequirement := range []struct {
 		name             string
+		expectedVersion  int
 		expectedRevision string
 	}{
-		{name: usagemonitoring.StatsRollupName, expectedRevision: pricingRevision},
-		{name: usagemonitoring.MetadataRollupName, expectedRevision: usageidentity.ModelFormatVersion},
-		{name: usagemonitoring.ProjectionRollupName, expectedRevision: usageidentity.MonitoringProjectionStructureRevision()},
-		{name: usageevent.CodexLegacyIdentityRollupName, expectedRevision: usageevent.CodexLegacyIdentityEvidenceRevision},
+		{
+			name:             usagemonitoring.StatsRollupName,
+			expectedVersion:  usagemonitoring.SchemaVersion,
+			expectedRevision: pricingRevision,
+		},
+		{
+			name:             usagemonitoring.MetadataRollupName,
+			expectedVersion:  usagemonitoring.SchemaVersion,
+			expectedRevision: usageidentity.ModelFormatVersion,
+		},
+		{
+			name:             usagemonitoring.ProjectionRollupName,
+			expectedVersion:  usagemonitoring.SchemaVersion,
+			expectedRevision: usageidentity.MonitoringProjectionStructureRevision(),
+		},
+		{
+			name:             usageevent.CodexLegacyIdentityRollupName,
+			expectedVersion:  usageevent.CodexLegacyIdentityEvidenceSchemaVersion,
+			expectedRevision: usageevent.CodexLegacyIdentityEvidenceRevision,
+		},
 	} {
 		var version int
 		var revision, status string
@@ -1659,7 +1676,7 @@ func validateCurrentDeleteReadiness(
 		if err := validateDerivedCoverage(
 			"monitoring "+stateRequirement.name,
 			version,
-			usagemonitoring.SchemaVersion,
+			stateRequirement.expectedVersion,
 			revision,
 			stateRequirement.expectedRevision,
 			status,

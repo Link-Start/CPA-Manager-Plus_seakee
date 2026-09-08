@@ -1085,6 +1085,17 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 			},
 		},
 		{
+			name: "codex legacy identity evidence schema version",
+			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set schema_version = 99
+					where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
+				return func() {
+					archiveTestExec(t, db, `update usage_monitoring_rollup_state set schema_version = ?
+						where rollup_name = ?`, usageevent.CodexLegacyIdentityEvidenceSchemaVersion, usageevent.CodexLegacyIdentityRollupName)
+				}
+			},
+		},
+		{
 			name: "codex legacy identity evidence state row missing",
 			mutate: func(t *testing.T, db *sql.DB, run Run) func() {
 				archiveTestExec(t, db, `delete from usage_monitoring_rollup_state where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)

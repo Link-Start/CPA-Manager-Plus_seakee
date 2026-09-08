@@ -24,6 +24,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/testutil"
 	usageparser "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
 func TestUsageArchiveServiceFullLifecycle(t *testing.T) {
@@ -1676,6 +1677,174 @@ func TestUsageArchiveRoundTripPreservesAuthAccountIDSnapshot(t *testing.T) {
 	}
 	if checks[0].authAccountID == checks[1].authAccountID {
 		t.Errorf("expected distinct member auth_account_id_snapshot, but they were equal")
+	}
+
+	catchUpUsageAggregate(t, st)
+	if _, err := service.VerifyArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("verify archive: %v", err)
+	}
+	if _, err := service.DeleteArchive(ctx, created.Run.ID); err != nil {
+		t.Fatalf("delete archive: %v", err)
+	}
+}
+
+func TestUsageArchiveRoundTripPreservesCodexMemberIdentity(t *testing.T) {
+	events := []usageparser.Event{
+		{
+			RequestID:             "archive-codex-req-a",
+			EventHash:             "archive-codex-hash-a",
+			TimestampMS:           1_000,
+			Timestamp:             time.UnixMilli(1_000).UTC().Format(time.RFC3339Nano),
+			Provider:              "codex",
+			AuthProviderSnapshot:  "codex",
+			ExecutorType:          "CodexExecutor",
+			Model:                 "gpt-4o",
+			Endpoint:              "POST /v1/responses",
+			Method:                "POST",
+			Path:                  "/v1/responses",
+			AuthIndex:             "workspace-common",
+			AuthAccountIDSnapshot: "workspace-shared",
+			AccountSnapshot:       "member-a@example.com",
+			InputTokens:           100,
+			OutputTokens:          20,
+			TotalTokens:           120,
+			RawJSON:               `{"request":{"model":"gpt-4o"}}`,
+			CreatedAtMS:           1_000,
+		},
+		{
+			RequestID:             "archive-codex-req-b",
+			EventHash:             "archive-codex-hash-b",
+			TimestampMS:           2_000,
+			Timestamp:             time.UnixMilli(2_000).UTC().Format(time.RFC3339Nano),
+			Provider:              "codex",
+			AuthProviderSnapshot:  "codex",
+			ExecutorType:          "CodexExecutor",
+			Model:                 "gpt-4o",
+			Endpoint:              "POST /v1/responses",
+			Method:                "POST",
+			Path:                  "/v1/responses",
+			AuthIndex:             "workspace-common",
+			AuthAccountIDSnapshot: "workspace-shared",
+			AccountSnapshot:       "member-b@example.com",
+			InputTokens:           100,
+			OutputTokens:          20,
+			TotalTokens:           120,
+			RawJSON:               `{"request":{"model":"gpt-4o"}}`,
+			CreatedAtMS:           2_000,
+		},
+	}
+
+	service, st, archiveDirectory := newArchiveTestService(t, 2, 2, events)
+	ctx := context.Background()
+
+	created, err := service.CreateArchive(ctx, 3_000)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	archived, err := service.ResumeArchive(ctx, created.Run.ID)
+	if err != nil {
+		t.Fatalf("resume archive: %v", err)
+	}
+	if len(archived.Segments) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(archived.Segments))
+	}
+
+	segmentPath := filepath.Join(archiveDirectory, filepath.FromSlash(archived.Segments[0].FileName))
+	segmentBytes, err := os.ReadFile(segmentPath)
+	if err != nil {
+		t.Fatalf("read segment file: %v", err)
+	}
+
+	gzReader, err := gzip.NewReader(bytes.NewReader(segmentBytes))
+	if err != nil {
+		t.Fatalf("open gzip reader: %v", err)
+	}
+	defer gzReader.Close()
+
+	uncompressedJSONL, err := io.ReadAll(gzReader)
+	if err != nil {
+		t.Fatalf("read uncompressed jsonl: %v", err)
+	}
+
+	importResult, err := usageparser.ParseImportPayload(uncompressedJSONL)
+	if err != nil {
+		t.Fatalf("parse import payload: %v", err)
+	}
+	if len(importResult.Events) != 2 {
+		t.Fatalf("expected 2 parsed events, got %d", len(importResult.Events))
+	}
+
+	targetCfg := testutil.NewConfig(t)
+	targetDB, err := sqliterepo.Open(targetCfg.DBPath)
+	if err != nil {
+		t.Fatalf("open target db: %v", err)
+	}
+	defer targetDB.Close()
+	targetStore := store.New(targetDB)
+
+	if _, err := targetStore.UsageEvents.InsertBatch(ctx, importResult.Events); err != nil {
+		t.Fatalf("insert imported events: %v", err)
+	}
+
+	rows, err := targetDB.Query(`select id, coalesce(auth_account_id_snapshot, ''), coalesce(account_snapshot, ''), coalesce(auth_provider_snapshot, ''), coalesce(auth_file_snapshot, ''), coalesce(auth_index, ''), coalesce(source, '') from usage_events order by id asc`)
+	if err != nil {
+		t.Fatalf("query target usage_events: %v", err)
+	}
+	defer rows.Close()
+
+	type restoredRow struct {
+		id                   int64
+		authAccountID        string
+		account              string
+		authProviderSnapshot string
+		authFileSnapshot     string
+		authIndex            string
+		source               string
+	}
+	var restoredList []restoredRow
+	for rows.Next() {
+		var r restoredRow
+		if err := rows.Scan(&r.id, &r.authAccountID, &r.account, &r.authProviderSnapshot, &r.authFileSnapshot, &r.authIndex, &r.source); err != nil {
+			t.Fatalf("scan row: %v", err)
+		}
+		restoredList = append(restoredList, r)
+	}
+	if len(restoredList) != 2 {
+		t.Fatalf("expected 2 imported rows, got %d", len(restoredList))
+	}
+
+	if restoredList[0].authAccountID != "workspace-shared" || restoredList[0].account != "member-a@example.com" {
+		t.Errorf("imported event 0 mismatch: %+v", restoredList[0])
+	}
+	if restoredList[1].authAccountID != "workspace-shared" || restoredList[1].account != "member-b@example.com" {
+		t.Errorf("imported event 1 mismatch: %+v", restoredList[1])
+	}
+
+	keyA, okA := usageidentity.AccountKey(usageidentity.Fields{
+		AuthProviderSnapshot:  restoredList[0].authProviderSnapshot,
+		AuthAccountIDSnapshot: restoredList[0].authAccountID,
+		AccountSnapshot:       restoredList[0].account,
+		AuthFileSnapshot:      restoredList[0].authFileSnapshot,
+		AuthIndex:             restoredList[0].authIndex,
+		Source:                restoredList[0].source,
+	})
+	keyB, okB := usageidentity.AccountKey(usageidentity.Fields{
+		AuthProviderSnapshot:  restoredList[1].authProviderSnapshot,
+		AuthAccountIDSnapshot: restoredList[1].authAccountID,
+		AccountSnapshot:       restoredList[1].account,
+		AuthFileSnapshot:      restoredList[1].authFileSnapshot,
+		AuthIndex:             restoredList[1].authIndex,
+		Source:                restoredList[1].source,
+	})
+
+	if !okA || keyA == "" {
+		t.Fatalf("expected valid keyA, got ok=%v keyA=%q", okA, keyA)
+	}
+	if !okB || keyB == "" {
+		t.Fatalf("expected valid keyB, got ok=%v keyB=%q", okB, keyB)
+	}
+	if keyA == keyB {
+		t.Fatalf("expected distinct member keys for same workspace, but got equal keys: %q", keyA)
 	}
 
 	catchUpUsageAggregate(t, st)
