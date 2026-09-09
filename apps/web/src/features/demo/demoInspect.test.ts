@@ -5,7 +5,10 @@ import {
   getDemoAccountWindowUsage,
 } from './demoFixtures';
 import { buildAccountRows } from '@/features/accounts/model/accountRows';
-import { buildAccountQuotaDisplayWindows } from '@/features/accounts/model/accountQuotaDisplayWindows';
+import {
+  buildAccountQuotaDisplayWindows,
+  type BuildAccountQuotaDisplayWindowsOptions,
+} from '@/features/accounts/model/accountQuotaDisplayWindows';
 import { buildAccountQuotaWindowDefinitions } from '@/features/accounts/model/accountQuotaWindowDefinitions';
 import { selectAccountQuotaMainListWindows } from '@/features/accounts/model/accountsPagePresentation';
 import { buildAccountSubscriptionPresentation } from '@/features/accounts/model/accountSubscriptionPresentation';
@@ -54,12 +57,12 @@ describe('Demo accounts quota & usage presentation regression', () => {
     const quotaState = getDemoQuotaStoreState();
     const rows = buildAccountRows(authFiles, quotaState);
 
-    const options = {
+    const options: BuildAccountQuotaDisplayWindowsOptions = {
       stores: quotaState,
       getDisplayCodexQuota: (raw: { name?: string }) =>
         Object.values(quotaState.codexQuota).find((q) => q?.authFileName === raw.name),
       translateQuotaWindowLabel: (label?: string, key?: string) => label || key || '',
-      t: ((k: string) => k) as unknown as (key: string) => string,
+      t: ((k: string) => k) as unknown as BuildAccountQuotaDisplayWindowsOptions['t'],
     };
 
     const windowsByRowKey = new Map();

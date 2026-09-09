@@ -925,7 +925,8 @@
     "list_header_historical_usage": "历史用量",
     "list_header_quota": "额度使用",
     "list_header_actions": "操作",
-    "list_plan_remaining_days": "剩余 {{days}} 天",
+    "list_plan_remaining_days": "{{days}} 天",
+    "list_plan_remaining_days_tooltip": "剩余 {{days}} 天",
     "list_section_identity": "凭证信息",
     "list_section_status": "可用状态",
     "list_section_quota": "额度",
@@ -4597,15 +4598,15 @@
       }
     },
     "claude": {
-      "free": "免费版",
-      "pro": "专业版",
+      "free": "Free",
+      "pro": "Pro",
       "max": "Max",
       "max_5x": "Max 5x",
       "max_20x": "Max 20x",
-      "team": "团队版"
+      "team": "Team"
     },
     "antigravity": {
-      "free": "免费版",
+      "free": "Free",
       "pro": "Pro",
       "ultra": "Ultra",
       "ultra_lite": "Ultra Lite"

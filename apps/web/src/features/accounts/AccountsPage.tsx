@@ -7690,9 +7690,16 @@ export function AccountsPage() {
                     {subscriptionPresentation.planPresentation?.shortLabel ?? '-'}
                   </span>
                   {subscriptionPresentation.remainingDays !== null ? (
-                    <span className={styles.accountPlanRemaining}>
+                    <span
+                      className={styles.accountPlanRemaining}
+                      title={t('accounts.list_plan_remaining_days_tooltip', {
+                        days: subscriptionPresentation.remainingDays,
+                        defaultValue: `剩余 ${subscriptionPresentation.remainingDays} 天`,
+                      })}
+                    >
                       {t('accounts.list_plan_remaining_days', {
                         days: subscriptionPresentation.remainingDays,
+                        defaultValue: `${subscriptionPresentation.remainingDays} 天`,
                       })}
                     </span>
                   ) : null}

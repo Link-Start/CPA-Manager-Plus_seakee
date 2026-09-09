@@ -310,6 +310,7 @@
     line-height: 1.25;
   }
 
+  > span:nth-child(2),
   > span:nth-child(3),
   > span:nth-child(4),
   > span:last-child {
@@ -318,7 +319,6 @@
   }
 
   > span:first-child,
-  > span:nth-child(2),
   > span:nth-child(5) {
     justify-content: flex-start;
     text-align: left;
@@ -493,12 +493,15 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
   min-width: 0;
   gap: 2px;
+  text-align: center;
 }
 
 .accountPlanName {
+  max-width: 100%;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
@@ -506,15 +509,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
 }
 
 .accountPlanRemaining {
+  max-width: 100%;
   font-size: 11px;
   color: var(--accounts-muted);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
 }
 
 .accountIdentityBadgeRow,
