@@ -19,7 +19,8 @@ import { versionApi } from '@/services/api';
 import type { UsageServiceStatus } from '@/services/api/usageService';
 import type { ConnectionStatus } from '@/types';
 import { compareVersions, type VersionComparison } from '@/utils/version';
-import { readApiLatestVersion } from '@/features/system/versionChecks';
+import { readApiLatestVersion, readManagerStableVersion } from '@/features/system/versionChecks';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { useManagerUpdates } from '@/features/system/ManagerUpdates';
 import { buildDashboardVersionReleaseURL } from '@/features/dashboard/versionReleaseLinks';
 import styles from './VersionCard.module.scss';
@@ -136,8 +137,78 @@ export function VersionCard({
   const showNotification = useNotificationStore((state) => state.showNotification);
   const updates = useManagerUpdates();
   const managerVersion = updates.status?.current_version || appVersion;
+  const featureAvailability = usePanelFeatureAvailability();
+  const externalManagerUpdateFallback =
+    featureAvailability.panelHostConfirmed &&
+    featureAvailability.panelHostMode === 'external_panel' &&
+    !featureAvailability.managerServiceAvailable;
+
+  const [externalStableVersion, setExternalStableVersion] =
+    useState<string | null | undefined>(undefined);
+  const [externalStableError, setExternalStableError] = useState(false);
+  const [checkingManagerVersion, setCheckingManagerVersion] = useState(false);
+
   const [latest, setLatest] = useState<LatestVersions>({ latestApi: '' });
   const [checkingApiVersion, setCheckingApiVersion] = useState(false);
+
+  const loadExternalManagerStable = useCallback(async (): Promise<string | null> => {
+    try {
+      const data = await versionApi.checkManagerUpdateIndex();
+      const version = readManagerStableVersion(data);
+      setExternalStableVersion(version);
+      setExternalStableError(false);
+      return version;
+    } catch (error) {
+      setExternalStableVersion(undefined);
+      setExternalStableError(true);
+      throw error;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!externalManagerUpdateFallback) {
+      setExternalStableVersion(undefined);
+      setExternalStableError(false);
+      return;
+    }
+
+    loadExternalManagerStable().catch(() => {
+      // 自动检查失败静默处理，不弹 Toast
+    });
+  }, [externalManagerUpdateFallback, refreshSignal, loadExternalManagerStable]);
+
+  const handleExternalManagerCheck = useCallback(async () => {
+    setCheckingManagerVersion(true);
+    try {
+      const version = await loadExternalManagerStable();
+      if (version === null) {
+        showNotification(t('manager_updates.no_candidate'), 'info');
+        return;
+      }
+
+      const comparison = compareVersions(version, appVersion);
+      if (comparison === null) {
+        showNotification(t('system_info.manager_version_current_missing'), 'warning');
+        return;
+      }
+
+      if (comparison > 0) {
+        showNotification(
+          t('system_info.manager_version_update_available', { version }),
+          'warning'
+        );
+      } else {
+        showNotification(t('system_info.manager_version_is_latest'), 'success');
+      }
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const suffix = message ? `: ${message}` : '';
+      showNotification(`${t('system_info.manager_version_check_error')}${suffix}`, 'error');
+    } finally {
+      setCheckingManagerVersion(false);
+    }
+  }, [appVersion, loadExternalManagerStable, showNotification, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,6 +289,7 @@ export function VersionCard({
     [latest.latestApi]
   );
   const managerUpdateAvailable =
+    featureAvailability.managerServiceAvailable &&
     updates.available &&
     !updates.error &&
     !updates.status?.last_error &&
@@ -234,6 +306,31 @@ export function VersionCard({
       ),
     [apiVersion, latest.latestApi, latestApiReleaseUrl, t]
   );
+  const externalReleaseUrl = useMemo(
+    () =>
+      externalStableVersion
+        ? buildDashboardVersionReleaseURL('manager', externalStableVersion)
+        : '',
+    [externalStableVersion]
+  );
+  const externalBadge = useMemo(() => {
+    if (!externalManagerUpdateFallback || !externalStableVersion || externalStableError) {
+      return null;
+    }
+    return renderBadge(
+      compareVersions(externalStableVersion, appVersion),
+      externalStableVersion,
+      externalReleaseUrl,
+      t
+    );
+  }, [
+    externalManagerUpdateFallback,
+    externalStableVersion,
+    externalStableError,
+    appVersion,
+    externalReleaseUrl,
+    t,
+  ]);
 
   const buildTimeDisplay = serverBuildDate
     ? new Date(serverBuildDate).toLocaleString(i18n.language)
@@ -349,6 +446,21 @@ export function VersionCard({
                 >
                   {t('title.abbr')}
                 </div>
+                {externalManagerUpdateFallback && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    iconOnly
+                    className={styles.versionAction}
+                    onClick={() => void handleExternalManagerCheck()}
+                    loading={checkingManagerVersion}
+                    title={t('system_info.version_check_button')}
+                    aria-label={t('system_info.version_check_button')}
+                  >
+                    {!checkingManagerVersion && <IconRefreshCw size={14} />}
+                  </Button>
+                )}
                 {managerUpdateAvailable && (
                   <Link
                     to="/system/updates"
@@ -370,6 +482,7 @@ export function VersionCard({
                   managerVersion || t('dashboard.version_unknown'),
                   appReleaseUrl
                 )}
+                {renderBadgeValue(externalBadge)}
               </div>
             </div>
           </div>
