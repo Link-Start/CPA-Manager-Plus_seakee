@@ -86,12 +86,43 @@ const findBadge = (renderer: ReactTestRenderer, type: string, text: string) =>
       getText(node).includes(text)
   );
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject,
+  };
+};
+
+const findManagerRefreshButton = (renderer: ReactTestRenderer) => {
+  const managerSection = renderer.root.find(
+    (node) =>
+      node.type === 'div' &&
+      node.props.className?.includes(styles.item) &&
+      node.findAll((child) => getText(child).includes('title.abbr')).length > 0
+  );
+  return managerSection.find(
+    (node) =>
+      node.type === 'button' &&
+      node.props['aria-label'] === 'system_info.version_check_button'
+  );
+};
+
 const renderCard = async ({
   appVersion = '1.12.6',
   apiVersion = '7.2.143',
   latestApp = '1.12.6',
   latestApi = '7.2.143',
   connectionStatus = 'connected' as ConnectionStatus,
+  refreshSignal,
   statusOverrides = {},
   error = false,
   panelHostConfirmed = true,
@@ -105,18 +136,21 @@ const renderCard = async ({
       beta: null,
     },
   },
+  mockUpdateIndex,
 }: {
   appVersion?: string;
   apiVersion?: string;
   latestApp?: string;
   latestApi?: string;
   connectionStatus?: ConnectionStatus;
+  refreshSignal?: number;
   statusOverrides?: Record<string, unknown>;
   error?: boolean;
   panelHostConfirmed?: boolean;
   panelHostMode?: 'manager_embedded' | 'external_panel';
   managerServiceAvailable?: boolean;
   updateIndexData?: unknown;
+  mockUpdateIndex?: () => Promise<unknown>;
 } = {}) => {
   mocks.panelFeatureAvailability = {
     checking: false,
@@ -132,7 +166,11 @@ const renderCard = async ({
     externalManagerConfigAvailable: false,
     reason: '',
   };
-  mocks.checkManagerUpdateIndex.mockResolvedValue(updateIndexData);
+  if (mockUpdateIndex) {
+    mocks.checkManagerUpdateIndex.mockImplementation(mockUpdateIndex);
+  } else {
+    mocks.checkManagerUpdateIndex.mockResolvedValue(updateIndexData);
+  }
   mocks.updates.status = {
     current_version: appVersion,
     state: latestApp.includes('gabcdef')
@@ -155,6 +193,7 @@ const renderCard = async ({
           apiVersion={apiVersion}
           cpaBase="http://cpa.local:8317"
           connectionStatus={connectionStatus}
+          refreshSignal={refreshSignal}
           usageEnabled={false}
           usageLoading={false}
           collectorStatus={null}
@@ -486,5 +525,301 @@ describe('VersionCard external panel fallback', () => {
 
     const buttons = renderer.root.findAllByType('button');
     expect(buttons).toHaveLength(1);
+  });
+
+  it('Race Test A: stale success does not overwrite newer no-candidate result', async () => {
+    const autoReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+    const manualReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+
+    const renderer = await renderCard({
+      panelHostConfirmed: true,
+      panelHostMode: 'external_panel',
+      managerServiceAvailable: false,
+      appVersion: 'v1.12.11',
+      mockUpdateIndex: () => autoReq.promise,
+    });
+
+    expect(mocks.checkManagerUpdateIndex).toHaveBeenCalledTimes(1);
+
+    mocks.checkManagerUpdateIndex.mockImplementationOnce(() => manualReq.promise);
+    const refreshButton = findManagerRefreshButton(renderer);
+
+    await act(async () => {
+      refreshButton.props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(mocks.checkManagerUpdateIndex).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      manualReq.resolve({
+        schema_version: 1,
+        channels: {
+          stable: null,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const getUpdateBadges = () =>
+      renderer.root.findAll(
+        (node) =>
+          node.props.className?.includes(styles.badge) &&
+          node.props.className?.includes(styles.badgeUpdate)
+      );
+
+    expect(getUpdateBadges()).toHaveLength(0);
+    expect(mocks.showNotification).toHaveBeenCalledWith('manager_updates.no_candidate', 'info');
+    mocks.showNotification.mockClear();
+
+    await act(async () => {
+      autoReq.resolve({
+        schema_version: 1,
+        channels: {
+          stable: {
+            version: 'v1.12.12',
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getUpdateBadges()).toHaveLength(0);
+    expect(mocks.showNotification).not.toHaveBeenCalledWith(
+      'system_info.manager_version_update_available:v1.12.12',
+      'warning'
+    );
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('Race Test B: stale failure does not clear newer successful candidate or set error state', async () => {
+    const autoReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+    const manualReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+
+    const renderer = await renderCard({
+      panelHostConfirmed: true,
+      panelHostMode: 'external_panel',
+      managerServiceAvailable: false,
+      appVersion: 'v1.12.11',
+      mockUpdateIndex: () => autoReq.promise,
+    });
+
+    expect(mocks.checkManagerUpdateIndex).toHaveBeenCalledTimes(1);
+
+    mocks.checkManagerUpdateIndex.mockImplementationOnce(() => manualReq.promise);
+    const refreshButton = findManagerRefreshButton(renderer);
+
+    await act(async () => {
+      refreshButton.props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(mocks.checkManagerUpdateIndex).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      manualReq.resolve({
+        schema_version: 1,
+        channels: {
+          stable: {
+            version: 'v1.12.13',
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const badge = findBadge(renderer, 'a', 'v1.12.13');
+    expect(badge).toBeDefined();
+    expect(badge.props.href).toBe(
+      'https://github.com/seakee/CPA-Manager-Plus/releases/tag/v1.12.13'
+    );
+    mocks.showNotification.mockClear();
+
+    await act(async () => {
+      autoReq.reject(new Error('stale network failure'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const badgeAfter = findBadge(renderer, 'a', 'v1.12.13');
+    expect(badgeAfter).toBeDefined();
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('Race Test C: stale manual check result does not update UI or trigger notifications', async () => {
+    const autoReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+
+    const renderer = await renderCard({
+      panelHostConfirmed: true,
+      panelHostMode: 'external_panel',
+      managerServiceAvailable: false,
+      appVersion: 'v1.12.11',
+      mockUpdateIndex: () => autoReq.promise,
+    });
+
+    await act(async () => {
+      autoReq.resolve({
+        schema_version: 1,
+        channels: { stable: null },
+      });
+      await Promise.resolve();
+    });
+
+    const manualReqA = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+    mocks.checkManagerUpdateIndex.mockImplementationOnce(() => manualReqA.promise);
+    const refreshButton = findManagerRefreshButton(renderer);
+
+    await act(async () => {
+      refreshButton.props.onClick();
+      await Promise.resolve();
+    });
+
+    const autoReqB = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+    mocks.checkManagerUpdateIndex.mockImplementationOnce(() => autoReqB.promise);
+
+    await act(async () => {
+      renderer.update(
+        <MemoryRouter>
+          <VersionCard
+            appVersion="v1.12.11"
+            apiVersion="7.2.143"
+            cpaBase="http://cpa.local:8317"
+            connectionStatus="connected"
+            refreshSignal={1}
+            usageEnabled={false}
+            usageLoading={false}
+            collectorStatus={null}
+            collectorLoading={false}
+            errorLogCount={0}
+            errorLogsLoading={false}
+          />
+        </MemoryRouter>
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      autoReqB.resolve({
+        schema_version: 1,
+        channels: {
+          stable: {
+            version: 'v1.12.13',
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const badgeB = findBadge(renderer, 'a', 'v1.12.13');
+    expect(badgeB).toBeDefined();
+    mocks.showNotification.mockClear();
+
+    await act(async () => {
+      manualReqA.resolve({
+        schema_version: 1,
+        channels: {
+          stable: {
+            version: 'v1.12.12',
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const badgeAfter = findBadge(renderer, 'a', 'v1.12.13');
+    expect(badgeAfter).toBeDefined();
+    expect(
+      renderer.root.findAll((node) => getText(node).includes('v1.12.12'))
+    ).toHaveLength(0);
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('invalidates pending in-flight request when external fallback is disabled', async () => {
+    const autoReq = createDeferred<{
+      schema_version: number;
+      channels: { stable: { version: string } | null };
+    }>();
+
+    const renderer = await renderCard({
+      panelHostConfirmed: true,
+      panelHostMode: 'external_panel',
+      managerServiceAvailable: false,
+      appVersion: 'v1.12.11',
+      mockUpdateIndex: () => autoReq.promise,
+    });
+
+    mocks.panelFeatureAvailability = {
+      ...mocks.panelFeatureAvailability,
+      panelHostMode: 'manager_embedded',
+      managerServiceAvailable: true,
+    };
+
+    await act(async () => {
+      renderer.update(
+        <MemoryRouter>
+          <VersionCard
+            appVersion="v1.12.11"
+            apiVersion="7.2.143"
+            cpaBase="http://cpa.local:8317"
+            connectionStatus="connected"
+            refreshSignal={2}
+            usageEnabled={false}
+            usageLoading={false}
+            collectorStatus={null}
+            collectorLoading={false}
+            errorLogCount={0}
+            errorLogsLoading={false}
+          />
+        </MemoryRouter>
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      autoReq.resolve({
+        schema_version: 1,
+        channels: {
+          stable: {
+            version: 'v1.12.12',
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const externalBadges = renderer.root.findAll(
+      (node) =>
+        node.type === 'a' &&
+        node.props.href?.includes('tag/v1.12.12') &&
+        node.props.className?.includes(styles.badgeUpdate)
+    );
+    expect(externalBadges).toHaveLength(0);
   });
 });

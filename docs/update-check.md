@@ -18,6 +18,13 @@ Dashboard 版本卡片保留当前版本和「有更新」入口，当前版本�
 
 软件更新页集中展示目标版本、摘要、最近成功检查时间和手动检查按钮。部署步骤与通道设置默认收起，迁移要求和最低 CPA 版本直接展示。Docker 镜像可复制精确版本，原生部署链接到对应版本的安装包。检查失败或缓存过期时会明确标记已有信息，不显示「已是最新」。
 
+### External 面板兼容
+
+- **Manager-hosted panel**：更新检查由 Manager Server 完成，完整支持 Channel、release-info、通知和软件更新页。
+- **已确认的 CPA-hosted/external panel**：为保持旧版兼容，仅由浏览器读取 public update-index.json 中的 Stable pointer，用于 Dashboard Stable 更新提示。
+- external fallback 不下载 release-info.json，不参与 Release Reach 计数，不提供 beta/rc Channel，也不进入完整软件更新页。请求失败时不保留旧 candidate。
+- 并发检查采用 latest-request-wins，较早请求晚返回时不会覆盖较新的 Stable 结果。
+
 ## 发布元数据
 
 新版本的中文 Release Notes 中必须包含唯一 JSON 注释，供生成器使用，不增加另一套完整发行说明：

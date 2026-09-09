@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -55,6 +55,15 @@ interface HealthItem {
   icon: ReactNode;
   to?: string;
 }
+
+type ExternalStableLoadResult =
+  | {
+      current: true;
+      version: string | null;
+    }
+  | {
+      current: false;
+    };
 
 interface VersionBadge {
   label: string;
@@ -147,26 +156,45 @@ export function VersionCard({
     useState<string | null | undefined>(undefined);
   const [externalStableError, setExternalStableError] = useState(false);
   const [checkingManagerVersion, setCheckingManagerVersion] = useState(false);
+  const externalRequestSequenceRef = useRef(0);
 
   const [latest, setLatest] = useState<LatestVersions>({ latestApi: '' });
   const [checkingApiVersion, setCheckingApiVersion] = useState(false);
 
-  const loadExternalManagerStable = useCallback(async (): Promise<string | null> => {
-    try {
-      const data = await versionApi.checkManagerUpdateIndex();
-      const version = readManagerStableVersion(data);
-      setExternalStableVersion(version);
-      setExternalStableError(false);
-      return version;
-    } catch (error) {
-      setExternalStableVersion(undefined);
-      setExternalStableError(true);
-      throw error;
-    }
-  }, []);
+  const loadExternalManagerStable =
+    useCallback(async (): Promise<ExternalStableLoadResult> => {
+      const requestId = ++externalRequestSequenceRef.current;
+
+      try {
+        const data = await versionApi.checkManagerUpdateIndex();
+        const version = readManagerStableVersion(data);
+
+        if (requestId !== externalRequestSequenceRef.current) {
+          return { current: false };
+        }
+
+        setExternalStableVersion(version);
+        setExternalStableError(false);
+
+        return {
+          current: true,
+          version,
+        };
+      } catch (error) {
+        if (requestId !== externalRequestSequenceRef.current) {
+          return { current: false };
+        }
+
+        setExternalStableVersion(undefined);
+        setExternalStableError(true);
+
+        throw error;
+      }
+    }, []);
 
   useEffect(() => {
     if (!externalManagerUpdateFallback) {
+      externalRequestSequenceRef.current += 1;
       setExternalStableVersion(undefined);
       setExternalStableError(false);
       return;
@@ -175,12 +203,21 @@ export function VersionCard({
     loadExternalManagerStable().catch(() => {
       // 自动检查失败静默处理，不弹 Toast
     });
+
+    return () => {
+      externalRequestSequenceRef.current += 1;
+    };
   }, [externalManagerUpdateFallback, refreshSignal, loadExternalManagerStable]);
 
   const handleExternalManagerCheck = useCallback(async () => {
     setCheckingManagerVersion(true);
     try {
-      const version = await loadExternalManagerStable();
+      const result = await loadExternalManagerStable();
+      if (!result.current) {
+        return;
+      }
+
+      const version = result.version;
       if (version === null) {
         showNotification(t('manager_updates.no_candidate'), 'info');
         return;
