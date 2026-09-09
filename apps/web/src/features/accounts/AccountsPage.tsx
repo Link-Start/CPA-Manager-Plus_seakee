@@ -4695,12 +4695,12 @@ export function AccountsPage() {
     const result = new Map<string, AccountQuotaWindowDefinition[]>();
     for (const row of pageRows) {
       const definitions =
-        effectiveQuotaWindowDefinitionsByRowKey.get(row.selectionKey) ??
+        quotaWindowDefinitionsByRowKey.get(row.selectionKey) ??
         buildAccountQuotaWindowDefinitions(buildQuotaDisplayWindows(row));
       result.set(row.selectionKey, definitions);
     }
     return result;
-  }, [buildQuotaDisplayWindows, effectiveQuotaWindowDefinitionsByRowKey, pageRows]);
+  }, [buildQuotaDisplayWindows, pageRows, quotaWindowDefinitionsByRowKey]);
   const isListQueryContextMatching = useMemo(() => {
     if (!listWindowUsageQueryContext) return false;
     if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;

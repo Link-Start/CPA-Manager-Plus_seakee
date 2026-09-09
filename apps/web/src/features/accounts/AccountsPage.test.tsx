@@ -12094,7 +12094,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
   });
 
   it('reloads lifecycle and window usage after detail quota refresh without loading history', async () => {
@@ -12468,7 +12468,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByProps({ 'data-account-quota-usage-summary': 'true' })).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
     const initialDrawerWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
@@ -12497,7 +12497,7 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     const refreshedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[
       mocks.getAccountWindowUsage.mock.calls.length - 1
     ]?.[2] as
@@ -12517,8 +12517,8 @@ describe('AccountsPage replacement flows', () => {
     ).toMatchObject({
       fromMs: refreshedCurrentTarget?.from_ms,
       toMs: refreshedCurrentTarget?.to_ms,
-      totalRequests: 6,
-      totalTokens: 14_981,
+      totalRequests: 5,
+      totalTokens: 12_460,
     });
 
     await act(async () => {
@@ -12538,8 +12538,8 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
-    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[3]?.[2] as
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
     const reopenedCurrentTarget = (
@@ -12556,8 +12556,8 @@ describe('AccountsPage replacement flows', () => {
     ).toMatchObject({
       fromMs: reopenedCurrentTarget?.from_ms,
       toMs: reopenedCurrentTarget?.to_ms,
-      totalRequests: 7,
-      totalTokens: 17_502,
+      totalRequests: 6,
+      totalTokens: 14_981,
     });
   });
 
@@ -16305,6 +16305,181 @@ describe('AccountsPage replacement flows', () => {
         }),
         expect.anything()
       );
+    });
+
+    it('reproduces quota usage and forecast retention after opening quota tab', async () => {
+      const now = 1788940000000;
+      vi.setSystemTime(now);
+
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(targetFile, {
+        status: 'success',
+        fetchedAtMs: now,
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 50,
+            resetLabel: '3h',
+            resetAtMs: now + 3 * 3600 * 1000,
+          }),
+        ],
+        rateLimitResetCreditsAvailableCount: 2,
+        rateLimitResetCredits: [
+          {
+            id: 'credit-1',
+            status: 'available',
+            grantedAt: new Date(now - 86400 * 1000).toISOString(),
+            expiresAt: new Date(now + 2 * 86400 * 1000).toISOString(),
+          },
+        ],
+      });
+
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        return {
+          generated_at_ms: now,
+          items: request.windows.map((w: any) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 40,
+            success_calls: 40,
+            failure_calls: 0,
+            total_tokens: 30000,
+            total_cost: 0.75,
+            success_rate: 100,
+            last_seen_ms: now - 1000,
+            sync_status: 'ready',
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+          })),
+        };
+      });
+
+      vi.mocked(accountQuotaSnapshotApi.query).mockImplementation(async (_base, _key, accounts) => {
+        return {
+          generated_at_ms: now,
+          items: accounts.map((acc) => ({
+            row_key: acc.row_key,
+            account_key: acc.row_key,
+            provider: acc.provider,
+            windows: [
+              {
+                provider_window_id: 'five-hour',
+                window_kind: 'five_hour',
+                window_mode: 'fixed',
+                model_scope_kind: 'all',
+                source: 'api_query',
+                observed_at_ms: now - 500,
+                boundary_accuracy: 'exact',
+                cycle_start_ms: now - 2 * 3600 * 1000,
+                cycle_end_ms: now + 3 * 3600 * 1000,
+                duration_seconds: 5 * 3600,
+                used_percent: 50,
+                remaining_percent: 50,
+                relationship_kind: 'concurrent_subwindow',
+                container_provider_window_id: undefined,
+                stale: false,
+                logical_window_id: 101,
+                activation_generation: 1,
+                availability: 'active',
+                first_seen_at_ms: now - 5 * 3600 * 1000,
+                last_seen_at_ms: now - 500,
+                current_cycle: {
+                  id: 301,
+                  activation_id: 201,
+                  state: 'active',
+                  scheduled_start_ms: now - 2 * 3600 * 1000,
+                  scheduled_end_ms: now + 3 * 3600 * 1000,
+                  actual_start_ms: now - 2 * 3600 * 1000,
+                  duration_seconds: 5 * 3600,
+                  boundary_accuracy: 'exact',
+                  parent_cycle_id: undefined,
+                  forecast_eligible: true,
+                },
+                previous_cycle: undefined,
+              },
+              {
+                provider_window_id: 'weekly',
+                window_kind: 'weekly',
+                window_mode: 'fixed',
+                model_scope_kind: 'all',
+                source: 'api_query',
+                observed_at_ms: now - 500,
+                boundary_accuracy: 'exact',
+                cycle_start_ms: now - 3 * 86400 * 1000,
+                cycle_end_ms: now + 4 * 86400 * 1000,
+                duration_seconds: 7 * 86400,
+                used_percent: 25,
+                remaining_percent: 75,
+                relationship_kind: 'concurrent_subwindow',
+                container_provider_window_id: undefined,
+                stale: false,
+                logical_window_id: 102,
+                activation_generation: 1,
+                availability: 'active',
+                first_seen_at_ms: now - 7 * 86400 * 1000,
+                last_seen_at_ms: now - 500,
+                current_cycle: {
+                  id: 302,
+                  activation_id: 202,
+                  state: 'active',
+                  scheduled_start_ms: now - 3 * 86400 * 1000,
+                  scheduled_end_ms: now + 4 * 86400 * 1000,
+                  actual_start_ms: now - 3 * 86400 * 1000,
+                  duration_seconds: 7 * 86400,
+                  boundary_accuracy: 'exact',
+                  parent_cycle_id: undefined,
+                  forecast_eligible: true,
+                },
+                previous_cycle: undefined,
+              },
+            ],
+          })),
+        };
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const cardBefore = renderer.root.findByProps({ 'data-account-card': targetSelectionKey });
+      const textBefore = readText(cardBefore);
+      expect(textBefore).toContain('$0.75');
+      expect(textBefore).toContain('$1.50');
+
+      const resetCreditsNode = renderer.root.findByProps({
+        'data-account-reset-credits': targetSelectionKey,
+      });
+
+      await act(async () => {
+        resetCreditsNode.props.onClick({
+          stopPropagation: () => {},
+          preventDefault: () => {},
+        });
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
+
+      const cardAfter = renderer.root.findByProps({ 'data-account-card': targetSelectionKey });
+      const textAfter = readText(cardAfter);
+      expect(textAfter).toContain('$0.75');
+      expect(textAfter).toContain('$1.50');
     });
   });
 });
