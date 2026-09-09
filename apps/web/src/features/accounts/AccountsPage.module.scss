@@ -284,11 +284,11 @@
 .accountCard {
   display: grid;
   grid-template-columns:
-    minmax(140px, 180px)
+    minmax(170px, 220px)
+    90px
     96px
-    144px
-    196px
-    minmax(190px, 1fr)
+    136px
+    minmax(340px, 1fr)
     124px;
   column-gap: clamp(10px, 0.8vw, 14px);
   min-width: 0;
@@ -310,7 +310,6 @@
     line-height: 1.25;
   }
 
-  > span:nth-child(2),
   > span:nth-child(3),
   > span:nth-child(4),
   > span:last-child {
@@ -319,6 +318,7 @@
   }
 
   > span:first-child,
+  > span:nth-child(2),
   > span:nth-child(5) {
     justify-content: flex-start;
     text-align: left;
@@ -350,11 +350,11 @@
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
-      minmax(180px, 1.15fr)
-      104px
-      150px
-      196px
-      minmax(268px, 2fr)
+      minmax(200px, 1.15fr)
+      100px
+      100px
+      144px
+      minmax(380px, 2fr)
       176px;
     justify-content: space-between;
     column-gap: clamp(16px, 1.15vw, 22px);
@@ -372,9 +372,9 @@
     display: none;
   }
 
+  .accountCardPlan::before,
   .accountCardHealth::before,
   .accountCardLatestRequest::before,
-  .accountCardEvidence::before,
   .accountCardBusiness::before,
   .accountCardRecommendation::before {
     display: none;
@@ -402,9 +402,9 @@
 }
 
 .accountCardIdentity,
+.accountCardPlan,
 .accountCardHealth,
 .accountCardLatestRequest,
-.accountCardEvidence,
 .accountCardBusiness,
 .accountCardRecommendation {
   box-sizing: border-box;
@@ -413,25 +413,25 @@
 }
 
 .accountCardIdentity,
+.accountCardPlan,
 .accountCardHealth,
 .accountCardLatestRequest,
-.accountCardEvidence,
 .accountCardBusiness {
   padding-right: 6px;
 }
 
+.accountCardPlan,
 .accountCardHealth,
 .accountCardLatestRequest,
-.accountCardEvidence,
 .accountCardBusiness,
 .accountCardRecommendation {
   position: relative;
   padding-left: 10px;
 }
 
+.accountCardPlan::before,
 .accountCardHealth::before,
 .accountCardLatestRequest::before,
-.accountCardEvidence::before,
 .accountCardBusiness::before,
 .accountCardRecommendation::before {
   position: absolute;
@@ -454,9 +454,67 @@
 .accountCardIdentity {
   position: relative;
   display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.accountProviderLogo {
+  display: flex;
+  align-items: center;
   justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+
+  img {
+    max-width: 22px;
+    max-height: 22px;
+    object-fit: contain;
+  }
+}
+
+.accountProviderFallback {
+  color: var(--accounts-muted);
+}
+
+.accountIdentityText {
+  display: flex;
   flex-direction: column;
-  gap: 6px;
+  justify-content: center;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.accountCardPlan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  gap: 2px;
+}
+
+.accountPlanName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accountPlanRemaining {
+  font-size: 11px;
+  color: var(--accounts-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .accountIdentityBadgeRow,
@@ -994,15 +1052,10 @@
 }
 
 .quotaWindowGrid {
-  --quota-window-label-width: 40px;
-  --quota-window-track-width: 168px;
-  --quota-window-percent-width: 42px;
-  --quota-window-reset-width: 98px;
-
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: center;
-  gap: 9px;
+  gap: 12px;
   position: relative;
   height: 100%;
   min-width: 0;
@@ -1010,84 +1063,118 @@
 
 .quotaWindowCard {
   display: grid;
+  grid-template-rows: auto 6px auto;
   align-content: center;
+  row-gap: 5px;
   min-width: 0;
   padding: 0;
 
   & + & {
-    padding-top: 8px;
-    border-top: 1px solid color-mix(in srgb, var(--border-color) 34%, transparent);
+    position: relative;
+    padding-left: 12px;
+    border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
   }
 }
 
-.quotaWindowPrimaryLine {
-  display: grid;
-  grid-template-columns:
-    var(--quota-window-label-width)
-    minmax(44px, 1fr)
-    var(--quota-window-percent-width)
-    minmax(0, var(--quota-window-reset-width));
+.quotaWindowHeader {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  justify-content: start;
-  width: 100%;
-  max-width: 100%;
+  justify-content: space-between;
+  gap: 4px;
   min-width: 0;
-}
-
-.quotaWindowSummary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--quota-window-label-width);
-  min-width: var(--quota-window-label-width);
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--accounts-brand) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accounts-brand) 8%, transparent);
-  overflow: hidden;
-  color: var(--accounts-brand);
+  white-space: nowrap;
   font-size: 11px;
-  font-weight: 800;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
 }
 
-.quotaWindowPrimaryLineScoped {
-  --quota-window-label-width: 84px;
-}
-
-.quotaWindowSummaryScoped {
-  justify-content: flex-start;
-  gap: 3px;
-  padding-inline: 6px;
+.quotaWindowLabel {
+  font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quotaWindowSummaryScoped > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quotaWindowSummaryScoped > span:last-child {
-  flex-shrink: 0;
-}
-
-.quotaWindowScopeLabel {
   flex-shrink: 1;
+}
+
+.quotaWindowReset {
+  color: var(--accounts-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-right: 4px;
 }
 
 .quotaWindowPercent {
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 800;
-  text-align: right;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.quotaWindowUsageLine {
+  display: flex;
+  align-items: center;
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 1.2;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.quotaWindowUsageMetricGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.quotaWindowUsageMetric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.quotaWindowUsageMetricPredicted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accounts-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.quotaWindowCost {
+  font-variant-numeric: tabular-nums;
+}
+
+.quotaWindowToken {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quotaTokenIcon {
+  color: var(--accounts-muted);
+  flex-shrink: 0;
+}
+
+.quotaForecastArrow {
+  color: var(--accounts-muted);
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.quotaWindowUsagePlaceholder {
+  display: block;
+  height: 16px;
 }
 
 .quotaMatrix {

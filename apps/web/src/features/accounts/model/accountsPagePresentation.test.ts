@@ -17,6 +17,8 @@ import {
   parsePriorityValue,
   quotaStatusLabelKey,
   selectAccountQuotaListWindows,
+  selectAccountQuotaMainListWindows,
+  getQuotaWindowReadableLabel,
 } from './accountsPagePresentation';
 import type { AccountRow } from './accountRows';
 import type { AccountQuotaDisplayWindow } from './accountQuotaDisplayWindows';
@@ -387,5 +389,220 @@ describe('accountsPagePresentation', () => {
     expect(matrix?.windowKeys).toEqual(
       new Set(['five-claude', 'five-gemini', 'weekly-claude', 'weekly-gemini'])
     );
+  });
+
+  describe('selectAccountQuotaMainListWindows', () => {
+    const makeRow = (provider = 'codex') => makeAccountRow(provider);
+
+    it('selects 5h + weekly when 5h, weekly, and monthly are present (ascending duration)', () => {
+      const fiveHour = makeQuotaWindow({
+        key: '5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        remainingPercent: 10,
+      });
+      const weekly = makeQuotaWindow({
+        key: '7d',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        remainingPercent: 80,
+      });
+      const monthly = makeQuotaWindow({
+        key: '30d',
+        kind: 'monthly',
+        limitWindowSeconds: 2592000,
+        remainingPercent: 5,
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [
+        monthly,
+        fiveHour,
+        weekly,
+      ]);
+      expect(selected).toEqual([fiveHour, weekly]);
+    });
+
+    it('selects weekly + monthly when only weekly and monthly are present', () => {
+      const weekly = makeQuotaWindow({
+        key: '7d',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+      });
+      const monthly = makeQuotaWindow({
+        key: '30d',
+        kind: 'monthly',
+        limitWindowSeconds: 2592000,
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [monthly, weekly]);
+      expect(selected).toEqual([weekly, monthly]);
+    });
+
+    it('selects 5h + monthly when only 5h and monthly are present', () => {
+      const fiveHour = makeQuotaWindow({
+        key: '5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+      });
+      const monthly = makeQuotaWindow({
+        key: '30d',
+        kind: 'monthly',
+        limitWindowSeconds: 2592000,
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [monthly, fiveHour]);
+      expect(selected).toEqual([fiveHour, monthly]);
+    });
+
+    it('returns single window when only one window is available without stretching or padding', () => {
+      const fiveHour = makeQuotaWindow({
+        key: '5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [fiveHour]);
+      expect(selected).toEqual([fiveHour]);
+    });
+
+    it('always caps selection at maximum 2 windows', () => {
+      const w1 = makeQuotaWindow({
+        key: 'w1',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const w2 = makeQuotaWindow({
+        key: 'w2',
+        kind: 'daily',
+        limitWindowSeconds: 86400,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const w3 = makeQuotaWindow({
+        key: 'w3',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const w4 = makeQuotaWindow({
+        key: 'w4',
+        kind: 'monthly',
+        limitWindowSeconds: 2592000,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('claude'), [w4, w3, w2, w1]);
+      expect(selected).toHaveLength(2);
+      expect(selected).toEqual([w1, w2]);
+    });
+
+    it('prioritizes known duration over unknown duration', () => {
+      const known = makeQuotaWindow({
+        key: 'known-weekly',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const unknown = makeQuotaWindow({
+        key: 'unknown-window',
+        kind: 'unknown',
+        limitWindowSeconds: null,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('claude'), [unknown, known]);
+      expect(selected).toEqual([known, unknown]);
+    });
+
+    it('maintains stable order when durations are identical', () => {
+      const first = makeQuotaWindow({
+        key: 'first-5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const second = makeQuotaWindow({
+        key: 'second-5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('claude'), [first, second]);
+      expect(selected).toEqual([first, second]);
+    });
+
+    it('does not sort by remaining percent', () => {
+      const lowPercentLongDuration = makeQuotaWindow({
+        key: 'weekly',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        remainingPercent: 5,
+        windowMode: 'fixed',
+        source: 'codex',
+      });
+      const highPercentShortDuration = makeQuotaWindow({
+        key: '5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        remainingPercent: 95,
+        windowMode: 'fixed',
+        source: 'codex',
+      });
+
+      // 5h must come first despite 95% > 5%
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [
+        lowPercentLongDuration,
+        highPercentShortDuration,
+      ]);
+      expect(selected).toEqual([highPercentShortDuration, lowPercentLongDuration]);
+    });
+
+    it('preserves provider-specific candidate eligibility (e.g. excludes scoped Codex windows)', () => {
+      const main5h = makeQuotaWindow({
+        key: 'main-5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        modelScope: { kind: 'family', key: 'codex_main', complete: true },
+        windowMode: 'fixed',
+        source: 'codex',
+      });
+      const sparkScoped = makeQuotaWindow({
+        key: 'spark',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        modelScope: { kind: 'models', models: ['spark'], complete: true },
+        windowMode: 'fixed',
+        source: 'codex',
+      });
+
+      const selected = selectAccountQuotaMainListWindows(makeRow('codex'), [sparkScoped, main5h]);
+      expect(selected).toEqual([main5h]);
+    });
+  });
+
+  describe('getQuotaWindowReadableLabel', () => {
+    it('formats known window kinds with standard uppercase words', () => {
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'five_hour' }))).toBe('5h');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'daily' }))).toBe('24h');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly' }))).toBe('Weekly');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'monthly' }))).toBe('Monthly');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'billing' }))).toBe('Billing');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'payg' }))).toBe('Pay-As-You-Go');
+    });
+
+    it('formats custom/unknown labels with capitalized first letter', () => {
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ label: 'custom limit' }))).toBe(
+        'Custom limit'
+      );
+    });
   });
 });

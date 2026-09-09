@@ -920,18 +920,6 @@ const findQuotaBarByWindow = (card: ReactTestInstance, windowKey: string) => {
   return bar;
 };
 
-const findQuotaBarByMatrixCell = (card: ReactTestInstance, cellKey: string) => {
-  const cell = card.findByProps({ 'data-account-quota-matrix-cell': cellKey });
-  const bar = cell.findAll(
-    (node) =>
-      typeof node.props.className === 'string' &&
-      node.props.className.includes('quotaBar') &&
-      !node.props.className.includes('quotaTrack')
-  )[0];
-  if (!bar) throw new Error(`Matrix quota bar not found: ${cellKey}`);
-  return bar;
-};
-
 const findButtonByText = (renderer: ReactTestRenderer, text: string) => {
   const button = renderer.root
     .findAllByType(Button)
@@ -8048,10 +8036,10 @@ describe('AccountsPage replacement flows', () => {
 
     expect(text).not.toContain('accounts.quota_details_only');
     expect(text).not.toContain('accounts.quota_source_none');
-    expect(text).toContain('30D');
-    expect(text).toContain('PAYG');
-    expect(quotaRegion.props['aria-label']).toContain('xai_quota.monthly_credits');
-    expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
+    expect(text).toContain('Billing');
+    expect(text).toContain('Pay-As-You-Go');
+    expect(quotaRegion.props['aria-label']).toContain('Billing');
+    expect(quotaRegion.props['aria-label']).toContain('Pay-As-You-Go');
 
     await act(async () => {
       quotaRegion.props.onClick();
@@ -8126,8 +8114,8 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
 
-    expect(readText(card)).toContain('30D');
-    expect(readText(card)).toContain('PAYG');
+    expect(readText(card)).toContain('Billing');
+    expect(readText(card)).toContain('Pay-As-You-Go');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(findQuotaBarByWindow(card, 'billing').props.className).toContain('quotaBarBad');
     expect(findQuotaBarByWindow(card, 'pay-as-you-go').props.className).toContain('quotaBarBad');
@@ -8169,8 +8157,8 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(readText(card)).toContain('30D');
-    expect(readText(card)).toContain('PAYG');
+    expect(readText(card)).toContain('Billing');
+    expect(readText(card)).toContain('Pay-As-You-Go');
     expect(readText(card)).not.toContain('Grok Code Fast');
     expect(findQuotaBarByWindow(card, 'billing').props.className).toContain('quotaBarGood');
     expect(findQuotaBarByWindow(card, 'pay-as-you-go').props.className).toContain('quotaBarGood');
@@ -8223,11 +8211,11 @@ describe('AccountsPage replacement flows', () => {
     const cardText = readText(card);
     expect(cardText).not.toContain('accounts.quota_details_only');
     expect(cardText).not.toContain('accounts.quota_source_none');
-    expect(cardText).toContain('30D');
-    expect(cardText).toContain('PAYG');
+    expect(cardText).toContain('Billing');
+    expect(cardText).toContain('Pay-As-You-Go');
     expect(cardText).not.toContain('Grok Code Fast');
-    expect(quotaRegion.props['aria-label']).toContain('xai_quota.monthly_credits');
-    expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
+    expect(quotaRegion.props['aria-label']).toContain('Billing');
+    expect(quotaRegion.props['aria-label']).toContain('Pay-As-You-Go');
 
     await act(async () => {
       findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
@@ -8277,11 +8265,11 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(readText(card)).toContain('7D');
-    expect(readText(card)).not.toContain('30D');
-    expect(readText(card)).not.toContain('PAYG');
-    expect(quotaRegion.props['aria-label']).toContain('xai_quota.weekly_credits');
-    expect(quotaRegion.props['aria-label']).not.toContain('xai_quota.monthly_credits');
+    expect(readText(card)).toContain('Weekly');
+    expect(readText(card)).not.toContain('Billing');
+    expect(readText(card)).not.toContain('Pay-As-You-Go');
+    expect(quotaRegion.props['aria-label']).toContain('Weekly');
+    expect(quotaRegion.props['aria-label']).not.toContain('Billing');
   });
 
   it('renders Kimi summary-only quota on the account card', async () => {
@@ -8314,9 +8302,9 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(readText(card)).toContain('7D');
+    expect(readText(card)).toContain('Weekly');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
-    expect(quotaRegion.props['aria-label']).toContain('kimi_quota.weekly_limit');
+    expect(quotaRegion.props['aria-label']).toContain('Weekly');
 
     await act(async () => {
       quotaRegion.props.onClick();
@@ -8502,8 +8490,8 @@ describe('AccountsPage replacement flows', () => {
     const selectionKey = getAuthFileSelectionKey(file);
     const card = findAccountCardByKey(renderer, selectionKey);
 
-    expect(readText(card)).toContain('5H');
-    expect(readText(card)).toContain('SUM');
+    expect(readText(card)).toContain('5h');
+    expect(readText(card)).toContain('Summary');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
   });
 
@@ -8578,17 +8566,14 @@ describe('AccountsPage replacement flows', () => {
       getAuthFileSelectionKey(mocks.files[0]),
       'quota'
     );
-    card.findByProps({
-      'data-account-quota-matrix': getAuthFileSelectionKey(mocks.files[0]),
-    });
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'five_hour' })).toHaveLength(1);
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'weekly' })).toHaveLength(1);
     expect(
-      card.findAll((node) => typeof node.props['data-account-quota-matrix-cell'] === 'string')
-    ).toHaveLength(4);
+      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
+    ).toHaveLength(2);
     expect(readText(card)).not.toContain('accounts.quota_details_only');
-    expect(quotaRegion.props['aria-label']).toContain('Claude 5H 11%');
-    expect(quotaRegion.props['aria-label']).toContain('Gemini 7D 4%');
+    expect(readText(card)).toContain('Gemini');
+    expect(readText(card)).toContain('Claude');
+    expect(quotaRegion.props['aria-label']).toContain('Claude');
+    expect(quotaRegion.props['aria-label']).toContain('Gemini');
 
     await act(async () => {
       findAccountDetailRegion(
@@ -8657,15 +8642,12 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(mocks.files[0]));
-    card.findByProps({
-      'data-account-quota-matrix': getAuthFileSelectionKey(mocks.files[0]),
-    });
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'five_hour' })).toHaveLength(0);
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'weekly' })).toHaveLength(1);
     expect(
-      card.findAll((node) => typeof node.props['data-account-quota-matrix-cell'] === 'string')
+      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
     ).toHaveLength(2);
     expect(readText(card)).not.toContain('accounts.quota_details_only');
+    expect(readText(card)).toContain('Gemini');
+    expect(readText(card)).toContain('Claude');
 
     await act(async () => {
       findAccountDetailRegion(
@@ -8749,20 +8731,21 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(card.findAllByProps({ 'data-account-quota-matrix': selectionKey })).toHaveLength(1);
-    expect(readText(card)).toContain('5H');
-    expect(readText(card)).toContain('7D');
+    expect(
+      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
+    ).toHaveLength(2);
+    expect(readText(card)).toContain('5h');
     expect(readText(card)).toContain('Gemini');
     expect(readText(card)).toContain('Claude');
-    const matrixCells = card.findAll(
-      (node) => typeof node.props['data-account-quota-matrix-cell'] === 'string'
+    const quotaBars = card.findAll(
+      (node) =>
+        node.type === 'span' &&
+        typeof node.props.className === 'string' &&
+        node.props.className.includes('quotaBar')
     );
-    expect(matrixCells).toHaveLength(4);
-    matrixCells.forEach((cell) => {
-      expect(
-        findQuotaBarByMatrixCell(card, cell.props['data-account-quota-matrix-cell'] as string).props
-          .className
-      ).toContain('quotaBarBad');
+    expect(quotaBars.length).toBeGreaterThan(0);
+    quotaBars.forEach((bar) => {
+      expect(bar.props.className).toContain('quotaBarBad');
     });
 
     await act(async () => {
@@ -8815,7 +8798,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(card.findAllByProps({ 'data-account-quota-matrix': selectionKey })).toHaveLength(0);
     expect(readText(card)).toContain('Gemini');
-    expect(readText(card)).toContain('7D');
+    expect(readText(card)).toContain('Weekly');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(quotaRegion.props['aria-label']).toContain('76%');
 
@@ -8882,8 +8865,8 @@ describe('AccountsPage replacement flows', () => {
     expect(card.findAllByProps({ 'data-account-quota-matrix': selectionKey })).toHaveLength(0);
     expect(readText(card)).toContain('Gemini');
     expect(readText(card)).toContain('Claude');
-    expect(readText(card)).toContain('5H');
-    expect(readText(card)).toContain('7D');
+    expect(readText(card)).toContain('5h');
+    expect(readText(card)).toContain('Weekly');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(findQuotaBarByWindow(card, 'gemini-models:gemini-5h').props.className).toContain(
       'quotaBarWarn'
@@ -8964,11 +8947,10 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(card.findAllByProps({ 'data-account-quota-matrix': selectionKey })).toHaveLength(1);
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'five_hour' })).toHaveLength(1);
-    expect(card.findAllByProps({ 'data-account-quota-matrix-row': 'weekly' })).toHaveLength(1);
-    expect(quotaRegion.props['aria-label']).toContain('Claude 5H 11%');
-    expect(quotaRegion.props['aria-label']).not.toContain('Account Weekly: 70%');
+    expect(
+      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
+    ).toHaveLength(1);
+    expect(quotaRegion.props['aria-label']).toContain('Weekly');
 
     await act(async () => {
       quotaRegion.props.onClick();
@@ -9036,7 +9018,9 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.type).toBe('div');
     expect(quotaRegion.props['data-account-detail-trigger']).toBeUndefined();
     expect(quotaRegion.props.onClick).toBeUndefined();
-    expect(card.findByProps({ 'data-account-quota-matrix': selectionKey })).toBeTruthy();
+    expect(
+      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string').length
+    ).toBeGreaterThan(0);
 
     await act(async () => {
       card.props.onClick();
@@ -9086,9 +9070,9 @@ describe('AccountsPage replacement flows', () => {
 
     expect(header.findAllByType('span').map((node) => readText(node))).toEqual([
       'accounts.list_header_credential',
+      'accounts.list_header_plan',
       'accounts.list_header_availability',
       'accounts.list_header_recent_requests',
-      'accounts.list_header_historical_usage',
       'accounts.list_header_quota',
       'accounts.list_header_actions',
     ]);
@@ -9099,7 +9083,7 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).not.toContain('SUM');
   });
 
-  it('opens the quota detail from the full historical usage region', async () => {
+  it('does not render historical usage trigger on main list cards but keeps quota trigger', async () => {
     const file = mocks.files[0];
     const selectionKey = getAuthFileSelectionKey(file);
     mocks.panelFeatureAvailability = {
@@ -9130,36 +9114,10 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     await flushPromises();
 
-    const historyRegion = findAccountDetailRegion(renderer, selectionKey, 'history');
+    expect(() => findAccountDetailRegion(renderer, selectionKey, 'history')).toThrow();
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
-    expect(historyRegion.type).toBe('button');
-    expect(historyRegion.props['data-account-detail-trigger']).toBe('history');
-    const historyLabel = historyRegion.props['aria-label'] as string;
-    expect(historyLabel).toContain('accounts.list_header_historical_usage');
-    expect(historyLabel).toContain('accounts.history_title:12:1,200:$0.12:83.33%');
-    expect(historyLabel).toContain('accounts.open_detail:codex.json');
-    expect(historyLabel).toContain('accounts.detail_tab_quota');
-    expect(quotaRegion.props['aria-label']).not.toBe(historyRegion.props['aria-label']);
-    expect(historyRegion.findAllByType('div')).toHaveLength(0);
-    expect(readText(historyRegion)).toContain('12');
-
-    await act(async () => {
-      historyRegion.props.onClick();
-      await Promise.resolve();
-    });
-    await flushPromises();
-
-    expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
-    expect(findHostButtonByText(renderer, 'accounts.detail_tab_quota').props['aria-selected']).toBe(
-      true
-    );
-    expect(mocks.navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/accounts',
-        search: `?account=${encodeURIComponent(selectionKey)}&tab=quota`,
-      },
-      { replace: true }
-    );
+    expect(quotaRegion.type).toBe('button');
+    expect(quotaRegion.props['data-account-detail-trigger']).toBe('quota');
   });
 
   it('opens the quota detail from the full quota information region', async () => {
@@ -9176,19 +9134,17 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
-    const historyRegion = findAccountDetailRegion(renderer, selectionKey, 'history');
 
     expect(quotaRegion.type).toBe('button');
     expect(quotaRegion.props['data-account-detail-trigger']).toBe('quota');
     const quotaLabel = quotaRegion.props['aria-label'] as string;
     expect(quotaLabel).toContain('accounts.list_header_quota');
-    expect(quotaLabel).toContain('Five hours');
+    expect(quotaLabel).toContain('5h');
     expect(quotaLabel).toContain('80%');
     expect(quotaLabel).toContain('accounts.open_detail:codex.json');
     expect(quotaLabel).toContain('accounts.detail_tab_quota');
-    expect(quotaLabel).not.toBe(historyRegion.props['aria-label']);
     expect(quotaRegion.findAllByType('div')).toHaveLength(0);
-    expect(readText(quotaRegion)).toContain('5H');
+    expect(readText(quotaRegion)).toContain('5h');
 
     await act(async () => {
       quotaRegion.props.onClick();
@@ -9209,22 +9165,17 @@ describe('AccountsPage replacement flows', () => {
     );
   });
 
-  it('keeps an empty historical usage region openable', async () => {
-    const selectionKey = getAuthFileSelectionKey(mocks.files[0]);
-    const renderer = await renderAccountsPage();
-    const historyRegion = findAccountDetailRegion(renderer, selectionKey, 'history');
-
-    expect(readText(historyRegion)).toContain('-');
-    expect(historyRegion.props.disabled).not.toBe(true);
-    expect(historyRegion.props['aria-label']).toContain('accounts.history_empty');
-
-    await act(async () => {
-      historyRegion.props.onClick();
-      await Promise.resolve();
+  it('renders plan presentation in main list card', async () => {
+    const file = mocks.files[0];
+    const selectionKey = getAuthFileSelectionKey(file);
+    mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(file, {
+      status: 'success',
+      planType: 'plus',
+      windows: [],
     });
-    await flushPromises();
-
-    expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
+    const renderer = await renderAccountsPage();
+    const card = findAccountCardByKey(renderer, selectionKey);
+    expect(readText(card)).toContain('Plus');
   });
 
   it('keeps a details-only quota region openable when only model quota exists', async () => {
@@ -9262,7 +9213,7 @@ describe('AccountsPage replacement flows', () => {
     expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
   });
 
-  it('uses card selection instead of opening details for both shortcut regions in selection mode', async () => {
+  it('uses card selection instead of opening details for shortcut regions in selection mode', async () => {
     const selectionKey = getAuthFileSelectionKey(mocks.files[0]);
     const renderer = await renderAccountsPage();
 
@@ -9271,11 +9222,8 @@ describe('AccountsPage replacement flows', () => {
     });
 
     const card = findAccountCardByKey(renderer, selectionKey);
-    const historyRegion = findAccountDetailRegion(renderer, selectionKey, 'history');
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
-    expect(historyRegion.type).toBe('div');
     expect(quotaRegion.type).toBe('div');
-    expect(historyRegion.props['data-account-detail-trigger']).toBeUndefined();
     expect(quotaRegion.props['data-account-detail-trigger']).toBeUndefined();
 
     await act(async () => {
@@ -9389,12 +9337,11 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     const cardText = getAccountCardText(renderer, selectionKey);
-    expect(cardText).toContain('5H');
-    expect(cardText).toContain('7D');
-    expect(cardText).toContain('30D');
+    expect(cardText).toContain('5h');
+    expect(cardText).toContain('Weekly');
+    expect(cardText).not.toContain('Monthly');
     expect(cardText).not.toContain('Spark model quota');
     expect(cardText).not.toContain('Billing credits');
-    expect(cardText).not.toMatch(/\+\d+/);
 
     await act(async () => {
       findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
@@ -10474,7 +10421,6 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     await flushPromises();
-    expect(getAccountListItemTexts(renderer).join('\n')).toContain('777');
 
     await act(async () => {
       findDetailButtonByName(renderer, 'stale.json').props.onClick();
@@ -10484,14 +10430,15 @@ describe('AccountsPage replacement flows', () => {
     });
     await flushPromises();
 
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('777');
+
     await act(async () => {
       await renderer.root.findByType(AccountQuotaTab).props.onRefreshHistory();
     });
     await flushPromises();
 
-    const cardText = getAccountListItemTexts(renderer).join('\n');
-    expect(cardText).not.toContain('777');
-    expect(cardText).not.toContain('999');
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).not.toContain('777');
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).not.toContain('999');
   });
 
   it('keeps a newer targeted history result when an older page request finishes later', async () => {
@@ -10546,7 +10493,7 @@ describe('AccountsPage replacement flows', () => {
     await act(async () => {
       await renderer.root.findByType(AccountQuotaTab).props.onRefreshHistory();
     });
-    expect(readText(findAccountCardByKey(renderer, 'generic-a.json\u0000auth-a'))).toContain('777');
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('777');
 
     pageHistory.resolve(
       makeAccountHistoryResponse([
@@ -10582,11 +10529,19 @@ describe('AccountsPage replacement flows', () => {
     );
     await flushPromises();
 
-    expect(readText(findAccountCardByKey(renderer, 'generic-a.json\u0000auth-a'))).toContain('777');
-    expect(readText(findAccountCardByKey(renderer, 'generic-a.json\u0000auth-a'))).not.toContain(
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('777');
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).not.toContain(
       '111'
     );
-    expect(readText(findAccountCardByKey(renderer, 'generic-b.json\u0000auth-b'))).toContain('222');
+
+    await act(async () => {
+      findDetailButtonByName(renderer, 'generic-b.json').props.onClick();
+    });
+    await act(async () => {
+      findHostButtonByText(renderer, 'accounts.detail_tab_quota').props.onClick();
+    });
+    await flushPromises();
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('222');
   });
 
   it('ignores a targeted history result after the account is removed and recreated', async () => {
@@ -10821,20 +10776,12 @@ describe('AccountsPage replacement flows', () => {
     await act(async () => {
       await renderer.root.findByType(AccountQuotaTab).props.onRefreshHistory();
     });
-    expect(readText(findAccountCardByKey(renderer, 'generic-a.json\u0000auth-a'))).toContain('777');
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('777');
 
     pageHistory.reject(new Error('page history offline'));
     await flushPromises();
 
-    const refreshedCardText = readText(
-      findAccountCardByKey(renderer, 'generic-a.json\u0000auth-a')
-    );
-    expect(refreshedCardText).toContain('777');
-    expect(refreshedCardText).not.toContain('accounts.history_recent_fallback');
-    expect(refreshedCardText).not.toContain('accounts.history_unavailable');
-    expect(readText(findAccountCardByKey(renderer, 'generic-b.json\u0000auth-b'))).toContain(
-      'accounts.history_unavailable'
-    );
+    expect(readText(renderer.root.findByProps({ 'data-account-quota-metrics': 'true' }))).toContain('777');
   });
 
   it('cancels a manual history refresh across capability changes without blocking the next refresh', async () => {
@@ -11604,33 +11551,6 @@ describe('AccountsPage replacement flows', () => {
     );
     const accountHistoryRequest = mocks.getAccountHistory.mock.calls[0]?.[2];
     expect(accountHistoryRequest).not.toHaveProperty('catch_up');
-    expect(cardText).toContain('1.2M');
-    expect(cardText).toContain('1.0B');
-    expect(cardText).toContain('$12.35K');
-    expect(cardText).toContain('98.3%');
-    expect(cardText).not.toContain('1000.2M');
-    expect(
-      renderer.root.findByProps({
-        title: 'accounts.history_title:1,234,567:1,000,190,000:$12,345.67:98.32%',
-      })
-    ).toBeTruthy();
-    const historyMetricAriaLabels = [
-      'accounts.history_requests: 1,234,567',
-      'accounts.history_tokens: 1,000,190,000',
-      'accounts.history_cost: $12,345.67',
-      'accounts.history_success: 98.32%',
-    ];
-    const historyMetrics = renderer.root.findAll((node) =>
-      historyMetricAriaLabels.includes(node.props['aria-label'])
-    );
-    expect(historyMetrics.map((metric) => metric.props['aria-label'])).toEqual(
-      historyMetricAriaLabels
-    );
-    historyMetrics.forEach((metric) => expect(metric.props).not.toHaveProperty('title'));
-    expect(cardText).not.toContain('accounts.history_requests');
-    expect(cardText).not.toContain('accounts.history_tokens');
-    expect(cardText).not.toContain('accounts.history_cost');
-    expect(cardText).not.toContain('accounts.history_success');
     expect(cardText).not.toContain('stats.success 87');
     expect(cardText).not.toContain('stats.failure 3');
     expect(cardText).not.toContain('auth_files.health_status_label');
@@ -11768,7 +11688,6 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
 
     expect(getAccountListItemTexts(renderer).join('\n')).toContain('pending.json');
-    expect(treeText(renderer)).toContain('accounts.history_syncing');
   });
 
   it('keeps the account list usable when account history is unavailable', async () => {
@@ -11785,7 +11704,6 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
 
     expect(getAccountListItemTexts(renderer).join('\n')).toContain('offline.json');
-    expect(treeText(renderer)).toContain('accounts.history_unavailable');
   });
 
   it('renders the mobile filters entrypoint in the accounts toolbar', async () => {
@@ -11923,7 +11841,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).not.toHaveBeenCalled();
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).not.toHaveBeenCalled();
-    expect(mocks.getAccountWindowUsage).not.toHaveBeenCalled();
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       findDetailButtonByName(renderer, 'codex-a.json').props.onClick();
@@ -11933,7 +11851,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).not.toHaveBeenCalled();
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
     expect(treeText(renderer)).toContain('accounts.detail_overview_basis_cooldown');
 
     await act(async () => {
@@ -11944,7 +11862,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
     expect(treeText(renderer)).toContain('accounts.detail_total_requests');
     expect(treeText(renderer)).toContain('accounts.detail_total_tokens');
@@ -11973,7 +11891,7 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).toContain('accounts.detail_quota_standard_title');
     expect(renderer.root.findAllByProps({ 'data-account-quota-evidence': 'true' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ 'data-quota-evidence-panel': 'reset' })).toHaveLength(0);
-    const windowUsageRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as
+    const windowUsageRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
     expect(windowUsageRequest?.windows).toHaveLength(2);
@@ -11998,7 +11916,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(mocks.getAccountHistory).toHaveBeenCalledTimes(historyRequestCount + 1);
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(2);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -12010,7 +11928,7 @@ describe('AccountsPage replacement flows', () => {
     });
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
     expect(mocks.quotaState.setCodexQuota).not.toHaveBeenCalled();
   });
 
@@ -12090,7 +12008,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaFetch).not.toHaveBeenCalled();
     expect(mocks.getHeaderSnapshots).toHaveBeenCalledTimes(1);
     expect(mocks.listCodexInspectionRuns).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       await findButtonByText(renderer, 'common.refresh').props.onClick();
@@ -12103,7 +12021,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.listCodexInspectionRuns.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.loadFiles.mock.invocationCallOrder[1]
     );
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     expect(quotaFetch).not.toHaveBeenCalled();
   });
 
@@ -12176,7 +12094,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
   });
 
   it('reloads lifecycle and window usage after detail quota refresh without loading history', async () => {
@@ -12215,7 +12133,7 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     mocks.getAccountHistory.mockClear();
 
     await act(async () => {
@@ -12232,7 +12150,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(quotaFetch).toHaveBeenCalledTimes(1);
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(2);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
     expect(mocks.getAccountHistory).not.toHaveBeenCalled();
   });
 
@@ -12328,9 +12246,22 @@ describe('AccountsPage replacement flows', () => {
     let usageRequestCount = 0;
     mocks.getAccountWindowUsage.mockImplementation(async (_base, _managementKey, request) => {
       usageRequestCount += 1;
-      const totalRequests = usageRequestCount === 1 ? 4 : usageRequestCount === 2 ? 5 : 6;
+      const totalRequests =
+        usageRequestCount === 1
+          ? 4
+          : usageRequestCount === 2
+            ? 5
+            : usageRequestCount === 3
+              ? 6
+              : 7;
       const totalTokens =
-        usageRequestCount === 1 ? 9_939 : usageRequestCount === 2 ? 12_460 : 14_981;
+        usageRequestCount === 1
+          ? 9_939
+          : usageRequestCount === 2
+            ? 12_460
+            : usageRequestCount === 3
+              ? 14_981
+              : 17_502;
       const windows = request.windows as Array<{
         request_key: string;
         row_key: string;
@@ -12363,13 +12294,13 @@ describe('AccountsPage replacement flows', () => {
 
     expect(renderer.root.findByProps({ 'data-account-quota-usage-summary': 'true' })).toBeTruthy();
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(1);
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
-    const lastWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[
-      mocks.getAccountWindowUsage.mock.calls.length - 1
-    ]?.[2] as AccountWindowUsageRequestForTest | undefined;
-    expect(lastWindowUsageRequest?.windows).toHaveLength(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    const initialDrawerWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as
+      | AccountWindowUsageRequestForTest
+      | undefined;
+    expect(initialDrawerWindowUsageRequest?.windows).toHaveLength(2);
     const firstCurrentTarget = (
-      lastWindowUsageRequest?.windows as Array<{
+      initialDrawerWindowUsageRequest?.windows as Array<{
         period: string;
         from_ms: number;
         to_ms: number;
@@ -12392,8 +12323,10 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
-    const refreshedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    const refreshedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[
+      mocks.getAccountWindowUsage.mock.calls.length - 1
+    ]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
     const refreshedCurrentTarget = (
@@ -12410,8 +12343,8 @@ describe('AccountsPage replacement flows', () => {
     ).toMatchObject({
       fromMs: refreshedCurrentTarget?.from_ms,
       toMs: refreshedCurrentTarget?.to_ms,
-      totalRequests: 5,
-      totalTokens: 12_460,
+      totalRequests: 6,
+      totalTokens: 14_981,
     });
 
     await act(async () => {
@@ -12431,8 +12364,8 @@ describe('AccountsPage replacement flows', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
-    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
+    const reopenedWindowUsageRequest = mocks.getAccountWindowUsage.mock.calls[3]?.[2] as
       | AccountWindowUsageRequestForTest
       | undefined;
     const reopenedCurrentTarget = (
@@ -12449,8 +12382,8 @@ describe('AccountsPage replacement flows', () => {
     ).toMatchObject({
       fromMs: reopenedCurrentTarget?.from_ms,
       toMs: reopenedCurrentTarget?.to_ms,
-      totalRequests: 6,
-      totalTokens: 14_981,
+      totalRequests: 7,
+      totalTokens: 17_502,
     });
   });
 

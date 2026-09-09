@@ -373,6 +373,156 @@ const selectKimiQuotaListWindows = (
   return limits;
 };
 
+export const resolveWindowDurationSeconds = (
+  window: AccountQuotaDisplayWindow
+): number => {
+  if (
+    typeof window.limitWindowSeconds === 'number' &&
+    Number.isFinite(window.limitWindowSeconds) &&
+    window.limitWindowSeconds > 0
+  ) {
+    return window.limitWindowSeconds;
+  }
+  if (window.kind === 'five_hour') return 5 * 3600;
+  if (window.kind === 'daily') return 24 * 3600;
+  if (window.kind === 'weekly') return 7 * 86400;
+  if (window.kind === 'monthly' || window.kind === 'billing') return 30 * 86400;
+  return Number.MAX_SAFE_INTEGER;
+};
+
+const getAntigravityMatrixGroupDisplayLabel = (label: string) => {
+  const normalized = label.toLowerCase();
+  if (normalized.includes('claude') || normalized.includes('gpt')) return 'Claude';
+  if (normalized.includes('gemini')) return 'Gemini';
+  return label;
+};
+
+export const getQuotaWindowReadableLabel = (
+  window: AccountQuotaDisplayWindow,
+  t?: TFunction
+): string => {
+  let baseLabel: string;
+  switch (window.kind) {
+    case 'five_hour':
+      baseLabel = '5h';
+      break;
+    case 'daily':
+      baseLabel = '24h';
+      break;
+    case 'weekly':
+      baseLabel = 'Weekly';
+      break;
+    case 'monthly':
+      baseLabel = 'Monthly';
+      break;
+    case 'billing':
+      baseLabel = 'Billing';
+      break;
+    case 'payg':
+      baseLabel = 'Pay-As-You-Go';
+      break;
+    case 'product':
+      baseLabel = window.label;
+      break;
+    case 'summary':
+      baseLabel = t ? t('accounts.col_quota') : 'Summary';
+      break;
+    default: {
+      const label = window.label?.trim() ?? '';
+      if (!label) {
+        baseLabel = 'Quota';
+      } else {
+        const lower = label.toLowerCase();
+        if (
+          lower.includes('5 hour') ||
+          lower.includes('5h') ||
+          lower.includes('5-hour') ||
+          lower.includes('five hour')
+        ) {
+          baseLabel = '5h';
+        } else if (lower.includes('24 hour') || lower.includes('24h') || lower.includes('daily')) {
+          baseLabel = '24h';
+        } else if (lower.includes('weekly') || lower.includes('7 day') || lower.includes('7d')) {
+          baseLabel = 'Weekly';
+        } else if (lower.includes('monthly') || lower.includes('30 day') || lower.includes('30d')) {
+          baseLabel = 'Monthly';
+        } else {
+          baseLabel = label.charAt(0).toUpperCase() + label.slice(1);
+        }
+      }
+      break;
+    }
+  }
+
+  if (window.source === 'antigravity' && window.groupLabel?.trim()) {
+    const scopeLabel = getAntigravityMatrixGroupDisplayLabel(window.groupLabel.trim());
+    if (scopeLabel && !baseLabel.toLowerCase().includes(scopeLabel.toLowerCase())) {
+      return `${scopeLabel} ${baseLabel}`;
+    }
+  }
+
+  return baseLabel;
+};
+
+export const selectAccountQuotaMainListWindows = (
+  row: AccountRow,
+  quotaWindows: AccountQuotaDisplayWindow[]
+): AccountQuotaDisplayWindow[] => {
+  const standardQuotaWindows = quotaWindows.filter(isStandardAccountQuotaListWindow);
+  let candidates: AccountQuotaDisplayWindow[];
+
+  switch (row.provider) {
+    case 'codex':
+      candidates = selectCodexQuotaListWindows(quotaWindows);
+      break;
+    case 'kimi':
+      candidates = selectKimiQuotaListWindows(quotaWindows);
+      break;
+    case 'xai':
+      candidates =
+        standardQuotaWindows.length > 0
+          ? standardQuotaWindows
+          : selectXaiQuotaListFallbackWindows(quotaWindows);
+      break;
+    case 'antigravity':
+      candidates =
+        standardQuotaWindows.length > 0
+          ? standardQuotaWindows
+          : quotaWindows.filter(
+              (window) =>
+                window.windowMode !== 'non_window' &&
+                window.kind !== 'summary' &&
+                !isModelScopedAccountQuotaWindow(window)
+            );
+      if (candidates.length === 0) {
+        candidates = quotaWindows.filter((window) => window.windowMode !== 'non_window');
+      }
+      break;
+    case 'claude':
+    default:
+      candidates = standardQuotaWindows;
+      break;
+  }
+
+  const indexed = candidates.map((w, index) => ({
+    w,
+    index,
+    duration: resolveWindowDurationSeconds(w),
+  }));
+
+  indexed.sort((a, b) => {
+    if (a.duration !== b.duration) {
+      return a.duration - b.duration;
+    }
+    if (a.index !== b.index) {
+      return a.index - b.index;
+    }
+    return a.w.key.localeCompare(b.w.key);
+  });
+
+  return indexed.slice(0, 2).map((item) => item.w);
+};
+
 export const selectAccountQuotaListWindows = (
   row: AccountRow,
   quotaWindows: AccountQuotaDisplayWindow[],
@@ -405,12 +555,6 @@ const getAntigravityGroupRank = (label: string) => {
   return 2;
 };
 
-const getAntigravityMatrixGroupDisplayLabel = (label: string) => {
-  const normalized = label.toLowerCase();
-  if (normalized.includes('claude') || normalized.includes('gpt')) return 'Claude';
-  if (normalized.includes('gemini')) return 'Gemini';
-  return label;
-};
 
 export const getAccountQuotaFallbackVisibleScopeLabel = (
   row: AccountRow,
