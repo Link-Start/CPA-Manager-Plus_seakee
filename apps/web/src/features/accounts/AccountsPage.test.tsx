@@ -16028,4 +16028,151 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getActiveQuotaCooldowns).toHaveBeenCalledTimes(3);
     expect(mocks.listAccountActionCandidates).toHaveBeenCalledTimes(3);
   });
+
+  describe('inline priority editing', () => {
+    it('enters inline editing on priority click and saves valid change on blur', async () => {
+      const renderer = await renderAccountsPage();
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      const trigger = renderer.root.findByProps({
+        'data-account-priority-trigger': targetSelectionKey,
+      });
+      expect(trigger.props['aria-label']).toContain('0');
+
+      const stopPropagation = vi.fn();
+      await act(async () => {
+        trigger.props.onClick({ stopPropagation });
+      });
+      expect(stopPropagation).toHaveBeenCalled();
+
+      const input = renderer.root.findByProps({
+        'data-account-priority-input': targetSelectionKey,
+      });
+      expect(input.props.value).toBe('0');
+
+      await act(async () => {
+        input.props.onChange({ target: { value: '88' } });
+      });
+
+      mocks.batchPatchFields.mockClear();
+      await act(async () => {
+        await input.props.onBlur({ currentTarget: { value: '88' } });
+      });
+
+      expect(mocks.batchPatchFields).toHaveBeenCalledWith(
+        [getAuthFilePatchTarget(targetFile)],
+        { priority: 88 }
+      );
+      expect(
+        renderer.root.findAllByProps({ 'data-account-priority-input': targetSelectionKey }).length
+      ).toBe(0);
+    });
+
+    it('handles Enter key to blur and Escape key to cancel editing without saving', async () => {
+      const renderer = await renderAccountsPage();
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      const trigger = renderer.root.findByProps({
+        'data-account-priority-trigger': targetSelectionKey,
+      });
+      await act(async () => {
+        trigger.props.onClick({ stopPropagation: vi.fn() });
+      });
+
+      let input = renderer.root.findByProps({
+        'data-account-priority-input': targetSelectionKey,
+      });
+
+      // Test Enter key
+      const preventDefaultEnter = vi.fn();
+      const blurMock = vi.fn();
+      await act(async () => {
+        input.props.onKeyDown({
+          key: 'Enter',
+          stopPropagation: vi.fn(),
+          preventDefault: preventDefaultEnter,
+          currentTarget: { blur: blurMock },
+        });
+      });
+      expect(preventDefaultEnter).toHaveBeenCalled();
+      expect(blurMock).toHaveBeenCalled();
+
+      // Test Escape key
+      const preventDefaultEscape = vi.fn();
+      const onBlur = input.props.onBlur;
+      mocks.batchPatchFields.mockClear();
+      await act(async () => {
+        input.props.onKeyDown({
+          key: 'Escape',
+          stopPropagation: vi.fn(),
+          preventDefault: preventDefaultEscape,
+        });
+        await onBlur({ currentTarget: { value: '999' } });
+      });
+      expect(preventDefaultEscape).toHaveBeenCalled();
+      expect(mocks.batchPatchFields).not.toHaveBeenCalled();
+      expect(
+        renderer.root.findAllByProps({ 'data-account-priority-input': targetSelectionKey }).length
+      ).toBe(0);
+    });
+
+    it('rejects invalid priority input on blur and shows notification', async () => {
+      const renderer = await renderAccountsPage();
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      const trigger = renderer.root.findByProps({
+        'data-account-priority-trigger': targetSelectionKey,
+      });
+      await act(async () => {
+        trigger.props.onClick({ stopPropagation: vi.fn() });
+      });
+
+      const input = renderer.root.findByProps({
+        'data-account-priority-input': targetSelectionKey,
+      });
+      await act(async () => {
+        input.props.onChange({ target: { value: 'not-a-number' } });
+      });
+
+      mocks.batchPatchFields.mockClear();
+      mocks.showNotification.mockClear();
+
+      await act(async () => {
+        await input.props.onBlur({ currentTarget: { value: 'not-a-number' } });
+      });
+
+      expect(mocks.batchPatchFields).not.toHaveBeenCalled();
+      expect(mocks.showNotification).toHaveBeenCalledWith('accounts.priority_invalid', 'error');
+      expect(
+        renderer.root.findAllByProps({ 'data-account-priority-input': targetSelectionKey }).length
+      ).toBe(0);
+    });
+
+    it('does not trigger network save when blurred with unchanged priority', async () => {
+      const renderer = await renderAccountsPage();
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      const trigger = renderer.root.findByProps({
+        'data-account-priority-trigger': targetSelectionKey,
+      });
+      await act(async () => {
+        trigger.props.onClick({ stopPropagation: vi.fn() });
+      });
+
+      const input = renderer.root.findByProps({
+        'data-account-priority-input': targetSelectionKey,
+      });
+
+      mocks.batchPatchFields.mockClear();
+      await act(async () => {
+        await input.props.onBlur({ currentTarget: { value: '0' } });
+      });
+
+      expect(mocks.batchPatchFields).not.toHaveBeenCalled();
+      expect(
+        renderer.root.findAllByProps({ 'data-account-priority-input': targetSelectionKey }).length
+      ).toBe(0);
+    });
+  });
 });

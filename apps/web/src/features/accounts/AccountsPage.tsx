@@ -1329,6 +1329,22 @@ export function AccountsPage() {
   const [highlightedAccountSortIndex, setHighlightedAccountSortIndex] = useState(-1);
   const [batchPriorityOpen, setBatchPriorityOpen] = useState(false);
   const [batchPriorityValue, setBatchPriorityValue] = useState('');
+  const [editingPriorityState, setEditingPriorityState] = useState<{
+    rowKey: string;
+    value: string;
+  } | null>(null);
+  const [inlinePrioritySaving, setInlinePrioritySaving] = useState(false);
+  const inlinePriorityCancelledRef = useRef(false);
+  const inlinePrioritySavingRef = useRef(false);
+  const inlinePriorityInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editingPriorityState && inlinePriorityInputRef.current) {
+      inlinePriorityInputRef.current.focus();
+      inlinePriorityInputRef.current.select();
+    }
+  }, [editingPriorityState?.rowKey]);
+
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => initialWorkspaceUrlState.current.pageSize);
   const [usageRows, setUsageRows] = useState<UsageValueRow[]>([]);
@@ -6617,9 +6633,77 @@ export function AccountsPage() {
       const patchTargets = targets
         .filter((row) => !row.runtimeOnly)
         .map((row) => getAuthFilePatchTarget(row.raw));
-      await batchPatchFields(patchTargets, { priority });
+      return await batchPatchFields(patchTargets, { priority });
     },
     [batchPatchFields]
+  );
+
+  const startInlinePriorityEdit = useCallback((row: AccountRow) => {
+    if (row.runtimeOnly) return;
+    inlinePriorityCancelledRef.current = false;
+    inlinePrioritySavingRef.current = false;
+    setInlinePrioritySaving(false);
+    setEditingPriorityState({
+      rowKey: row.selectionKey,
+      value: String(row.priority ?? 0),
+    });
+  }, []);
+
+  const cancelInlinePriorityEdit = useCallback(() => {
+    inlinePriorityCancelledRef.current = true;
+    setEditingPriorityState(null);
+    setInlinePrioritySaving(false);
+  }, []);
+
+  const handleInlinePriorityBlur = useCallback(
+    async (row: AccountRow, rawValue: string) => {
+      if (inlinePriorityCancelledRef.current) {
+        inlinePriorityCancelledRef.current = false;
+        return;
+      }
+      if (inlinePrioritySavingRef.current) {
+        return;
+      }
+
+      const trimmed = rawValue.trim();
+      const currentPriority = row.priority ?? 0;
+
+      const parsed = parsePriorityValue(trimmed);
+      if (parsed === null) {
+        showNotification(t('accounts.priority_invalid'), 'error');
+        setEditingPriorityState(null);
+        return;
+      }
+
+      if (parsed === currentPriority) {
+        setEditingPriorityState(null);
+        return;
+      }
+
+      inlinePrioritySavingRef.current = true;
+      setInlinePrioritySaving(true);
+      try {
+        const result = await patchPriorityRows([row], parsed);
+        if (result && result.failed > 0) {
+          showNotification(
+            t('accounts.priority_update_failed', { defaultValue: '更新优先级失败' }),
+            'error'
+          );
+        }
+      } catch (error) {
+        showNotification(
+          error instanceof Error
+            ? error.message
+            : t('accounts.priority_update_failed', { defaultValue: '更新优先级失败' }),
+          'error'
+        );
+      } finally {
+        inlinePrioritySavingRef.current = false;
+        setInlinePrioritySaving(false);
+        setEditingPriorityState(null);
+      }
+    },
+    [patchPriorityRows, showNotification, t]
   );
 
   const handleBatchPrioritySave = useCallback(async () => {
@@ -7715,16 +7799,64 @@ export function AccountsPage() {
                     </span>
                   </div>
                   <div className={styles.accountHealthMetaRow}>
-                    <span
-                      className={
-                        item.identity.priorityIsNegative
-                          ? styles.accountPriorityMetaDanger
-                          : styles.accountPriorityMeta
-                      }
-                      title={t('accounts.col_priority')}
-                    >
-                      {t('accounts.col_priority')} {item.identity.priority}
-                    </span>
+                    {editingPriorityState?.rowKey === row.selectionKey ? (
+                      <input
+                        ref={inlinePriorityInputRef}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9\-]*"
+                        data-account-priority-input={row.selectionKey}
+                        className={styles.accountPriorityInput}
+                        value={editingPriorityState.value}
+                        aria-label={t('accounts.priority_edit', { defaultValue: '编辑优先级' })}
+                        disabled={inlinePrioritySaving}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                        onChange={(e) =>
+                          setEditingPriorityState((prev) =>
+                            prev ? { ...prev, value: e.target.value } : null
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelInlinePriorityEdit();
+                          }
+                        }}
+                        onBlur={(e) => {
+                          void handleInlinePriorityBlur(row, e.currentTarget.value);
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        data-account-priority-trigger={row.selectionKey}
+                        className={`${styles.accountPriorityButton} ${
+                          item.identity.priorityIsNegative
+                            ? styles.accountPriorityMetaDanger
+                            : styles.accountPriorityMeta
+                        }`}
+                        title={
+                          row.runtimeOnly
+                            ? t('accounts.col_priority')
+                            : `${t('accounts.col_priority')} ${item.identity.priority} (${t('accounts.priority_edit', { defaultValue: '编辑优先级' })})`
+                        }
+                        aria-label={`${t('accounts.col_priority')} ${item.identity.priority}`}
+                        disabled={row.runtimeOnly}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!row.runtimeOnly) {
+                            startInlinePriorityEdit(row);
+                          }
+                        }}
+                      >
+                        {t('accounts.col_priority')} {item.identity.priority}
+                      </button>
+                    )}
                   </div>
                 </div>
 

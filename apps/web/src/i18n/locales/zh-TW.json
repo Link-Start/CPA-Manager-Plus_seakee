@@ -896,6 +896,7 @@
     "restore_default": "恢復預設",
     "restore_default_priority": "恢復預設優先級",
     "priority_update_result": "優先級更新完成：成功 {{success}} / {{total}}",
+    "priority_update_failed": "更新優先級失敗",
     "batch_priority_title": "批次調整優先級",
     "priority_label": "優先級",
     "priority_placeholder": "例如：10 或 -1",

@@ -902,6 +902,7 @@
     "restore_default": "Вернуть по умолчанию",
     "restore_default_priority": "Вернуть приоритет по умолчанию",
     "priority_update_result": "Обновление приоритета завершено: успешно {{success}} / {{total}}",
+    "priority_update_failed": "Не удалось обновить приоритет",
     "batch_priority_title": "Изменить приоритет",
     "priority_label": "Приоритет",
     "priority_placeholder": "например: 10 или -1",

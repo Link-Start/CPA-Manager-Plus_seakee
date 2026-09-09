@@ -898,6 +898,7 @@
     "restore_default": "Restore default",
     "restore_default_priority": "Restore default priority",
     "priority_update_result": "Priority update finished: {{success}} / {{total}} succeeded",
+    "priority_update_failed": "Failed to update priority",
     "batch_priority_title": "Adjust priority",
     "priority_label": "Priority",
     "priority_placeholder": "e.g. 10 or -1",
