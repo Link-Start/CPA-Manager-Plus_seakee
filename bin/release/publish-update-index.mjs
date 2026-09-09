@@ -140,16 +140,29 @@ export async function publishUpdateIndex({
     restore = env.RESTORE_RELEASE || '';
   if (withdraw && restore) throw new Error('Choose withdraw or restore');
   for (const tag of [withdraw, restore].filter(Boolean)) parseVersion(tag);
-  if (withdraw && !withdrawn.includes(withdraw)) withdrawn.push(withdraw);
-  if (restore) {
-    const i = withdrawn.indexOf(restore);
-    if (i >= 0) withdrawn.splice(i, 1);
-  }
   const releases = [];
   for (let page = 1; ; page++) {
     const batch = await api('/releases?per_page=100&page=' + page);
     releases.push(...batch);
     if (batch.length < 100) break;
+  }
+  if (withdraw) {
+    const target = releases.find(
+      (r) =>
+        r.tag_name === withdraw &&
+        !r.draft &&
+        r.assets?.some((a) => a.name === 'release-info.json')
+    );
+    if (!target) {
+      throw new Error(
+        'Withdraw target must be an existing published release with release-info.json'
+      );
+    }
+    if (!withdrawn.includes(withdraw)) withdrawn.push(withdraw);
+  }
+  if (restore) {
+    const i = withdrawn.indexOf(restore);
+    if (i >= 0) withdrawn.splice(i, 1);
   }
   const infos = [];
   for (const release of releases) {
@@ -174,9 +187,7 @@ export async function publishUpdateIndex({
     infos.push(info);
   }
   const { channels, aliases } = resolveAliases(infos, withdrawn);
-  if (!infos.length) throw new Error('At least one verified release is required');
-  if (old?.channels?.stable && !channels.stable)
-    throw new Error('Cannot withdraw the last verified stable release');
+  if (!infos.length && !withdraw) throw new Error('At least one verified release is required');
   const images = ['ghcr.io/seakee/cpa-manager-plus', 'seakee/cpa-manager-plus'];
   // Validate all precise references first, before any alias mutation.
   const targets = new Set([

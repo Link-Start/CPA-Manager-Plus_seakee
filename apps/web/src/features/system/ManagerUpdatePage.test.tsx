@@ -218,6 +218,63 @@ describe('ManagerUpdatePage', () => {
     expect(button('manager_updates.check_now').props.disabled).toBe(false);
   });
 
+  it('withholds execution guidance and direct steps for stale direct release', async () => {
+    mocks.updates.status = {
+      ...mocks.updates.status!,
+      state: 'update_available',
+      stale: true,
+      upgrade_action: 'direct',
+      target: release('v1.12.11'),
+    };
+    await renderPage();
+    const content = text(renderer!.root);
+    expect(content).toContain('v1.12.11');
+    expect(content).toContain('A concise release summary.');
+    expect(content).toContain('manager_updates.stale');
+    expect(content).toContain('manager_updates.release_notes');
+    expect(content).not.toContain('manager_updates.show_steps');
+    expect(content).not.toContain('manager_updates.copy_image');
+    expect(renderer!.root.findAllByProps({ id: 'manager-upgrade-steps' })).toHaveLength(0);
+  });
+
+  it('withholds migration CTA and execution guidance for failed migration release', async () => {
+    const target = release('v1.12.11');
+    target.update.migration_required = true;
+    mocks.updates.status = {
+      ...mocks.updates.status!,
+      state: 'update_available',
+      last_error: 'fetch failed',
+      upgrade_action: 'migration_guide',
+      target,
+    };
+    await renderPage();
+    const content = text(renderer!.root);
+    expect(content).toContain('v1.12.11');
+    expect(content).toContain('A concise release summary.');
+    expect(content).toContain('manager_updates.failed');
+    expect(content).toContain('manager_updates.release_notes');
+    expect(content).not.toContain('manager_updates.migration_guide');
+    expect(content).not.toContain('manager_updates.show_steps');
+    expect(renderer!.root.findAllByProps({ id: 'manager-upgrade-steps' })).toHaveLength(0);
+  });
+
+  it('displays no_candidate message without release details or upgrade action', async () => {
+    mocks.updates.status = {
+      ...mocks.updates.status!,
+      state: 'no_candidate',
+      target: undefined,
+      stale: false,
+    };
+    await renderPage();
+    const content = text(renderer!.root);
+    expect(content).toContain('manager_updates.no_candidate');
+    expect(content).not.toContain('manager_updates.show_steps');
+    expect(content).not.toContain('manager_updates.migration_guide');
+    expect(content).not.toContain('manager_updates.release_notes');
+    expect(button('manager_updates.check_now').props.disabled).toBe(false);
+    expect(content).toContain('v1.12.10');
+  });
+
   it('shows loading and then an unavailable state without actionable update controls', async () => {
     mocks.updates.status = null;
     await renderPage();

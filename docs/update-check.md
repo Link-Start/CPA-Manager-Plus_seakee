@@ -1,6 +1,6 @@
 # 更新检查与一次性通知
 
-Manager Server 负责检查 CPAMP 更新。面板读取服务端缓存；同一有效通道的手动或后台检查有服务端 60 秒冷却，stable、rc、beta 分别计算。切换通道会立即检查新通道；如果该通道刚检查过，则复用其缓存结果。后台首次延迟 5–59 秒，此后约每 6 小时检查一次；失败后退避 15–30 分钟。设置环境变量 `CPAMP_UPDATE_CHECK_ENABLED=false` 关闭后台检查，手动检查和切换通道仍可用。
+Manager Server 负责检查 CPAMP 更新。面板读取服务端缓存；常规检查共享 60 秒全局冷却（normal checks share 60-second cooldown）；显式切换通道会强制执行一次立即检查（explicit channel changes force one immediate discovery）。后台首次延迟 5–59 秒，此后约每 6 小时检查一次；失败后退避 15–30 分钟。设置环境变量 `CPAMP_UPDATE_CHECK_ENABLED=false` 关闭后台检查，手动检查和切换通道仍可用。
 
 Channel preference 为 auto、stable、rc、beta。auto 跟随服务端当前发行阶段，显式选择跨升级保存。未知构建不比较版本。当前版本高于通道目标时不推荐降级。跨大版本或要求迁移的更新展示指引，不提供直接替换镜像建议。V1 不自动安装，不覆盖并行维护线通知。
 
@@ -49,6 +49,6 @@ preview 跟随 beta Channel，RC 升级使用精确版本。Index 公布的 Dock
 
 首次启用可从包含元数据的 Beta、RC 或 Stable Release 开始。还没有 Stable 候选时，Index 的 stable 为 null，现有 latest 保持原值；Native 安装器可通过 CPAMP_VERSION 显式指定版本。历史无元数据版本不回填、不纳入候选。Index 尚未上线时，客户端显示检查失败。
 
-在 main 上运行 Recover update channels 可独立修复 Index，输入 withdraw_release 撤回精确版本，restore_release 恢复候选。流程不发送 Telegram。所有发布流程共享 release-publish 并发组，非强制 Git ref 更新还会拒绝冲突；冲突后重跑并重新计算。已有 Stable 推荐时，不允许撤回后失去全部 Stable 候选。
+在 main 上运行 Recover update channels 可独立修复 Index，输入 withdraw_release 撤回精确版本，restore_release 恢复候选。流程不发送 Telegram。所有发布流程共享 release-publish 并发组，非强制 Git ref 更新还会拒绝冲突；冲突后重跑并重新计算。撤回最后一个经过验证的 Stable 后，允许 stable 通道暂无可推荐版本（stable channel can temporarily have no candidate after withdrawal，客户端表达为 no_candidate），此时不再发布 stable-version.txt。
 
 撤回不会删除精确版本或自动降级运行中的实例；没有替代目标的旧 minor 标签可能继续存在，不应作为该维护线仍受支持的承诺。

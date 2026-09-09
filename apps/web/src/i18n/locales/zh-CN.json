@@ -21,6 +21,7 @@
     "up_to_date": "当前已是该通道最新版本。",
     "update_available": "有新版本可用。",
     "ahead_of_channel": "当前版本高于该通道目标，不建议降级。",
+    "no_candidate": "当前更新通道暂无可推荐版本。",
     "panel_version": "面板版本：{{version}}",
     "title": "软件更新",
     "view_update": "查看更新",

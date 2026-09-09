@@ -223,9 +223,47 @@ describe('update index publication', () => {
     const restored = scenario({ existing: true, tags, withdrawn: [tags[1]], restore: tags[1] });
     expect((await restored.run()).channels.beta.version).toBe(tags[1]);
   });
-  it('refuses to remove the last stable target once it is published', async () => {
+  it('allows withdrawing the only stable release and generates all-null channels without stable-version.txt', async () => {
+    const s = scenario({ existing: true, tags: ['v2.0.0'], withdraw: 'v2.0.0' });
+    const index = await s.run();
+    expect(index.channels).toEqual({ stable: null, rc: null, beta: null });
+    const tree = s.calls.find((c) => c.url?.endsWith('/git/trees'));
+    expect(tree.body.tree.some((f) => f.path === 'stable-version.txt')).toBe(false);
+    const withdrawnEntry = tree.body.tree.find((f) => f.path === 'withdrawn.json');
+    expect(JSON.parse(withdrawnEntry.content)).toContain('v2.0.0');
+  });
+
+  it('allows withdrawing stable when beta exists, resulting in stable=null and retaining beta', async () => {
     const s = scenario({ existing: true, tags: ['v2.0.0', 'v2.1.0-beta.1'], withdraw: 'v2.0.0' });
-    await expect(s.run()).rejects.toThrow('last verified stable release');
-    expect(s.calls.some((c) => c.docker)).toBe(false);
+    const index = await s.run();
+    expect(index.channels.stable).toBeNull();
+    expect(index.channels.rc).toBeNull();
+    expect(index.channels.beta.version).toBe('v2.1.0-beta.1');
+    const tree = s.calls.find((c) => c.url?.endsWith('/git/trees'));
+    expect(tree.body.tree.some((f) => f.path === 'stable-version.txt')).toBe(false);
+    const withdrawnEntry = tree.body.tree.find((f) => f.path === 'withdrawn.json');
+    expect(JSON.parse(withdrawnEntry.content)).toContain('v2.0.0');
+  });
+
+  it('restores a withdrawn stable release and republishes stable-version.txt', async () => {
+    const s = scenario({
+      existing: true,
+      tags: ['v2.0.0'],
+      withdrawn: ['v2.0.0'],
+      restore: 'v2.0.0',
+    });
+    const index = await s.run();
+    expect(index.channels.stable.version).toBe('v2.0.0');
+    const tree = s.calls.find((c) => c.url?.endsWith('/git/trees'));
+    const stableFile = tree.body.tree.find((f) => f.path === 'stable-version.txt');
+    expect(stableFile).toBeDefined();
+    expect(stableFile.content).toBe('v2.0.0\n');
+  });
+
+  it('rejects withdrawing a non-existent or unverified release tag', async () => {
+    const s = scenario({ existing: true, tags: ['v2.0.0'], withdraw: 'v99.99.99' });
+    await expect(s.run()).rejects.toThrow(
+      'Withdraw target must be an existing published release with release-info.json'
+    );
   });
 });

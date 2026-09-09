@@ -26,7 +26,8 @@ export interface UpdateStatus {
     | 'never_checked'
     | 'up_to_date'
     | 'update_available'
-    | 'ahead_of_channel';
+    | 'ahead_of_channel'
+    | 'no_candidate';
   stale: boolean;
   last_error?: string;
   last_success_at: string;

@@ -20,14 +20,13 @@ type Store interface {
 	DismissUpdateNotification(context.Context, string) error
 }
 type State struct {
-	SchemaVersion        int                    `json:"schema_version"`
-	Preference           string                 `json:"channel_preference"`
-	LastAttempt          time.Time              `json:"last_attempt_at"`
-	LastAttemptByChannel map[string]time.Time   `json:"last_attempt_by_channel,omitempty"`
-	LastSuccess          time.Time              `json:"last_success_at"`
-	LastError            string                 `json:"last_error,omitempty"`
-	Index                *Index                 `json:"index,omitempty"`
-	Releases             map[string]ReleaseInfo `json:"releases"`
+	SchemaVersion int                    `json:"schema_version"`
+	Preference    string                 `json:"channel_preference"`
+	LastAttempt   time.Time              `json:"last_attempt_at"`
+	LastSuccess   time.Time              `json:"last_success_at"`
+	LastError     string                 `json:"last_error,omitempty"`
+	Index         *Index                 `json:"index,omitempty"`
+	Releases      map[string]ReleaseInfo `json:"releases"`
 }
 type Status struct {
 	CurrentVersion    string       `json:"current_version"`
@@ -75,7 +74,7 @@ func (s *Service) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	st := State{SchemaVersion: 1, Preference: "auto", LastAttemptByChannel: map[string]time.Time{}, Releases: map[string]ReleaseInfo{}}
+	st := State{SchemaVersion: 1, Preference: "auto", Releases: map[string]ReleaseInfo{}}
 	if len(data) > 0 {
 		if err = json.Unmarshal(data, &st); err != nil {
 			return errors.New("invalid persisted update state")
@@ -94,15 +93,7 @@ func (s *Service) load(ctx context.Context) error {
 			}
 		}
 	}
-	if st.LastAttemptByChannel == nil {
-		st.LastAttemptByChannel = map[string]time.Time{}
-	}
 	s.state = st
-	if !st.LastAttempt.IsZero() {
-		if _, ok := s.state.LastAttemptByChannel[s.channel()]; !ok {
-			s.state.LastAttemptByChannel[s.channel()] = st.LastAttempt
-		}
-	}
 	s.loaded = true
 	return nil
 }
@@ -140,6 +131,7 @@ func (s *Service) snapshot() Status {
 	}
 	target := s.state.Index.Channels[out.Channel]
 	if target == nil {
+		out.State = "no_candidate"
 		return out
 	}
 	v, _ := ParseVersion(target.Version)
@@ -159,8 +151,10 @@ func (s *Service) snapshot() Status {
 	}
 	out.State = "update_available"
 	out.UpgradeAction = "direct"
-	// Major transitions always require a reviewed guide, even if metadata omits a migration flag.
-	if info.Update.MigrationRequired || v.core[0] != cur.core[0] {
+	// Major transitions, breaking changes, or migration requirements always require a reviewed guide.
+	if info.Update.Breaking ||
+		info.Update.MigrationRequired ||
+		v.core[0] != cur.core[0] {
 		out.UpgradeAction = "migration_guide"
 	}
 	if min := info.Update.MinimumDirectUpgradeVersion; min != nil {
@@ -194,7 +188,7 @@ func (s *Service) SetChannel(ctx context.Context, p string) (Status, error) {
 		s.state.Preference = old
 		return Status{}, err
 	}
-	return s.checkLocked(ctx)
+	return s.checkLocked(ctx, true)
 }
 func (s *Service) fetch(ctx context.Context, raw string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
@@ -227,29 +221,28 @@ func (s *Service) fetch(ctx context.Context, raw string, dst any) error {
 	return nil
 }
 
-// The mutex serializes discovery/download/persistence. Concurrent checks reuse the
-// current channel's 60-second cooldown result; failed persistence retains downloaded data in memory.
+// The mutex serializes discovery/download/persistence. Normal checks share a 60-second
+// cooldown; channel changes force an immediate check. Failed persistence retains downloaded data in memory.
 func (s *Service) Check(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.load(ctx); err != nil {
 		return Status{}, err
 	}
-	return s.checkLocked(ctx)
+	return s.checkLocked(ctx, false)
 }
 
-func (s *Service) checkLocked(ctx context.Context) (Status, error) {
-	channel := s.channel()
+func (s *Service) checkLocked(ctx context.Context, force bool) (Status, error) {
 	now := s.now()
-	lastAttempt := s.state.LastAttemptByChannel[channel]
-	if !lastAttempt.IsZero() && now.Sub(lastAttempt) < time.Minute {
-		if err := s.save(ctx); err != nil {
-			return s.snapshot(), err
+	if !force && !s.state.LastAttempt.IsZero() && now.Sub(s.state.LastAttempt) < time.Minute {
+		if s.persistenceFailed {
+			if err := s.save(ctx); err != nil {
+				return s.snapshot(), err
+			}
 		}
 		return s.snapshot(), nil
 	}
 	s.state.LastAttempt = now
-	s.state.LastAttemptByChannel[channel] = now
 	err := s.discover(ctx)
 	if err != nil {
 		s.state.LastError = err.Error()

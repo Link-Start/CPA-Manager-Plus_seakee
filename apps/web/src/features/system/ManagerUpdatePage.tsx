@@ -25,9 +25,11 @@ import styles from './ManagerUpdatePage.module.scss';
 function ReleaseDetails({
   info,
   action,
+  upgradeAllowed,
 }: {
   info: ReleaseInfo;
   action: UpdateStatus['upgrade_action'];
+  upgradeAllowed: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [stepsOpen, setStepsOpen] = useState(false);
@@ -61,27 +63,28 @@ function ReleaseDetails({
         </div>
       )}
       <div className={styles.actions}>
-        {direct ? (
-          <Button
-            type="button"
-            onClick={() => setStepsOpen((open) => !open)}
-            aria-expanded={stepsOpen}
-            aria-controls="manager-upgrade-steps"
-          >
-            {t(stepsOpen ? 'manager_updates.hide_steps' : 'manager_updates.show_steps')}
-            <IconChevronRight size={15} aria-hidden="true" />
-          </Button>
-        ) : (
-          <a
-            className="btn btn-primary"
-            href={info.update.upgrade_guide_url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {t('manager_updates.migration_guide')}
-            <IconExternalLink size={15} aria-hidden="true" />
-          </a>
-        )}
+        {upgradeAllowed &&
+          (direct ? (
+            <Button
+              type="button"
+              onClick={() => setStepsOpen((open) => !open)}
+              aria-expanded={stepsOpen}
+              aria-controls="manager-upgrade-steps"
+            >
+              {t(stepsOpen ? 'manager_updates.hide_steps' : 'manager_updates.show_steps')}
+              <IconChevronRight size={15} aria-hidden="true" />
+            </Button>
+          ) : (
+            <a
+              className="btn btn-primary"
+              href={info.update.upgrade_guide_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t('manager_updates.migration_guide')}
+              <IconExternalLink size={15} aria-hidden="true" />
+            </a>
+          ))}
         {releaseUrl && (
           <a
             className={styles.secondaryLink}
@@ -94,7 +97,7 @@ function ReleaseDetails({
           </a>
         )}
       </div>
-      {direct && (
+      {upgradeAllowed && direct && (
         <section
           id="manager-upgrade-steps"
           className={styles.steps}
@@ -178,6 +181,7 @@ export function ManagerUpdatePage() {
 
   const failed = error || !!status?.last_error;
   const stale = !!status?.stale;
+  const upgradeAllowed = !failed && !stale;
   const info = available && status?.state === 'update_available' ? status.target : undefined;
   const state = !available
     ? 'unavailable'
@@ -286,6 +290,7 @@ export function ManagerUpdatePage() {
             key={channel + ':' + info.release.version}
             info={info}
             action={status?.upgrade_action}
+            upgradeAllowed={upgradeAllowed}
           />
         ) : available && (state === 'never_checked' || state === 'unknown_version') ? (
           <p className={styles.summary}>{t('manager_updates.check_hint')}</p>

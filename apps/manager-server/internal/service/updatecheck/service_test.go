@@ -233,7 +233,7 @@ func TestChannelMigrationAndBadMetadata(t *testing.T) {
 	}
 }
 
-func TestSetChannelChecksNewChannelImmediatelyWithIndependentCooldowns(t *testing.T) {
+func TestCaseA_StableSuccessThenBetaSwitchImmediatelyFetched(t *testing.T) {
 	ctx := context.Background()
 	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	stable := fixture("v1.1.0")
@@ -292,38 +292,230 @@ func TestSetChannelChecksNewChannelImmediatelyWithIndependentCooldowns(t *testin
 	if betaDownloads.Load() != 1 {
 		t.Fatalf("beta target was not fetched immediately: %d", betaDownloads.Load())
 	}
+}
 
-	if status, err = s.SetChannel(ctx, "stable"); err != nil || status.Target == nil || status.Target.Release.Version != stable.Release.Version {
-		t.Fatalf("switch back to stable: %+v %v", status, err)
+func TestCaseB_ChannelSwitchClearsPreviousChannelErrorOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	stable := fixture("v1.1.0")
+	var failIndex atomic.Bool
+	index := Index{
+		SchemaVersion: 1,
+		Revision:      1,
+		GeneratedAt:   clock,
+		Channels: map[string]*Target{
+			"stable": {Version: stable.Release.Version},
+			"rc":     nil,
+			"beta":   nil,
+		},
 	}
-	if indexRequests.Load() != 2 || stableDownloads.Load() != 1 || betaDownloads.Load() != 1 {
-		t.Fatalf("independent cooldowns not respected: index=%d stable=%d beta=%d", indexRequests.Load(), stableDownloads.Load(), betaDownloads.Load())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failIndex.Load() {
+			http.Error(w, "network error", http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/index" {
+			_ = json.NewEncoder(w).Encode(index)
+			return
+		}
+		if r.URL.Path == "/v1.1.0" {
+			_ = json.NewEncoder(w).Encode(stable)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{}
+	s := New(store, "v1.0.0", "test", false)
+	s.now = func() time.Time { return clock }
+	s.client = server.Client()
+	s.indexURL = server.URL + "/index"
+	s.releaseURL = func(tag string) string { return server.URL + "/" + tag }
+
+	// 1. Initial stable check succeeds.
+	st, err := s.Check(ctx)
+	if err != nil || st.State != "update_available" || st.LastError != "" {
+		t.Fatalf("stable check failed: %+v %v", st, err)
+	}
+
+	// 2. Beta discovery fails.
+	failIndex.Store(true)
+	st, err = s.SetChannel(ctx, "beta")
+	if err != nil {
+		t.Fatalf("SetChannel error: %v", err)
+	}
+	if st.ChannelPreference != "beta" || st.LastError == "" {
+		t.Fatalf("expected beta discovery failure: %+v", st)
+	}
+
+	// 3. Switch back to stable within cooldown window (clock unchanged).
+	failIndex.Store(false)
+	st, err = s.SetChannel(ctx, "stable")
+	if err != nil {
+		t.Fatalf("switch back to stable error: %v", err)
+	}
+	if st.ChannelPreference != "stable" || st.LastError != "" || st.State != "update_available" || st.Target == nil || st.Target.Release.Version != "v1.1.0" {
+		t.Fatalf("stable check should force re-discovery and clear error: %+v", st)
 	}
 }
 
-func TestLegacyGlobalAttemptMigratesToEffectiveChannel(t *testing.T) {
+func TestCaseC_NormalCheckWithinCooldownReusesResult(t *testing.T) {
+	ctx := context.Background()
 	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
-	legacy := State{
-		SchemaVersion: 1,
-		Preference:    "stable",
-		LastAttempt:   clock,
-		Releases:      map[string]ReleaseInfo{},
-	}
-	data, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{data: data}
+	var indexRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index" {
+			indexRequests.Add(1)
+			_ = json.NewEncoder(w).Encode(Index{
+				SchemaVersion: 1,
+				Revision:      1,
+				GeneratedAt:   clock,
+				Channels: map[string]*Target{
+					"stable": {Version: "v1.1.0"},
+					"rc":     nil,
+					"beta":   nil,
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/v1.1.0" {
+			_ = json.NewEncoder(w).Encode(fixture("v1.1.0"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{}
 	s := New(store, "v1.0.0", "test", false)
 	s.now = func() time.Time { return clock }
-	if err := s.load(context.Background()); err != nil {
+	s.client = server.Client()
+	s.indexURL = server.URL + "/index"
+	s.releaseURL = func(tag string) string { return server.URL + "/" + tag }
+
+	if _, err := s.Check(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.state.LastAttemptByChannel["stable"]; !got.Equal(clock) {
-		t.Fatalf("legacy attempt was not assigned to effective channel: %v", got)
+	if indexRequests.Load() != 1 {
+		t.Fatalf("expected 1 index request, got %d", indexRequests.Load())
 	}
-	if _, ok := s.state.LastAttemptByChannel["beta"]; ok {
-		t.Fatal("legacy attempt incorrectly assigned to beta")
+
+	// Immediate second Check() within 60s cooldown.
+	s.now = func() time.Time { return clock.Add(30 * time.Second) }
+	if _, err := s.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if indexRequests.Load() != 1 {
+		t.Fatalf("expected cooldown reuse (1 index request), got %d", indexRequests.Load())
+	}
+}
+
+func TestNoCandidateStateWhenChannelHasNoTarget(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	beta := fixture("v2.0.0-beta.1")
+	index := Index{
+		SchemaVersion: 1,
+		Revision:      1,
+		GeneratedAt:   clock,
+		Channels: map[string]*Target{
+			"stable": nil,
+			"rc":     nil,
+			"beta":   {Version: beta.Release.Version},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index" {
+			_ = json.NewEncoder(w).Encode(index)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{}
+	s := New(store, "v1.0.0", "test", false)
+	s.now = func() time.Time { return clock }
+	s.client = server.Client()
+	s.indexURL = server.URL + "/index"
+	s.releaseURL = func(tag string) string { return server.URL + "/" + tag }
+
+	st, err := s.Check(ctx)
+	if err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
+	if st.State != "no_candidate" {
+		t.Fatalf("expected state no_candidate, got %q", st.State)
+	}
+	if st.Target != nil {
+		t.Fatalf("expected nil target for no_candidate, got %+v", st.Target)
+	}
+	if st.LastSuccess.IsZero() {
+		t.Fatal("LastSuccess should be recorded on valid index discovery")
+	}
+	if st.LastError != "" {
+		t.Fatalf("unexpected LastError: %s", st.LastError)
+	}
+}
+
+func TestBreakingFlagEnforcesMigrationGuide(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name           string
+		breaking       bool
+		expectedAction string
+	}{
+		{"breaking_true", true, "migration_guide"},
+		{"breaking_false", false, "direct"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rel := fixture("v1.1.0")
+			rel.Update.Breaking = tc.breaking
+			rel.Update.MigrationRequired = false
+			index := Index{
+				SchemaVersion: 1,
+				Revision:      1,
+				GeneratedAt:   clock,
+				Channels: map[string]*Target{
+					"stable": {Version: rel.Release.Version},
+					"rc":     nil,
+					"beta":   nil,
+				},
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/index" {
+					_ = json.NewEncoder(w).Encode(index)
+					return
+				}
+				if r.URL.Path == "/v1.1.0" {
+					_ = json.NewEncoder(w).Encode(rel)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer server.Close()
+
+			store := &memoryStore{}
+			s := New(store, "v1.0.0", "test", false)
+			s.now = func() time.Time { return clock }
+			s.client = server.Client()
+			s.indexURL = server.URL + "/index"
+			s.releaseURL = func(tag string) string { return server.URL + "/" + tag }
+
+			st, err := s.Check(ctx)
+			if err != nil {
+				t.Fatalf("check failed: %v", err)
+			}
+			if st.State != "update_available" {
+				t.Fatalf("expected update_available, got %q", st.State)
+			}
+			if st.UpgradeAction != tc.expectedAction {
+				t.Fatalf("expected upgrade_action %q, got %q", tc.expectedAction, st.UpgradeAction)
+			}
+		})
 	}
 }
 
