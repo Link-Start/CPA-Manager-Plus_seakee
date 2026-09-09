@@ -16175,4 +16175,136 @@ describe('AccountsPage replacement flows', () => {
       ).toBe(0);
     });
   });
+
+  describe('codex reset credits presentation in quota track header', () => {
+    it('displays reset credits on the first quota window header when available', async () => {
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+      const now = Date.now();
+
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(targetFile, {
+        status: 'success',
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 1,
+            resetLabel: '3d',
+            resetAtMs: now + 3 * 86400 * 1000,
+          }),
+          makeCodexQuotaWindow({
+            id: 'weekly',
+            label: 'Weekly',
+            usedPercent: 10,
+            resetLabel: '5d',
+            resetAtMs: now + 5 * 86400 * 1000,
+          }),
+        ],
+        rateLimitResetCreditsAvailableCount: 2,
+        rateLimitResetCredits: [
+          {
+            id: 'credit-1',
+            status: 'active',
+            grantedAt: new Date(now - 86400 * 1000).toISOString(),
+            expiresAt: new Date(now + 3 * 86400 * 1000).toISOString(),
+          },
+        ],
+      });
+
+      const renderer = await renderAccountsPage();
+      const resetCreditsNodes = renderer.root.findAllByProps({
+        'data-account-reset-credits': targetSelectionKey,
+      });
+
+      expect(resetCreditsNodes).toHaveLength(1);
+      const node = resetCreditsNodes[0];
+      expect(readText(node.props.children)).toContain('2');
+      expect(node.props.title).toBeUndefined();
+      expect(node.props.role).toBe('button');
+    });
+
+    it('does not display reset credits when count is 0 or null', async () => {
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(targetFile, {
+        status: 'success',
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 10,
+          }),
+        ],
+        rateLimitResetCreditsAvailableCount: 0,
+        rateLimitResetCredits: [],
+      });
+
+      const renderer = await renderAccountsPage();
+      const resetCreditsNodes = renderer.root.findAllByProps({
+        'data-account-reset-credits': targetSelectionKey,
+      });
+
+      expect(resetCreditsNodes).toHaveLength(0);
+    });
+
+    it('clicking reset credits badge opens credential detail drawer with quota tab and anchor', async () => {
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+      const now = Date.now();
+
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(targetFile, {
+        status: 'success',
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 10,
+          }),
+        ],
+        rateLimitResetCreditsAvailableCount: 2,
+        rateLimitResetCredits: [
+          {
+            id: 'credit-1',
+            status: 'available',
+            grantedAt: new Date(now - 86400 * 1000).toISOString(),
+            expiresAt: new Date(now + 2 * 86400 * 1000).toISOString(),
+          },
+        ],
+      });
+
+      const renderer = await renderAccountsPage();
+      const resetCreditsNodes = renderer.root.findAllByProps({
+        'data-account-reset-credits': targetSelectionKey,
+      });
+
+      expect(resetCreditsNodes).toHaveLength(1);
+      const node = resetCreditsNodes[0];
+
+      let stopped = false;
+      let prevented = false;
+      await act(async () => {
+        node.props.onClick({
+          stopPropagation: () => {
+            stopped = true;
+          },
+          preventDefault: () => {
+            prevented = true;
+          },
+        });
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(stopped).toBe(true);
+      expect(prevented).toBe(true);
+      expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          search: expect.stringContaining('tab=quota'),
+        }),
+        expect.anything()
+      );
+    });
+  });
 });

@@ -718,7 +718,6 @@ const demoAuthFiles: AuthFilesResponse = {
       account: 'oc0demo01@yijihwjw.com',
       label: 'xai',
       priority: 45,
-      plan_type: 'pro',
       success: 294,
       failed: 4,
       recent_requests: demoRecentRequests(5, { failureEvery: 11 }),
@@ -738,7 +737,6 @@ const demoAuthFiles: AuthFilesResponse = {
       account: 'oc1demo02@yijihwjw.com',
       label: 'xai',
       priority: 38,
-      plan_type: 'pro',
       success: 188,
       failed: 3,
       recent_requests: demoRecentRequests(6, { failureEvery: 16, surgeEvery: 8 }),
@@ -917,7 +915,6 @@ const demoAuthFiles: AuthFilesResponse = {
       label: 'xAI PAYG Buffer',
       account_snapshot: 'xAI PAYG Buffer',
       priority: 42,
-      plan_type: 'pro',
       success: 436,
       failed: 10,
       recent_requests: demoRecentRequests(4, { failureEvery: 12, surgeEvery: 6 }),
@@ -936,7 +933,6 @@ const demoAuthFiles: AuthFilesResponse = {
       label: 'xAI Cap Reached',
       account_snapshot: 'xAI Cap Reached',
       priority: 18,
-      plan_type: 'pro',
       success: 118,
       failed: 32,
       recent_requests: demoRecentRequests(2, { failureEvery: 3, failureSize: 2, idlePrefix: 1 }),
@@ -5776,6 +5772,21 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authIndex: 'codex-team-01',
       fetchedAtMs: now() - 5 * minute,
       subscriptionActiveUntil: demoResetIso(23 * day),
+      rateLimitResetCreditsAvailableCount: 2,
+      rateLimitResetCredits: [
+        {
+          id: 'demo-credit-1',
+          status: 'available',
+          grantedAt: demoResetIso(-day),
+          expiresAt: demoResetIso(6 * day),
+        },
+        {
+          id: 'demo-credit-2',
+          status: 'available',
+          grantedAt: demoResetIso(-12 * hour),
+          expiresAt: demoResetIso(14 * day),
+        },
+      ],
       windows: [
         {
           id: 'five-hour',
@@ -5801,6 +5812,8 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authIndex: 'codex-email-user-01',
       fetchedAtMs: now() - 4 * minute,
       subscriptionActiveUntil: demoResetIso(18 * day),
+      rateLimitResetCreditsAvailableCount: 0,
+      rateLimitResetCredits: [],
       windows: [
         {
           id: 'five-hour',
@@ -5826,6 +5839,27 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authIndex: 'codex-pro-20x-01',
       fetchedAtMs: now() - 4 * minute,
       subscriptionActiveUntil: demoResetIso(45 * day),
+      rateLimitResetCreditsAvailableCount: 3,
+      rateLimitResetCredits: [
+        {
+          id: 'demo-pro-credit-1',
+          status: 'available',
+          grantedAt: demoResetIso(-2 * day),
+          expiresAt: demoResetIso(3 * day + 4 * hour),
+        },
+        {
+          id: 'demo-pro-credit-2',
+          status: 'available',
+          grantedAt: demoResetIso(-day),
+          expiresAt: demoResetIso(9 * day),
+        },
+        {
+          id: 'demo-pro-credit-3',
+          status: 'available',
+          grantedAt: demoResetIso(-6 * hour),
+          expiresAt: demoResetIso(18 * day),
+        },
+      ],
       windows: [
         {
           id: 'five-hour',
@@ -5850,6 +5884,15 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileName: 'codex-fallback-02.json',
       authIndex: 'codex-fallback-02',
       fetchedAtMs: now() - 15 * minute,
+      rateLimitResetCreditsAvailableCount: 1,
+      rateLimitResetCredits: [
+        {
+          id: 'demo-fallback-credit-1',
+          status: 'available',
+          grantedAt: demoResetIso(-day),
+          expiresAt: demoResetIso(2 * day),
+        },
+      ],
       windows: [
         {
           id: 'five-hour',
@@ -7021,7 +7064,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
           balance: isCodexPro20x ? 42.6 : 18.4,
         },
         rate_limit_reset_credits: {
-          available_count: isCodexPro20x ? 3 : 2,
+          available_count: isCodexPro20x ? 3 : isCodexRecovered ? 1 : 2,
         },
         subscription_active_until: matchedAuthFile
           ? matchedSubscriptionActiveUntil
@@ -7030,7 +7073,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
     }
   } else if (requestUrl.includes('/rate-limit-reset-credits')) {
     body = {
-      available_count: isCodexPro20x ? 3 : 2,
+      available_count: isCodexPro20x ? 3 : isCodexRecovered ? 1 : 2,
       credits: isCodexPro20x
         ? [
             {
@@ -7055,22 +7098,32 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
               expires_at: new Date(now() + 18 * day).toISOString(),
             },
           ]
-        : [
-            {
-              id: 'demo-credit-1',
-              reset_type: 'codex_rate_limits',
-              status: 'available',
-              granted_at: new Date(now() - day).toISOString(),
-              expires_at: new Date(now() + 6 * day).toISOString(),
-            },
-            {
-              id: 'demo-credit-2',
-              reset_type: 'codex_rate_limits',
-              status: 'available',
-              granted_at: new Date(now() - 12 * hour).toISOString(),
-              expires_at: new Date(now() + 14 * day).toISOString(),
-            },
-          ],
+        : isCodexRecovered
+          ? [
+              {
+                id: 'demo-fallback-credit-1',
+                reset_type: 'codex_rate_limits',
+                status: 'available',
+                granted_at: new Date(now() - day).toISOString(),
+                expires_at: new Date(now() + 2 * day).toISOString(),
+              },
+            ]
+          : [
+              {
+                id: 'demo-credit-1',
+                reset_type: 'codex_rate_limits',
+                status: 'available',
+                granted_at: new Date(now() - day).toISOString(),
+                expires_at: new Date(now() + 6 * day).toISOString(),
+              },
+              {
+                id: 'demo-credit-2',
+                reset_type: 'codex_rate_limits',
+                status: 'available',
+                granted_at: new Date(now() - 12 * hour).toISOString(),
+                expires_at: new Date(now() + 14 * day).toISOString(),
+              },
+            ],
     };
   } else if (requestUrl.includes('anthropic.com/api/oauth/profile')) {
     body =

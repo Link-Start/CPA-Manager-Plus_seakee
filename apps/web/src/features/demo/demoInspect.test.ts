@@ -128,4 +128,30 @@ describe('Demo accounts quota & usage presentation regression', () => {
     checkProviderPresentation('kimi', 'kimi-coding.json');
     checkProviderPresentation('xai', 'xai-ops.json');
   });
+
+  it('provides verifiable rate limit reset credits across demo codex accounts', () => {
+    const quotaState = getDemoQuotaStoreState();
+    const findQuota = (fileName: string) =>
+      Object.values(quotaState.codexQuota).find((q) => q?.authFileName === fileName);
+
+    const teamQuota = findQuota('codex-team-01.json');
+    expect(teamQuota).toBeDefined();
+    expect(teamQuota?.rateLimitResetCreditsAvailableCount).toBe(2);
+    expect(teamQuota?.rateLimitResetCredits).toHaveLength(2);
+
+    const proQuota = findQuota('codex-pro-20x-01.json');
+    expect(proQuota).toBeDefined();
+    expect(proQuota?.rateLimitResetCreditsAvailableCount).toBe(3);
+    expect(proQuota?.rateLimitResetCredits).toHaveLength(3);
+
+    const fallbackQuota = findQuota('codex-fallback-02.json');
+    expect(fallbackQuota).toBeDefined();
+    expect(fallbackQuota?.rateLimitResetCreditsAvailableCount).toBe(1);
+    expect(fallbackQuota?.rateLimitResetCredits).toHaveLength(1);
+
+    const emailQuota = findQuota('codex-email-user.json');
+    expect(emailQuota).toBeDefined();
+    expect(emailQuota?.rateLimitResetCreditsAvailableCount).toBe(0);
+    expect(emailQuota?.rateLimitResetCredits).toEqual([]);
+  });
 });

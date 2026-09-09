@@ -51,7 +51,10 @@ import {
   type QuotaRefreshResult,
   type QuotaSetter,
 } from '@/components/quota';
-import { buildQuotaFailureState, getScopedQuotaState } from '@/components/quota/quotaConfigs';
+import {
+  buildQuotaFailureState,
+  getScopedQuotaState,
+} from '@/components/quota/quotaConfigs';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
@@ -1598,6 +1601,8 @@ export function AccountsPage() {
     new Map()
   );
   const detailDrawerBodyRef = useRef<HTMLDivElement | null>(null);
+  const detailAnchorRef = useRef<string | null>(null);
+  const [detailAnchor, setDetailAnchor] = useState<{ id: string; timestamp: number } | null>(null);
   const selectedRowKeyRef = useRef(selectedRowKey);
   const headerSnapshotContextRef = useRef({
     managerServiceBase: featureAvailability.managerServiceBase,
@@ -4852,7 +4857,7 @@ export function AccountsPage() {
   );
 
   const openAccountDetail = useCallback(
-    async (row: AccountRow, tab: DetailTab = 'overview') => {
+    async (row: AccountRow, tab: DetailTab = 'overview', anchor?: string) => {
       const preservesConfigurationDraft =
         row.selectionKey === selectedRowKey &&
         (detailTab === 'config' || detailTab === 'models') &&
@@ -4864,6 +4869,14 @@ export function AccountsPage() {
         (!preservesConfigurationDraft || row.selectionKey !== selectedRowKey || tab !== detailTab)
       ) {
         allowNextNavigation();
+      }
+
+      if (anchor) {
+        detailAnchorRef.current = anchor;
+        setDetailAnchor({ id: anchor, timestamp: Date.now() });
+      } else {
+        detailAnchorRef.current = null;
+        setDetailAnchor(null);
       }
 
       const searchValue = writeAccountsWorkspaceUrlSearch(
@@ -4897,6 +4910,8 @@ export function AccountsPage() {
   );
 
   const closeAccountDetail = useCallback(() => {
+    detailAnchorRef.current = null;
+    setDetailAnchor(null);
     setSelectedRowKey(null);
     setDetailTab('overview');
     const searchValue = writeAccountsWorkspaceUrlSearch(
@@ -5279,9 +5294,52 @@ export function AccountsPage() {
 
   useLayoutEffect(() => {
     if (detailDrawerBodyRef.current) {
+      if (detailAnchorRef.current) {
+        return;
+      }
       detailDrawerBodyRef.current.scrollTop = 0;
     }
   }, [detailTab, selectedRowKey]);
+
+  useEffect(() => {
+    if (!detailAnchor || !selectedRowKey) return;
+    if (detailTab !== 'quota') return;
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const container = detailDrawerBodyRef.current;
+      if (!container) {
+        if (++attempts < 10) {
+          setTimeout(tryScroll, 40);
+        }
+        return;
+      }
+      const target = container.querySelector<HTMLElement>(
+        '[data-account-quota-reset-records="true"], [data-quota-evidence-panel="reset"], #quota-reset-records'
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        detailAnchorRef.current = null;
+        setDetailAnchor(null);
+      } else if (++attempts < 10) {
+        setTimeout(tryScroll, 40);
+      } else {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        detailAnchorRef.current = null;
+        setDetailAnchor(null);
+      }
+    };
+
+    const timer = setTimeout(tryScroll, 40);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [detailAnchor, detailTab, selectedRowKey]);
 
   useEffect(() => {
     if (loading || error || !selectedRowKey || selectedRow) return;
@@ -7669,10 +7727,20 @@ export function AccountsPage() {
               quotaWindows,
               requestEvidence: requestEvidenceBySelectionKey.get(row.selectionKey),
             });
+            const codexQuotaState =
+              row.provider === CODEX_CONFIG.type ? getActiveCodexQuota(row.raw) : undefined;
             const subscriptionPresentation = buildAccountSubscriptionPresentation({
               row,
-              codexQuota: row.provider === CODEX_CONFIG.type ? getActiveCodexQuota(row.raw) : undefined,
+              codexQuota: codexQuotaState,
             });
+            const codexResetCreditsCount =
+              codexQuotaState?.rateLimitResetCreditsAvailableCount ??
+              codexQuotaState?.rateLimitResetCredits?.length ??
+              null;
+            const hasCodexResetCredits =
+              row.provider === CODEX_CONFIG.type &&
+              codexResetCreditsCount !== null &&
+              codexResetCreditsCount > 0;
             const providerIcon = getAuthFileIcon(row.provider, resolvedTheme);
             const quotaEmptyLabel =
               quotaWindows.length > 0
@@ -7884,7 +7952,7 @@ export function AccountsPage() {
                   children: (
                     <span className={styles.quotaWindowGrid} title={quotaWindowTitle}>
                       {mainListWindows.length > 0 ? (
-                        mainListWindows.map((window) => {
+                        mainListWindows.map((window, windowIndex) => {
                           const windowRemaining = window.remainingPercent;
                           const windowWidth = Math.max(0, Math.min(100, windowRemaining ?? 0));
                           const resetLabel =
@@ -7950,14 +8018,51 @@ export function AccountsPage() {
                                   {readableLabel}
                                 </span>
                                 <span className={styles.quotaWindowMeta}>
-                                  <strong className={styles.quotaWindowPercent}>
-                                    {percentText}
-                                  </strong>
-                                  {relativeReset ? (
+                                  {hasCodexResetCredits && windowIndex === 0 ? (
                                     <>
-                                      <span className={styles.quotaWindowSep} aria-hidden="true">
+                                       <span
+                                         role="button"
+                                         tabIndex={0}
+                                         className={styles.quotaWindowResetCredits}
+                                         data-account-reset-credits={row.selectionKey}
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           e.preventDefault();
+                                           void openAccountDetail(row, 'quota', 'reset-records');
+                                         }}
+                                         onKeyDown={(e) => {
+                                           if (e.key === 'Enter' || e.key === ' ') {
+                                             e.stopPropagation();
+                                             e.preventDefault();
+                                             void openAccountDetail(row, 'quota', 'reset-records');
+                                           }
+                                         }}
+                                         aria-label={t('accounts.detail_quota_reset_records', {
+                                           defaultValue: '重置记录',
+                                         })}
+                                       >
+                                         <span
+                                           className={styles.quotaWindowResetCreditsIcon}
+                                           aria-hidden="true"
+                                         >
+                                           ↺
+                                         </span>
+                                         <strong
+                                           className={styles.quotaWindowResetCreditsCount}
+                                         >
+                                           {codexResetCreditsCount}
+                                         </strong>
+                                       </span>
+                                      <span
+                                        className={styles.quotaWindowSep}
+                                        aria-hidden="true"
+                                      >
                                         |
                                       </span>
+                                    </>
+                                  ) : null}
+                                  {relativeReset ? (
+                                    <>
                                       <span
                                         className={styles.quotaWindowResetTime}
                                         title={
@@ -7968,8 +8073,17 @@ export function AccountsPage() {
                                       >
                                         {relativeReset}
                                       </span>
+                                      <span
+                                        className={styles.quotaWindowSep}
+                                        aria-hidden="true"
+                                      >
+                                        |
+                                      </span>
                                     </>
                                   ) : null}
+                                  <strong className={styles.quotaWindowPercent}>
+                                    {percentText}
+                                  </strong>
                                 </span>
                               </span>
                               <span className={styles.quotaTrack} aria-hidden="true">

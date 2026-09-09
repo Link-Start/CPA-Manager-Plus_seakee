@@ -463,15 +463,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 35px;
+  height: 35px;
   flex-shrink: 0;
 
   img {
     width: 100%;
     height: 100%;
-    max-width: 28px;
-    max-height: 28px;
+    max-width: 35px;
+    max-height: 35px;
     object-fit: contain;
   }
 }
@@ -496,7 +496,7 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
-  gap: 2px;
+  gap: 5px;
   text-align: center;
 }
 
@@ -1131,7 +1131,7 @@
   display: grid;
   grid-template-rows: auto 6px auto;
   align-content: center;
-  row-gap: 5px;
+  row-gap: 8px;
   min-width: 0;
   padding: 0;
 
@@ -1180,7 +1180,7 @@
 
 .quotaWindowSep {
   color: color-mix(in srgb, var(--accounts-muted) 60%, transparent);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 400;
   line-height: 1;
   user-select: none;
@@ -1193,6 +1193,52 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   cursor: help;
+}
+
+.quotaWindowResetCredits {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  color: var(--primary-color);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin: -1px -3px;
+  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+
+  &:hover {
+    color: color-mix(in srgb, var(--primary-color) 82%, #000);
+    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  &:active {
+    opacity: 0.8;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+}
+
+.quotaWindowResetCreditsIcon {
+  font-size: 11px;
+  line-height: 1;
+  display: inline-block;
+}
+
+.quotaWindowResetCreditsCount {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .quotaWindowUsageLine {
@@ -1218,7 +1264,7 @@
 
 .quotaUsageLabel,
 .quotaForecastLabel {
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accounts-muted);
   user-select: none;
@@ -1227,7 +1273,7 @@
 }
 
 .quotaWindowCost {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 650;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -1236,7 +1282,7 @@
 }
 
 .quotaWindowTokenCompact {
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
@@ -1245,7 +1291,7 @@
 }
 
 .quotaWindowCostPredicted {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 550;
   color: color-mix(in srgb, var(--text-primary) 70%, var(--accounts-muted));
   font-variant-numeric: tabular-nums;
@@ -1254,7 +1300,7 @@
 }
 
 .quotaWindowTokenPredictedCompact {
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--accounts-muted);
   font-variant-numeric: tabular-nums;
@@ -1329,7 +1375,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
   text-overflow: ellipsis;
@@ -1344,7 +1390,7 @@
 
 .quotaMatrixPercent {
   color: var(--text-primary);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 850;
   line-height: 1;
   text-align: right;
@@ -1383,7 +1429,7 @@
 
   .quotaMatrixGroupLabel,
   .quotaMatrixPercent {
-    font-size: 9.5px;
+    font-size: 11px;
   }
 }
 
@@ -5701,7 +5747,7 @@
     width: 32px;
     min-width: 32px;
     height: 18px;
-    font-size: 9.5px;
+    font-size: 11px;
   }
 
   .quotaMatrixCells {
