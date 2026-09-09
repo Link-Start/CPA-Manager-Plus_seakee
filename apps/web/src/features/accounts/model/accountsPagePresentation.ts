@@ -225,11 +225,98 @@ export const formatQuotaResetDisplay = (
 const QUOTA_RESET_MINUTE_MS = 60 * 1000;
 const QUOTA_RESET_HOUR_MS = 60 * QUOTA_RESET_MINUTE_MS;
 
-export const formatQuotaResetRelative = (
+export interface QuotaResetRelativeOptions {
+  locale?: string;
+  style?: 'long' | 'short';
+}
+
+const normalizeQuotaResetLocale = (locale?: string): 'zh-CN' | 'zh-TW' | 'en' | 'ru' => {
+  if (!locale) return 'zh-CN';
+  const lower = locale.toLowerCase();
+  if (lower.startsWith('zh-tw') || lower.startsWith('zh-hk') || lower.startsWith('zh-hant')) {
+    return 'zh-TW';
+  }
+  if (lower.startsWith('zh')) {
+    return 'zh-CN';
+  }
+  if (lower.startsWith('en')) {
+    return 'en';
+  }
+  if (lower.startsWith('ru')) {
+    return 'ru';
+  }
+  return 'zh-CN';
+};
+
+const formatRelativeUnit = (
+  count: number,
+  unit: 'd' | 'h' | 'm',
+  localeType: 'zh-CN' | 'zh-TW' | 'en' | 'ru'
+): string => {
+  if (localeType === 'zh-CN') {
+    if (unit === 'd') return `${count} 天后`;
+    if (unit === 'h') return `${count} 小时后`;
+    return `${count} 分钟后`;
+  }
+  if (localeType === 'zh-TW') {
+    if (unit === 'd') return `${count} 天後`;
+    if (unit === 'h') return `${count} 小時後`;
+    return `${count} 分鐘後`;
+  }
+  if (localeType === 'en') {
+    if (unit === 'd') return `in ${count} ${count === 1 ? 'day' : 'days'}`;
+    if (unit === 'h') return `in ${count} ${count === 1 ? 'hour' : 'hours'}`;
+    return `in ${count} ${count === 1 ? 'minute' : 'minutes'}`;
+  }
+  if (unit === 'd') return `через ${count} дн.`;
+  if (unit === 'h') return `через ${count} ч.`;
+  return `через ${count} мин.`;
+};
+
+const formatSubMinuteRelative = (localeType: 'zh-CN' | 'zh-TW' | 'en' | 'ru'): string => {
+  if (localeType === 'zh-CN') return '<1 分钟后';
+  if (localeType === 'zh-TW') return '<1 分鐘後';
+  if (localeType === 'en') return 'in <1 min';
+  return '< 1 мин.';
+};
+
+export function formatQuotaResetRelative(
   resetAtMs: number | null | undefined,
   resetLabel?: string | null,
-  nowMs = Date.now()
-): string => {
+  nowMs?: number,
+  localeOrOptions?: string | QuotaResetRelativeOptions
+): string;
+export function formatQuotaResetRelative(
+  resetAtMs: number | null | undefined,
+  resetLabel?: string | null,
+  localeOrOptions?: string | QuotaResetRelativeOptions
+): string;
+export function formatQuotaResetRelative(
+  resetAtMs: number | null | undefined,
+  resetLabel?: string | null,
+  nowMsOrLocale?: number | string | QuotaResetRelativeOptions,
+  localeOrOptions?: string | QuotaResetRelativeOptions
+): string {
+  let nowMs = Date.now();
+  let resolvedLocaleOrOptions = localeOrOptions;
+
+  if (typeof nowMsOrLocale === 'number') {
+    nowMs = nowMsOrLocale;
+  } else if (nowMsOrLocale !== undefined) {
+    resolvedLocaleOrOptions = nowMsOrLocale;
+  }
+
+  let locale = 'zh-CN';
+  let style: 'long' | 'short' = 'long';
+  if (typeof resolvedLocaleOrOptions === 'string') {
+    locale = resolvedLocaleOrOptions;
+  } else if (resolvedLocaleOrOptions) {
+    if (resolvedLocaleOrOptions.locale) locale = resolvedLocaleOrOptions.locale;
+    if (resolvedLocaleOrOptions.style) style = resolvedLocaleOrOptions.style;
+  }
+
+  const localeType = normalizeQuotaResetLocale(locale);
+
   let targetMs: number | null = null;
   if (typeof resetAtMs === 'number' && Number.isFinite(resetAtMs) && resetAtMs > 0) {
     targetMs = resetAtMs;
@@ -243,34 +330,82 @@ export const formatQuotaResetRelative = (
   if (targetMs === null) {
     const trimmed = resetLabel?.trim();
     if (trimmed && trimmed !== '-') {
-      const match = trimmed.match(/(\d+\s*[dhm])/i);
-      if (match) return match[1].replace(/\s+/g, '').toLowerCase();
+      const match = trimmed.match(/(\d+)\s*([dhm])/i);
+      if (match) {
+        const count = Number.parseInt(match[1], 10);
+        const unit = match[2].toLowerCase() as 'd' | 'h' | 'm';
+        if (style === 'short') {
+          return `${count}${unit}`;
+        }
+        return formatRelativeUnit(count, unit, localeType);
+      }
     }
     return '';
   }
 
   const diffMs = targetMs - nowMs;
   if (diffMs <= 0) {
-    return '0m';
+    return style === 'short' ? '0m' : formatSubMinuteRelative(localeType);
   }
 
   if (diffMs >= QUOTA_RESET_DAY_MS) {
     const days = Math.floor(diffMs / QUOTA_RESET_DAY_MS);
-    return `${days}d`;
+    return style === 'short' ? `${days}d` : formatRelativeUnit(days, 'd', localeType);
   }
 
   if (diffMs >= QUOTA_RESET_HOUR_MS) {
     const hours = Math.floor(diffMs / QUOTA_RESET_HOUR_MS);
-    return `${hours}h`;
+    return style === 'short' ? `${hours}h` : formatRelativeUnit(hours, 'h', localeType);
   }
 
   if (diffMs >= QUOTA_RESET_MINUTE_MS) {
     const minutes = Math.floor(diffMs / QUOTA_RESET_MINUTE_MS);
-    return `${minutes}m`;
+    return style === 'short' ? `${minutes}m` : formatRelativeUnit(minutes, 'm', localeType);
   }
 
-  return '<1m';
+  return style === 'short' ? '<1m' : formatSubMinuteRelative(localeType);
+}
+
+export interface QuotaRemainingPercentParts {
+  prefix: string;
+  percent: string;
+}
+
+export const getQuotaRemainingPercentLabel = (locale?: string): string => {
+  const localeType = normalizeQuotaResetLocale(locale);
+  switch (localeType) {
+    case 'zh-TW':
+      return '剩餘';
+    case 'en':
+      return 'Rem';
+    case 'ru':
+      return 'Ост.';
+    case 'zh-CN':
+    default:
+      return '剩余';
+  }
 };
+
+export const formatQuotaRemainingPercentParts = (
+  percentText: string,
+  locale?: string
+): QuotaRemainingPercentParts | null => {
+  if (!percentText || percentText === '-') return null;
+  return {
+    prefix: getQuotaRemainingPercentLabel(locale),
+    percent: percentText,
+  };
+};
+
+export const formatQuotaRemainingPercentDisplay = (
+  percentText: string,
+  locale?: string
+): string => {
+  const parts = formatQuotaRemainingPercentParts(percentText, locale);
+  if (!parts) return '-';
+  return `${parts.prefix} ${parts.percent}`;
+};
+
 
 export const formatQuotaResetTooltipParams = (
   params: Record<string, string | number>,

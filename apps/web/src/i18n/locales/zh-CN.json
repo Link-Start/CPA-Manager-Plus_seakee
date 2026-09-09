@@ -1012,7 +1012,7 @@
     "quota_source_none": "暂无额度数据",
     "quota_details_only": "额度仅在详情中显示",
     "quota_brief_remaining": "剩余 {{percent}}",
-    "quota_remaining_short": "余 {{percent}}",
+    "quota_remaining_short": "剩余 {{percent}}",
     "quota_used_short": "已用",
     "quota_forecast_short": "预测",
     "quota_brief_unknown": "额度未知",

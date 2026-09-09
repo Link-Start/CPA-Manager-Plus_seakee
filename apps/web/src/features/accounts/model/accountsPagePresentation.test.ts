@@ -5,6 +5,9 @@ import {
   buildAntigravityQuotaMatrix,
   formatHistorySuccessRate,
   formatMoney,
+  formatQuotaRemainingPercentDisplay,
+  formatQuotaRemainingPercentParts,
+  getQuotaRemainingPercentLabel,
   formatQuotaResetDisplay,
   formatQuotaResetRelative,
   getQuotaResetRemainingDays,
@@ -130,25 +133,39 @@ describe('accountsPagePresentation', () => {
   it('formats relative quota resets with day, hour, and minute resolutions', () => {
     const nowMs = new Date(2026, 8, 9, 10, 0, 0, 0).getTime();
 
-    // 5 days later -> 5d
-    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs)).toBe('5d');
-    // 23 hours later -> 23h
-    expect(formatQuotaResetRelative(nowMs + 23 * 60 * 60 * 1000 + 10 * 60 * 1000, null, nowMs)).toBe('23h');
-    // 59 minutes later -> 59m
-    expect(formatQuotaResetRelative(nowMs + 59 * 60 * 1000 + 30 * 1000, null, nowMs)).toBe('59m');
-    // 30 seconds later -> <1m
-    expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs)).toBe('<1m');
-    // Expired or exact zero -> 0m
-    expect(formatQuotaResetRelative(nowMs, null, nowMs)).toBe('0m');
-    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs)).toBe('0m');
+    // Default long format (zh-CN)
+    // 5 days later -> 5 天后
+    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs)).toBe('5 天后');
+    // 23 hours later -> 23 小时后
+    expect(formatQuotaResetRelative(nowMs + 23 * 60 * 60 * 1000 + 10 * 60 * 1000, null, nowMs)).toBe('23 小时后');
+    // 59 minutes later -> 59 分钟后
+    expect(formatQuotaResetRelative(nowMs + 59 * 60 * 1000 + 30 * 1000, null, nowMs)).toBe('59 分钟后');
+    // 30 seconds later -> <1 分钟后
+    expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs)).toBe('<1 分钟后');
+    // Expired or exact zero -> <1 分钟后
+    expect(formatQuotaResetRelative(nowMs, null, nowMs)).toBe('<1 分钟后');
+    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs)).toBe('<1 分钟后');
 
     // From string label fallback
-    expect(formatQuotaResetRelative(null, '5d', nowMs)).toBe('5d');
-    expect(formatQuotaResetRelative(null, '2h 18m', nowMs)).toBe('2h');
-    expect(formatQuotaResetRelative(null, '2d 20h', nowMs)).toBe('2d');
-    expect(formatQuotaResetRelative(null, 'resets in 2d', nowMs)).toBe('2d');
+    expect(formatQuotaResetRelative(null, '5d', nowMs)).toBe('5 天后');
+    expect(formatQuotaResetRelative(null, '2h 18m', nowMs)).toBe('2 小时后');
+    expect(formatQuotaResetRelative(null, '2d 20h', nowMs)).toBe('2 天后');
+    expect(formatQuotaResetRelative(null, 'resets in 2d', nowMs)).toBe('2 天后');
     expect(formatQuotaResetRelative(null, null, nowMs)).toBe('');
     expect(formatQuotaResetRelative(null, '-', nowMs)).toBe('');
+
+    // Short style mode
+    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs, { style: 'short' })).toBe('5d');
+    expect(formatQuotaResetRelative(nowMs + 23 * 60 * 60 * 1000, null, nowMs, { style: 'short' })).toBe('23h');
+    expect(formatQuotaResetRelative(nowMs, null, nowMs, { style: 'short' })).toBe('0m');
+    expect(formatQuotaResetRelative(null, '5d', nowMs, { style: 'short' })).toBe('5d');
+
+    // Localization support
+    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs, 'en')).toBe('in 5 days');
+    expect(formatQuotaResetRelative(nowMs + 1 * 60 * 60 * 1000, null, nowMs, 'en')).toBe('in 1 hour');
+    expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs, 'en')).toBe('in <1 min');
+    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs, 'zh-TW')).toBe('5 天後');
+    expect(formatQuotaResetRelative(nowMs + 2 * 60 * 60 * 1000, null, nowMs, 'zh-TW')).toBe('2 小時後');
   });
 
   it('keeps standard quota windows as the only list selection when available', () => {
@@ -628,6 +645,35 @@ describe('accountsPagePresentation', () => {
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ label: 'custom limit' }))).toBe(
         'Custom limit'
       );
+    });
+  });
+
+  describe('formatQuotaRemainingPercentDisplay', () => {
+    it('formats remaining percent across all supported locales with Plan B unified prefix', () => {
+      expect(formatQuotaRemainingPercentDisplay('48%', 'zh-CN')).toBe('剩余 48%');
+      expect(formatQuotaRemainingPercentDisplay('48%', 'zh-TW')).toBe('剩餘 48%');
+      expect(formatQuotaRemainingPercentDisplay('48%', 'en')).toBe('Rem 48%');
+      expect(formatQuotaRemainingPercentDisplay('48%', 'ru')).toBe('Ост. 48%');
+    });
+
+    it('formats remaining percent parts for visual font-size separation', () => {
+      expect(formatQuotaRemainingPercentParts('48%', 'zh-CN')).toEqual({
+        prefix: '剩余',
+        percent: '48%',
+      });
+      expect(formatQuotaRemainingPercentParts('48%', 'en')).toEqual({
+        prefix: 'Rem',
+        percent: '48%',
+      });
+      expect(formatQuotaRemainingPercentParts('-', 'zh-CN')).toBeNull();
+      expect(formatQuotaRemainingPercentParts('', 'en')).toBeNull();
+      expect(getQuotaRemainingPercentLabel('en')).toBe('Rem');
+    });
+
+    it('handles fallback and invalid/dash percent values', () => {
+      expect(formatQuotaRemainingPercentDisplay('-', 'zh-CN')).toBe('-');
+      expect(formatQuotaRemainingPercentDisplay('', 'zh-CN')).toBe('-');
+      expect(formatQuotaRemainingPercentDisplay('80%')).toBe('剩余 80%');
     });
   });
 });

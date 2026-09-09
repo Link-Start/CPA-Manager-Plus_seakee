@@ -1162,11 +1162,29 @@
 }
 
 .quotaWindowPercent {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2.5px;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1;
+}
+
+.quotaWindowPercentPrefix {
+  font-size: 10px;
+  font-weight: 550;
+  color: var(--accounts-muted);
+  line-height: 1;
+  user-select: none;
+}
+
+.quotaWindowPercentValue {
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--text-primary);
+  line-height: 1;
 }
 
 .quotaWindowMeta {
@@ -1175,23 +1193,31 @@
   gap: 5px;
   margin-left: auto;
   flex-shrink: 0;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .quotaWindowSep {
-  color: color-mix(in srgb, var(--accounts-muted) 60%, transparent);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1;
+  display: inline-block;
+  width: 1px;
+  height: 9px;
+  background-color: color-mix(in srgb, var(--accounts-muted) 55%, transparent);
+  border-radius: 0.5px;
+  flex-shrink: 0;
   user-select: none;
 }
 
 .quotaWindowResetTime {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  margin-left: auto;
   color: var(--accounts-muted);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: help;
 }
 
@@ -1200,15 +1226,14 @@
   align-items: center;
   gap: 2.5px;
   color: var(--primary-color);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1;
   cursor: pointer;
   user-select: none;
   border-radius: 3px;
   padding: 1px 3px;
-  margin: -1px -3px;
   transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
 
   &:hover {
@@ -1229,15 +1254,21 @@
 }
 
 .quotaWindowResetCreditsIcon {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  display: inline-block;
+  flex-shrink: 0;
+
+  svg {
+    display: block;
+  }
 }
 
 .quotaWindowResetCreditsCount {
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.2;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1247,19 +1278,47 @@
   column-gap: 6px;
   row-gap: 2px;
   flex-wrap: wrap;
-  min-height: 16px;
+  min-height: 15px;
   min-width: 0;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .quotaUsageGroup,
 .quotaForecastGroup {
   display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
+  align-items: center;
+  gap: 3px;
   min-width: 0;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.quotaUsageIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 3.5px;
+  background: color-mix(in srgb, var(--accounts-brand) 12%, transparent);
+  color: var(--accounts-brand);
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.quotaForecastIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 3.5px;
+  background: color-mix(in srgb, var(--accounts-indigo) 14%, transparent);
+  color: var(--accounts-indigo);
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
 }
 
 .quotaUsageLabel,
@@ -1274,16 +1333,24 @@
 
 .quotaWindowCost {
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   white-space: nowrap;
 }
 
+.quotaWindowSlash {
+  color: color-mix(in srgb, var(--accounts-muted) 65%, transparent);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  user-select: none;
+}
+
 .quotaWindowTokenCompact {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 450;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -1292,7 +1359,7 @@
 
 .quotaWindowCostPredicted {
   font-size: 11px;
-  font-weight: 550;
+  font-weight: 500;
   color: color-mix(in srgb, var(--text-primary) 70%, var(--accounts-muted));
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -1301,7 +1368,7 @@
 
 .quotaWindowTokenPredictedCompact {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 450;
   color: var(--accounts-muted);
   font-variant-numeric: tabular-nums;
   line-height: 1;

@@ -52,7 +52,7 @@ import { AccountModelsTab } from './components/accountDetail/AccountModelsTab';
 import { AccountOverviewTab } from './components/accountDetail/AccountOverviewTab';
 import { AccountQuotaTab } from './components/accountDetail/AccountQuotaTab';
 import { QuotaWindowCard } from './components/QuotaWindowCard';
-import { IconRefreshCw } from '@/components/ui/icons';
+import { IconChartLine, IconRefreshCw, IconTrendingUp } from '@/components/ui/icons';
 import { formatQuotaResetTimestamp, formatQuotaResetDisplay, formatQuotaResetRelative } from './model/accountsPagePresentation';
 import { buildAccountQuotaDisplayWindow } from './model/accountQuotaDisplayWindows';
 import type { AccountQuotaDisplayWindow } from './model/accountQuotaDisplayWindows';
@@ -521,6 +521,7 @@ const { mocks } = vi.hoisted(() => {
         return parts.length > 0 ? `${key}:${parts.join(':')}` : key;
       },
       quotaDisplayWindowsOverride: null as AccountQuotaDisplayWindow[] | null,
+      language: 'en',
     },
   };
 });
@@ -529,7 +530,7 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => {} },
   useTranslation: () => ({
     t: mocks.t,
-    i18n: { language: 'en' },
+    i18n: { language: mocks.language || 'en' },
   }),
 }));
 
@@ -1214,6 +1215,7 @@ describe('AccountsPage replacement flows', () => {
       loadedAtMs: 0,
       contentRevision: '',
     });
+    mocks.language = 'en';
     mocks.selectedFiles = new Set<string>();
     mocks.selectionCount = 0;
     mocks.batchFieldsUpdating = false;
@@ -12287,7 +12289,7 @@ describe('AccountsPage replacement flows', () => {
       };
     });
 
-    const expectedRelativeReset = formatQuotaResetRelative(resetAtMs, resetLabel);
+    const expectedRelativeReset = formatQuotaResetRelative(resetAtMs, resetLabel, 'en');
     expect(expectedRelativeReset).toBeTruthy();
 
     const renderer = await renderAccountsPage();
@@ -12296,36 +12298,84 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
     const cardText = readText(card);
 
-    // 1. Header shows window label and percentage with relative reset
+    // 1. Header shows window label and percentage (without reset time)
     expect(cardText).toContain('5h');
+    expect(cardText).toContain('Rem');
     expect(cardText).toContain('60%');
-    expect(cardText).toContain('|');
     expect(cardText).toContain(expectedRelativeReset);
 
-    // 2. Second line displays "used" label, current cost and token in parentheses
-    expect(cardText).toContain('accounts.quota_used_short');
-    expect(cardText).toContain('$0.50');
-    expect(cardText).toContain('(50.0K)');
+    // 2. Second line displays "used" icon, current cost and token separated by slash
+    expect(card.findAllByType(IconChartLine).length).toBeGreaterThan(0);
+    expect(cardText).toContain('$0.50/50.0K');
 
-    // 3. Second line displays "forecast" label and predicted values
-    expect(cardText).toContain('accounts.quota_forecast_short');
+    // 3. Second line displays "forecast" icon and predicted values separated by slash
+    expect(card.findAllByType(IconTrendingUp).length).toBeGreaterThan(0);
+    expect(cardText).toContain('$1.25/125.0K');
 
     // 4. Arrow must NOT be rendered
     expect(cardText).not.toContain('→');
 
-    // 5. Reset time is rendered in header, not in usage line
+    // 5. Reset time is rendered in usage line (bottom right), not in header
     const windowCards = card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string');
     expect(windowCards).toHaveLength(1);
     const windowCard = windowCards[0];
+    expect(windowCard.props.title).toContain('5h: Rem 60%');
     const headerNode = windowCard.children[0];
     const headerText = readText(headerNode);
-    expect(headerText).toContain(expectedRelativeReset);
+    expect(headerText).not.toContain(expectedRelativeReset);
 
-    // Second line (usage line) does NOT contain reset time
+    // Usage line contains relative reset time at bottom right
     const usageLineNode = windowCard.children[2];
     const usageLineText = readText(usageLineNode);
+    expect(usageLineText).toContain(expectedRelativeReset);
     expect(usageLineText).not.toContain(formatQuotaResetDisplay(resetAtMs, resetLabel, 'zh-CN'));
-    expect(usageLineText).not.toContain(expectedRelativeReset);
+  });
+
+  it('renders quota reset time in Chinese (e.g. 5 天后 / 5 小时后) at bottom right when locale is zh-CN', async () => {
+    mocks.language = 'zh-CN';
+    const nowMs = Date.now();
+    const resetAtMs = nowMs + 5 * 24 * 60 * 60 * 1000 + 60 * 1000;
+    const file = makeCodexFile('codex-reset-zh.json', 'auth-reset-zh', 'reset-zh@example.com');
+    mocks.files = [file];
+
+    mocks.quotaDisplayWindowsOverride = [
+      buildAccountQuotaDisplayWindow({
+        key: 'five-hour',
+        kind: 'five_hour',
+        label: '5h',
+        remainingPercent: 80,
+        usedPercent: 20,
+        resetAtMs,
+        resetLabel: '5d',
+        source: 'codex',
+        windowMode: 'fixed',
+        limitWindowSeconds: 5 * 60 * 60,
+        modelScope: { kind: 'all', complete: true },
+        nowMs,
+      }),
+    ];
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+    const windowCards = card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string');
+    expect(windowCards).toHaveLength(1);
+    const windowCard = windowCards[0];
+
+    // Header contains label and percentage, but NOT reset time
+    const headerNode = windowCard.children[0];
+    const headerText = readText(headerNode);
+    expect(headerText).toContain('5h');
+    expect(headerText).toContain('剩余');
+    expect(headerText).toContain('80%');
+    expect(windowCard.props.title).toContain('5h: 剩余 80%');
+    expect(headerText).not.toContain('5 天后');
+
+    // Usage line contains reset time at bottom right
+    const usageLineNode = windowCard.children[2];
+    const usageLineText = readText(usageLineNode);
+    expect(usageLineText).toContain('5 天后');
   });
 
   it('loads history for a deep-linked credential outside the visible page', async () => {
@@ -16080,7 +16130,7 @@ describe('AccountsPage replacement flows', () => {
         trigger.props.onClick({ stopPropagation: vi.fn() });
       });
 
-      let input = renderer.root.findByProps({
+      const input = renderer.root.findByProps({
         'data-account-priority-input': targetSelectionKey,
       });
 

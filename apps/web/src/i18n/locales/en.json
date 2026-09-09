@@ -1014,7 +1014,7 @@
     "quota_source_none": "No quota data",
     "quota_details_only": "Quota available in details",
     "quota_brief_remaining": "{{percent}} left",
-    "quota_remaining_short": "{{percent}} left",
+    "quota_remaining_short": "Rem {{percent}}",
     "quota_used_short": "Used",
     "quota_forecast_short": "Est.",
     "quota_brief_unknown": "Unknown quota",

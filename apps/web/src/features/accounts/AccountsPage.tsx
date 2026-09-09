@@ -20,6 +20,7 @@ import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedT
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconCheck,
+  IconChartLine,
   IconArrowDownWideNarrow,
   IconArrowUpNarrowWide,
   IconCopy,
@@ -32,11 +33,13 @@ import {
   IconModelCluster,
   IconPlus,
   IconRefreshCw,
+  IconRotateCcw,
   IconSearch,
   IconSettings,
   IconShield,
   IconSlidersHorizontal,
   IconTrash2,
+  IconTrendingUp,
   IconX,
 } from '@/components/ui/icons';
 import {
@@ -190,6 +193,8 @@ import {
   DETAIL_EVENTS_RANGE_MS,
   PAGE_SIZE_OPTIONS,
   formatPercent,
+  formatQuotaRemainingPercentDisplay,
+  formatQuotaRemainingPercentParts,
   formatQuotaResetDisplay,
   formatQuotaResetRelative,
   formatQuotaResetTooltipParams,
@@ -7964,7 +7969,8 @@ export function AccountsPage() {
                           );
                           const relativeReset = formatQuotaResetRelative(
                             window.resetAtMs,
-                            resetLabel
+                            resetLabel,
+                            i18n.language
                           );
                           const readableLabel = getQuotaWindowReadableLabel(window);
                           const barClass = getFallbackWindowBarClass(
@@ -7985,8 +7991,16 @@ export function AccountsPage() {
                             windowUsageData.forecastTokens !== null;
                           const percentText =
                             windowRemaining !== null ? formatPercent(windowRemaining) : '-';
+                          const remainingParts = formatQuotaRemainingPercentParts(
+                            percentText,
+                            i18n.language
+                          );
+                          const remainingText = formatQuotaRemainingPercentDisplay(
+                            percentText,
+                            i18n.language
+                          );
                           const cardTitle = [
-                            `${readableLabel}: ${percentText}${
+                            `${readableLabel}: ${remainingText}${
                               relativeReset ? ` | ${relativeReset}` : ''
                             }`,
                             hasActual
@@ -8041,12 +8055,12 @@ export function AccountsPage() {
                                            defaultValue: '重置记录',
                                          })}
                                        >
-                                         <span
-                                           className={styles.quotaWindowResetCreditsIcon}
-                                           aria-hidden="true"
-                                         >
-                                           ↺
-                                         </span>
+                                          <span
+                                            className={styles.quotaWindowResetCreditsIcon}
+                                            aria-hidden="true"
+                                          >
+                                            <IconRotateCcw size={11} strokeWidth={2.4} />
+                                          </span>
                                          <strong
                                            className={styles.quotaWindowResetCreditsCount}
                                          >
@@ -8056,33 +8070,22 @@ export function AccountsPage() {
                                       <span
                                         className={styles.quotaWindowSep}
                                         aria-hidden="true"
-                                      >
-                                        |
-                                      </span>
-                                    </>
-                                  ) : null}
-                                  {relativeReset ? (
-                                    <>
-                                      <span
-                                        className={styles.quotaWindowResetTime}
-                                        title={
-                                          resetDisplayLabel && resetDisplayLabel !== '-'
-                                            ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
-                                            : undefined
-                                        }
-                                      >
-                                        {relativeReset}
-                                      </span>
-                                      <span
-                                        className={styles.quotaWindowSep}
-                                        aria-hidden="true"
-                                      >
-                                        |
-                                      </span>
+                                      />
                                     </>
                                   ) : null}
                                   <strong className={styles.quotaWindowPercent}>
-                                    {percentText}
+                                    {remainingParts ? (
+                                      <>
+                                        <span className={styles.quotaWindowPercentPrefix}>
+                                          {remainingParts.prefix}
+                                        </span>
+                                        <span className={styles.quotaWindowPercentValue}>
+                                          {remainingParts.percent}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      percentText
+                                    )}
                                   </strong>
                                 </span>
                               </span>
@@ -8094,35 +8097,69 @@ export function AccountsPage() {
                               </span>
                               <span className={styles.quotaWindowUsageLine}>
                                 {hasActual ? (
-                                  <span className={styles.quotaUsageGroup}>
-                                    <span className={styles.quotaUsageLabel}>
-                                      {t('accounts.quota_used_short')}
+                                  <span
+                                    className={styles.quotaUsageGroup}
+                                    title={`${t('accounts.quota_used_short')}: ${formatCompactUsd(
+                                      windowUsageData.currentCost!
+                                    )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`}
+                                  >
+                                    <span
+                                      className={styles.quotaUsageIcon}
+                                      aria-label={t('accounts.quota_used_short')}
+                                    >
+                                      <IconChartLine size={10} />
                                     </span>
                                     <span className={styles.quotaWindowCost}>
                                       {formatCompactUsd(windowUsageData.currentCost!)}
                                     </span>
+                                    <span className={styles.quotaWindowSlash} aria-hidden="true">
+                                      /
+                                    </span>
                                     <span className={styles.quotaWindowTokenCompact}>
-                                      ({formatCompactNumber(windowUsageData.currentTokens!)})
+                                      {formatCompactNumber(windowUsageData.currentTokens!)}
                                     </span>
                                   </span>
                                 ) : (
                                   <span className={styles.quotaSlotEmpty} aria-hidden="true" />
                                 )}
                                 {hasForecast ? (
-                                  <span className={styles.quotaForecastGroup}>
-                                    <span className={styles.quotaForecastLabel}>
-                                      {t('accounts.quota_forecast_short')}
+                                  <span
+                                    className={styles.quotaForecastGroup}
+                                    title={`${t('accounts.quota_forecast_short')}: ${formatCompactUsd(
+                                      windowUsageData.forecastCost!
+                                    )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`}
+                                  >
+                                    <span
+                                      className={styles.quotaForecastIcon}
+                                      aria-label={t('accounts.quota_forecast_short')}
+                                    >
+                                      <IconTrendingUp size={10} />
                                     </span>
                                     <span className={styles.quotaWindowCostPredicted}>
                                       {formatCompactUsd(windowUsageData.forecastCost!)}
                                     </span>
+                                    <span className={styles.quotaWindowSlash} aria-hidden="true">
+                                      /
+                                    </span>
                                     <span className={styles.quotaWindowTokenPredictedCompact}>
-                                      ({formatCompactNumber(windowUsageData.forecastTokens!)})
+                                      {formatCompactNumber(windowUsageData.forecastTokens!)}
                                     </span>
                                   </span>
                                 ) : (
                                   <span className={styles.quotaSlotEmpty} aria-hidden="true" />
                                 )}
+                                {relativeReset ? (
+                                  <span
+                                    className={styles.quotaWindowResetTime}
+                                    title={
+                                      resetDisplayLabel && resetDisplayLabel !== '-'
+                                        ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
+                                        : undefined
+                                    }
+                                  >
+                                    {relativeReset}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                           );
