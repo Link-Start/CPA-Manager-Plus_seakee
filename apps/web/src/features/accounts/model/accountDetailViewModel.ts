@@ -1112,10 +1112,10 @@ const buildOverviewActivity = (
   };
 };
 
-const buildOverviewRecentStatus = (
+export const buildOverviewRecentStatus = (
   row: AccountRow,
-  _decision: AccountDetailOverviewDecision,
-  requestEvidence: ReturnType<typeof resolveAccountRequestHealthEvidence>
+  _decision?: AccountDetailOverviewDecision | null,
+  requestEvidence?: ReturnType<typeof resolveAccountRequestHealthEvidence>
 ): AccountDetailOverviewRecentStatus => {
   const recentRequests = row.usage.recentRequests;
   const totals = sumRecentRequests(recentRequests);

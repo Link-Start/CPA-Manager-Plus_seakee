@@ -176,6 +176,8 @@ import {
   buildAccountQuotaWindowDefinitions,
   type AccountQuotaWindowDefinition,
 } from '@/features/accounts/model/accountQuotaWindowDefinitions';
+import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
+import { statusBarDataFromRecentRequests } from '@/utils/recentRequests';
 import {
   buildAccountQuotaSnapshotQueryAccounts,
   buildAccountQuotaSnapshotWriteEntries,
@@ -185,6 +187,7 @@ import {
 import {
   ACCOUNT_OVERVIEW_ACTIVITY_RANGE_MS,
   buildAccountDetailViewModel,
+  buildOverviewRecentStatus,
 } from '@/features/accounts/model/accountDetailViewModel';
 import {
   ACCOUNT_SORT_DEFAULT_DIRECTIONS,
@@ -263,6 +266,7 @@ import {
   readAccountsWorkspaceUiState,
   writeAccountsWorkspaceUiState,
   type AccountOperationalFilter,
+  type AccountsLayoutMode,
   type AccountsWorkspaceUiState,
 } from '@/features/accounts/model/accountsWorkspaceUiState';
 import {
@@ -1514,6 +1518,9 @@ export function AccountsPage() {
   headerSnapshotLoadKeyRef.current = headerSnapshotLoadKey;
   const [accountDisplayMode, setAccountDisplayMode] = useState<QuotaAccountDisplayMode>(
     () => initialWorkspaceUrlState.current.accountDisplayMode
+  );
+  const [layoutMode, setLayoutMode] = useState<AccountsLayoutMode>(
+    () => initialWorkspaceUrlState.current.layoutMode
   );
   const [copiedIdentityKey, setCopiedIdentityKey] = useState<string | null>(null);
   const detailEventsRequestIdRef = useRef(0);
@@ -4806,10 +4813,12 @@ export function AccountsPage() {
       accountSort,
       pageSize,
       accountDisplayMode,
+      layoutMode,
     });
   }, [
     accountDisplayMode,
     accountSort,
+    layoutMode,
     operationalFilter,
     pageSize,
     planFilter,
@@ -4830,6 +4839,7 @@ export function AccountsPage() {
       accountSort,
       pageSize,
       accountDisplayMode,
+      layoutMode,
       view: activeView,
       healthMode,
       account: selectedRowKey,
@@ -4848,6 +4858,7 @@ export function AccountsPage() {
       activeView,
       detailTab,
       healthMode,
+      layoutMode,
       oauthExcludedEditorProvider,
       oauthModelAliasEditorProvider,
       operationalFilter,
@@ -7231,6 +7242,45 @@ export function AccountsPage() {
     </div>
   );
 
+  const renderViewModeSwitcher = () => (
+    <div
+      className={styles.viewModeSwitcher}
+      role="group"
+      aria-label={t('accounts.view_mode_switcher', { defaultValue: '视图模式' })}
+    >
+      <button
+        type="button"
+        className={[
+          styles.viewModeButton,
+          layoutMode === 'table' ? styles.viewModeButtonActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => setLayoutMode('table')}
+        title={t('accounts.view_mode_table')}
+        aria-label={t('accounts.view_mode_table')}
+        aria-pressed={layoutMode === 'table'}
+      >
+        {t('accounts.view_mode_table')}
+      </button>
+      <button
+        type="button"
+        className={[
+          styles.viewModeButton,
+          layoutMode === 'grid' ? styles.viewModeButtonActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => setLayoutMode('grid')}
+        title={t('accounts.view_mode_grid')}
+        aria-label={t('accounts.view_mode_grid')}
+        aria-pressed={layoutMode === 'grid'}
+      >
+        {t('accounts.view_mode_grid')}
+      </button>
+    </div>
+  );
+
   const renderToolbar = () => (
     <>
       <AccountProviderTabs
@@ -7272,7 +7322,9 @@ export function AccountsPage() {
           </span>
         </div>
         {renderAccountFilterFields()}
-        {renderAccountSortControls()}
+        <div className={styles.toolbarRightActions}>
+          {renderAccountSortControls()}
+        </div>
       </section>
     </>
   );
@@ -7333,7 +7385,10 @@ export function AccountsPage() {
             </Button>
           </header>
           <div className={styles.mobileFilterBody}>
-            <div className={styles.mobileFilterDisplayMode}>{renderAccountDisplayToggle()}</div>
+            <div className={styles.mobileFilterDisplayMode}>
+              {renderAccountDisplayToggle()}
+              {renderViewModeSwitcher()}
+            </div>
             {renderAccountFilterFields()}
             <div className={styles.mobileSortField}>{renderAccountSortControls()}</div>
           </div>
@@ -7405,6 +7460,7 @@ export function AccountsPage() {
               {t('accounts.refresh_quota')}
             </Button>
           ) : null}
+          {renderViewModeSwitcher()}
         </div>
       </section>
     );
@@ -7565,7 +7621,11 @@ export function AccountsPage() {
     return typeof document === 'undefined' ? content : createPortal(content, document.body);
   };
 
-  const renderRowActions = (row: AccountRow, needsReauth = false) => (
+  const renderRowActions = (
+    row: AccountRow,
+    needsReauth = false,
+    hideSideActions = false
+  ) => (
     <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
       <div className={styles.accountQuickActionsGrid}>
         {needsReauth ? (
@@ -7646,27 +7706,31 @@ export function AccountsPage() {
           {deleting === row.fileName ? <LoadingSpinner size={14} /> : <IconTrash2 size={15} />}
         </Button>
       </div>
-      <span className={styles.accountActionsDivider} aria-hidden="true" />
-      <div className={styles.accountSideActions}>
-        <div className={styles.accountStatusSwitch}>
-          <ToggleSwitch
-            checked={!row.disabled}
-            onChange={(enabled) => void handleBatchStatus(enabled, [row])}
-            disabled={disableControls || statusUpdating || row.runtimeOnly}
-            ariaLabel={t('auth_files.status_toggle_label')}
-          />
-        </div>
-        <Button
-          variant="ghost"
-          size="xs"
-          className={styles.rowDetailButton}
-          onClick={() => void openAccountDetail(row)}
-          title={t('accounts.open_detail', { name: row.fileName })}
-          aria-label={t('accounts.open_detail', { name: row.fileName })}
-        >
-          {t('accounts.open_detail_short')}
-        </Button>
-      </div>
+      {!hideSideActions ? (
+        <>
+          <span className={styles.accountActionsDivider} aria-hidden="true" />
+          <div className={styles.accountSideActions}>
+            <div className={styles.accountStatusSwitch}>
+              <ToggleSwitch
+                checked={!row.disabled}
+                onChange={(enabled) => void handleBatchStatus(enabled, [row])}
+                disabled={disableControls || statusUpdating || row.runtimeOnly}
+                ariaLabel={t('auth_files.status_toggle_label')}
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="xs"
+              className={styles.rowDetailButton}
+              onClick={() => void openAccountDetail(row)}
+              title={t('accounts.open_detail', { name: row.fileName })}
+              aria-label={t('accounts.open_detail', { name: row.fileName })}
+            >
+              {t('accounts.open_detail_short')}
+            </Button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 
@@ -7702,484 +7766,859 @@ export function AccountsPage() {
     />
   );
 
+  const renderSingleQuotaWindowCard = (
+    row: AccountRow,
+    window: AccountQuotaDisplayWindow,
+    windowIndex: number,
+    codexResetCreditsCount: number | null,
+    hasCodexResetCredits: boolean,
+    quotaLifecycleBarOverride: AccountQuotaLifecycleBarOverride,
+    extraMeta?: React.ReactNode
+  ) => {
+    const windowRemaining = window.remainingPercent;
+    const windowWidth = Math.max(0, Math.min(100, windowRemaining ?? 0));
+    const resetLabel = window.resetLabel && window.resetLabel !== '-' ? window.resetLabel : '';
+    const resetDisplayLabel = formatQuotaResetDisplay(window.resetAtMs, resetLabel, i18n.language);
+    const relativeReset = formatQuotaResetRelative(window.resetAtMs, resetLabel, i18n.language);
+    const readableLabel = getQuotaWindowReadableLabel(window);
+    const barClass = getFallbackWindowBarClass(quotaLifecycleBarOverride, windowRemaining);
+    const windowUsageData = resolveAccountQuotaWindowUsageAndForecast(
+      row,
+      window,
+      matchingListWindowUsageByKey
+    );
+    const hasActual =
+      windowUsageData.hasTrustedCurrentActual &&
+      windowUsageData.currentCost !== null &&
+      windowUsageData.currentTokens !== null;
+    const hasForecast =
+      windowUsageData.forecastCost !== null &&
+      windowUsageData.forecastTokens !== null;
+    const percentText = windowRemaining !== null ? formatPercent(windowRemaining) : '-';
+    const remainingParts = formatQuotaRemainingPercentParts(percentText, i18n.language);
+    const remainingText = formatQuotaRemainingPercentDisplay(percentText, i18n.language);
+    const cardTitle = [
+      `${readableLabel}: ${remainingText}${relativeReset ? ` | ${relativeReset}` : ''}`,
+      hasActual
+        ? `${t('accounts.quota_used_short')} ${formatCompactUsd(
+            windowUsageData.currentCost!
+          )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`
+        : '',
+      hasForecast
+        ? `${t('accounts.quota_forecast_short')} ${formatCompactUsd(
+            windowUsageData.forecastCost!
+          )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`
+        : '',
+      resetDisplayLabel && resetDisplayLabel !== '-'
+        ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('. ');
+
+    return (
+      <span
+        key={window.key}
+        className={styles.quotaWindowCard}
+        data-account-quota-window={window.key}
+        title={cardTitle}
+      >
+        <span className={styles.quotaWindowHeader}>
+          <span className={styles.quotaWindowLabel} title={readableLabel}>
+            {readableLabel}
+          </span>
+          <span className={styles.quotaWindowMeta}>
+            {hasCodexResetCredits && windowIndex === 0 ? (
+              <>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className={styles.quotaWindowResetCredits}
+                  data-account-reset-credits={row.selectionKey}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    void openAccountDetail(row, 'quota', 'reset-records');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      void openAccountDetail(row, 'quota', 'reset-records');
+                    }
+                  }}
+                  aria-label={t('accounts.detail_quota_reset_records', {
+                    defaultValue: '重置记录',
+                  })}
+                >
+                  <span
+                    className={styles.quotaWindowResetCreditsIcon}
+                    aria-hidden="true"
+                  >
+                    <IconRotateCcw size={11} strokeWidth={2.4} />
+                  </span>
+                  <strong className={styles.quotaWindowResetCreditsCount}>
+                    {codexResetCreditsCount}
+                  </strong>
+                </span>
+                <span className={styles.quotaWindowSep} aria-hidden="true" />
+              </>
+            ) : null}
+            <strong className={styles.quotaWindowPercent}>
+              {remainingParts ? (
+                <>
+                  <span className={styles.quotaWindowPercentPrefix}>
+                    {remainingParts.prefix}
+                  </span>
+                  <span className={styles.quotaWindowPercentValue}>
+                    {remainingParts.percent}
+                  </span>
+                </>
+              ) : (
+                percentText
+              )}
+            </strong>
+            {extraMeta}
+          </span>
+        </span>
+        <span className={styles.quotaTrack} aria-hidden="true">
+          <span
+            className={`${styles.quotaBar} ${barClass}`}
+            style={{ width: `${windowWidth}%` }}
+          />
+        </span>
+        <span className={styles.quotaWindowUsageLine}>
+          {hasActual ? (
+            <span
+              className={styles.quotaUsageGroup}
+              title={`${t('accounts.quota_used_short')}: ${formatCompactUsd(
+                windowUsageData.currentCost!
+              )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`}
+            >
+              <span
+                className={styles.quotaUsageIcon}
+                aria-label={t('accounts.quota_used_short')}
+              >
+                <IconChartLine size={10} />
+              </span>
+              <span className={styles.quotaWindowCost}>
+                {formatCompactUsd(windowUsageData.currentCost!)}
+              </span>
+              <span className={styles.quotaWindowSlash} aria-hidden="true">
+                /
+              </span>
+              <span className={styles.quotaWindowTokenCompact}>
+                {formatCompactNumber(windowUsageData.currentTokens!)}
+              </span>
+            </span>
+          ) : (
+            <span className={styles.quotaSlotEmpty} aria-hidden="true" />
+          )}
+          {hasForecast ? (
+            <span
+              className={styles.quotaForecastGroup}
+              title={`${t('accounts.quota_forecast_short')}: ${formatCompactUsd(
+                windowUsageData.forecastCost!
+              )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`}
+            >
+              <span
+                className={styles.quotaForecastIcon}
+                aria-label={t('accounts.quota_forecast_short')}
+              >
+                <IconTrendingUp size={10} />
+              </span>
+              <span className={styles.quotaWindowCostPredicted}>
+                {formatCompactUsd(windowUsageData.forecastCost!)}
+              </span>
+              <span className={styles.quotaWindowSlash} aria-hidden="true">
+                /
+              </span>
+              <span className={styles.quotaWindowTokenPredictedCompact}>
+                {formatCompactNumber(windowUsageData.forecastTokens!)}
+              </span>
+            </span>
+          ) : (
+            <span className={styles.quotaSlotEmpty} aria-hidden="true" />
+          )}
+          {relativeReset ? (
+            <span
+              className={styles.quotaWindowResetTime}
+              title={
+                resetDisplayLabel && resetDisplayLabel !== '-'
+                  ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
+                  : undefined
+              }
+            >
+              {relativeReset}
+            </span>
+          ) : null}
+        </span>
+      </span>
+    );
+  };
+
+  const resolveAccountRowContext = (row: AccountRow) => {
+    const recommendation = recommendationBySelectionKey.get(row.selectionKey) ?? null;
+    const accountHistory = accountHistoryByRowKey.get(row.selectionKey) ?? null;
+    const quotaWindows =
+      quotaDisplayWindowsByRowKey.get(row.selectionKey) ?? buildQuotaDisplayWindows(row);
+    const quotaLifecycleBarOverride = getAccountQuotaLifecycleBarOverride(row.quota.status);
+    const mainListWindows = selectAccountQuotaMainListWindows(row, quotaWindows);
+    const quotaCooldown = quotaCooldownsByRowKey.get(row.selectionKey)?.[0] ?? null;
+    const codexStatus = codexStatusBySelectionKey.get(row.selectionKey) ?? null;
+    const item = buildAccountListItem(row, {
+      t,
+      recommendation,
+      quotaCooldown,
+      codexStatus,
+      quotaWindows,
+      requestEvidence: requestEvidenceBySelectionKey.get(row.selectionKey),
+    });
+    const codexQuotaState =
+      row.provider === CODEX_CONFIG.type ? getActiveCodexQuota(row.raw) : undefined;
+    const subscriptionPresentation = buildAccountSubscriptionPresentation({
+      row,
+      codexQuota: codexQuotaState,
+    });
+    const codexResetCreditsCount =
+      codexQuotaState?.rateLimitResetCreditsAvailableCount ??
+      codexQuotaState?.rateLimitResetCredits?.length ??
+      null;
+    const hasCodexResetCredits =
+      row.provider === CODEX_CONFIG.type &&
+      codexResetCreditsCount !== null &&
+      codexResetCreditsCount > 0;
+    const providerIcon = getAuthFileIcon(row.provider, resolvedTheme);
+    const quotaEmptyLabel =
+      quotaWindows.length > 0
+        ? t('accounts.quota_details_only')
+        : t('accounts.quota_source_none');
+    const quotaWindowTitle =
+      mainListWindows
+        .map((window) => {
+          const label = getQuotaWindowReadableLabel(window);
+          return `${label}: ${formatPercent(window.remainingPercent)}`;
+        })
+        .join('\n') || quotaEmptyLabel;
+    const healthTitle = t(
+      item.health.tooltipKey,
+      formatQuotaResetTooltipParams(
+        item.health.tooltipParams,
+        item.health.resetAtMs,
+        i18n.language,
+        item.health.cooldown?.recoverAtMs
+      )
+    );
+    const accountHistoryError = accountHistoryErrorsByRowKey.get(row.selectionKey) ?? '';
+    const requestEvidence = resolveAccountRequestHealthEvidence(
+      requestEvidenceBySelectionKey.get(row.selectionKey)
+    );
+    const overviewRecentStatus = buildOverviewRecentStatus(
+      row,
+      null,
+      requestEvidence
+    );
+    const recentStatusData = statusBarDataFromRecentRequests(overviewRecentStatus.recentRequests);
+    const hasRecentRequests = recentStatusData.totalSuccess + recentStatusData.totalFailure > 0;
+
+    return {
+      recommendation,
+      accountHistory,
+      quotaWindows,
+      quotaLifecycleBarOverride,
+      mainListWindows,
+      quotaCooldown,
+      codexStatus,
+      item,
+      codexQuotaState,
+      subscriptionPresentation,
+      codexResetCreditsCount,
+      hasCodexResetCredits,
+      providerIcon,
+      quotaEmptyLabel,
+      quotaWindowTitle,
+      healthTitle,
+      accountHistoryError,
+      overviewRecentStatus,
+      recentStatusData,
+      hasRecentRequests,
+    };
+  };
+
   const renderAccountCards = (rowsToRender = pageRows, paged = true) => (
     <section className={styles.tablePanel}>
       {paged ? renderBatchBar() : null}
       {rowsToRender.length > 0 ? (
-        <div className={styles.accountCardList}>
-          <div className={styles.accountCardHeader} data-account-list-header="true">
-            <span>{t('accounts.list_header_credential')}</span>
-            <span>{t('accounts.list_header_plan')}</span>
-            <span>{t('accounts.list_header_availability')}</span>
-            <span>{t('accounts.list_header_recent_requests')}</span>
-            <span>{t('accounts.list_header_quota')}</span>
-            <span>{t('accounts.list_header_actions')}</span>
-          </div>
-          {rowsToRender.map((row) => {
-            const recommendation = recommendationBySelectionKey.get(row.selectionKey) ?? null;
-            const accountHistory = accountHistoryByRowKey.get(row.selectionKey) ?? null;
-            const quotaWindows =
-              quotaDisplayWindowsByRowKey.get(row.selectionKey) ?? buildQuotaDisplayWindows(row);
-            const quotaLifecycleBarOverride = getAccountQuotaLifecycleBarOverride(row.quota.status);
-            const mainListWindows = selectAccountQuotaMainListWindows(row, quotaWindows);
-            const quotaCooldown = quotaCooldownsByRowKey.get(row.selectionKey)?.[0] ?? null;
-            const codexStatus = codexStatusBySelectionKey.get(row.selectionKey) ?? null;
-            const item = buildAccountListItem(row, {
-              t,
-              recommendation,
-              quotaCooldown,
-              codexStatus,
-              quotaWindows,
-              requestEvidence: requestEvidenceBySelectionKey.get(row.selectionKey),
-            });
-            const codexQuotaState =
-              row.provider === CODEX_CONFIG.type ? getActiveCodexQuota(row.raw) : undefined;
-            const subscriptionPresentation = buildAccountSubscriptionPresentation({
-              row,
-              codexQuota: codexQuotaState,
-            });
-            const codexResetCreditsCount =
-              codexQuotaState?.rateLimitResetCreditsAvailableCount ??
-              codexQuotaState?.rateLimitResetCredits?.length ??
-              null;
-            const hasCodexResetCredits =
-              row.provider === CODEX_CONFIG.type &&
-              codexResetCreditsCount !== null &&
-              codexResetCreditsCount > 0;
-            const providerIcon = getAuthFileIcon(row.provider, resolvedTheme);
-            const quotaEmptyLabel =
-              quotaWindows.length > 0
-                ? t('accounts.quota_details_only')
-                : t('accounts.quota_source_none');
-            const quotaWindowTitle =
-              mainListWindows
-                .map((window) => {
-                  const label = getQuotaWindowReadableLabel(window);
-                  return `${label}: ${formatPercent(window.remainingPercent)}`;
-                })
-                .join('\n') || quotaEmptyLabel;
-            const healthTitle = t(
-              item.health.tooltipKey,
-              formatQuotaResetTooltipParams(
-                item.health.tooltipParams,
-                item.health.resetAtMs,
-                i18n.language,
-                item.health.cooldown?.recoverAtMs
-              )
-            );
-            const accountHistoryError = accountHistoryErrorsByRowKey.get(row.selectionKey) ?? '';
-            return (
-              <article
-                key={row.selectionKey}
-                data-account-card={row.selectionKey}
-                aria-selected={selectedFiles.has(row.selectionKey)}
-                className={[
-                  styles.accountCard,
-                  selectedRowKey === row.selectionKey ? styles.accountCardSelected : '',
-                  selectedFiles.has(row.selectionKey) ? styles.accountCardBulkSelected : '',
-                  isSelectionMode ? styles.accountCardSelectionMode : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={isSelectionMode ? () => handleAccountCardClick(row) : undefined}
-              >
-                <div className={styles.accountCardIdentity}>
-                  <div className={styles.accountProviderLogo} aria-hidden="true">
-                    {providerIcon ? (
-                      <img src={providerIcon} alt="" />
-                    ) : (
-                      <IconKey size={20} className={styles.accountProviderFallback} />
-                    )}
-                  </div>
-                  <div className={styles.accountIdentityText}>
-                    <div className={styles.accountIdentityCopyLine}>
-                      <button
-                        type="button"
-                        className={styles.accountIdentityCopyTarget}
-                        title={row.accountLabel}
-                        aria-label={`${t('common.copy')} ${row.accountLabel}`}
-                        onClick={(event) =>
-                          void handleCopyIdentityText(
-                            event,
-                            row.accountLabel,
-                            `${row.selectionKey}:account`
-                          )
-                        }
-                      >
-                        <strong className={styles.accountIdentityTitle}>
-                          {getDisplayAccount(row)}
-                        </strong>
-                      </button>
-                      {copiedIdentityKey === `${row.selectionKey}:account` ? (
-                        <span className={styles.accountIdentityCopyHint}>
-                          {t('accounts.copy_feedback_copied')}
-                        </span>
+        layoutMode === 'grid' ? (
+          <div className={styles.accountGridList}>
+            {rowsToRender.map((row) => {
+              const ctx = resolveAccountRowContext(row);
+              return (
+                <article
+                  key={row.selectionKey}
+                  data-account-card={row.selectionKey}
+                  aria-selected={selectedFiles.has(row.selectionKey)}
+                  className={[
+                    styles.accountGridCard,
+                    row.disabled ? styles.accountGridCardDisabled : '',
+                    selectedRowKey === row.selectionKey ? styles.accountCardSelected : '',
+                    selectedFiles.has(row.selectionKey) ? styles.accountCardBulkSelected : '',
+                    isSelectionMode ? styles.accountCardSelectionMode : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={
+                    isSelectionMode
+                      ? () => handleAccountCardClick(row)
+                      : () => void openAccountDetail(row, 'quota')
+                  }
+                >
+                  <div className={styles.accountGridCardHeader}>
+                    <div className={styles.accountGridCardIdentity}>
+                      {isSelectionMode ? (
+                        <div
+                          className={styles.accountGridCardCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedFiles.has(row.selectionKey)}
+                            disabled={row.runtimeOnly}
+                            onChange={() => toggleSelect(row.selectionKey)}
+                            aria-label={t('accounts.select_account', { name: row.accountLabel })}
+                          />
+                        </div>
                       ) : null}
-                    </div>
-                    <div className={styles.accountIdentityCopyLine}>
-                      <button
-                        type="button"
-                        className={styles.accountIdentityCopyTarget}
-                        title={row.fileName}
-                        aria-label={`${t('common.copy')} ${row.fileName}`}
-                        onClick={(event) =>
-                          void handleCopyIdentityText(event, row.fileName, `${row.selectionKey}:file`)
-                        }
-                      >
-                        <span className={styles.accountCardFile}>
-                          {getDisplayFileName(row.fileName)}
-                        </span>
-                      </button>
-                      {copiedIdentityKey === `${row.selectionKey}:file` ? (
-                        <span className={styles.accountIdentityCopyHint}>
-                          {t('accounts.copy_feedback_copied')}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.accountCardPlan}>
-                  <span
-                    className={styles.accountPlanName}
-                    title={subscriptionPresentation.planPresentation?.fullLabel}
-                  >
-                    {subscriptionPresentation.planPresentation?.shortLabel ?? '-'}
-                  </span>
-                  {subscriptionPresentation.remainingDays !== null ? (
-                    <span
-                      className={styles.accountPlanRemaining}
-                      title={t('accounts.list_plan_remaining_days_tooltip', {
-                        days: subscriptionPresentation.remainingDays,
-                        defaultValue: `剩余 ${subscriptionPresentation.remainingDays} 天`,
-                      })}
-                    >
-                      {t('accounts.list_plan_remaining_days', {
-                        days: subscriptionPresentation.remainingDays,
-                        defaultValue: `${subscriptionPresentation.remainingDays} 天`,
-                      })}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className={styles.accountCardHealth}>
-                  <div className={styles.accountCardLine}>
-                    <span
-                      className={`${styles.badge} ${getHealthStatusClass(item.health.status)}`}
-                      title={healthTitle}
-                    >
-                      {t(item.health.labelKey)}
-                    </span>
-                  </div>
-                  <div className={styles.accountHealthMetaRow}>
-                    {editingPriorityState?.rowKey === row.selectionKey ? (
-                      <input
-                        ref={inlinePriorityInputRef}
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9\-]*"
-                        data-account-priority-input={row.selectionKey}
-                        className={styles.accountPriorityInput}
-                        value={editingPriorityState.value}
-                        aria-label={t('accounts.priority_edit', { defaultValue: '编辑优先级' })}
-                        disabled={inlinePrioritySaving}
-                        onClick={(e) => e.stopPropagation()}
-                        onDoubleClick={(e) => e.stopPropagation()}
-                        onChange={(e) =>
-                          setEditingPriorityState((prev) =>
-                            prev ? { ...prev, value: e.target.value } : null
-                          )
-                        }
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            e.currentTarget.blur();
-                          } else if (e.key === 'Escape') {
-                            e.preventDefault();
-                            cancelInlinePriorityEdit();
-                          }
-                        }}
-                        onBlur={(e) => {
-                          void handleInlinePriorityBlur(row, e.currentTarget.value);
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        data-account-priority-trigger={row.selectionKey}
-                        className={`${styles.accountPriorityButton} ${
-                          item.identity.priorityIsNegative
-                            ? styles.accountPriorityMetaDanger
-                            : styles.accountPriorityMeta
-                        }`}
-                        title={
-                          row.runtimeOnly
-                            ? t('accounts.col_priority')
-                            : `${t('accounts.col_priority')} ${item.identity.priority} (${t('accounts.priority_edit', { defaultValue: '编辑优先级' })})`
-                        }
-                        aria-label={`${t('accounts.col_priority')} ${item.identity.priority}`}
-                        disabled={row.runtimeOnly}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!row.runtimeOnly) {
-                            startInlinePriorityEdit(row);
-                          }
-                        }}
-                      >
-                        {t('accounts.col_priority')} {item.identity.priority}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className={styles.accountCardLatestRequest}>
-                  <AccountLatestRequest
-                    latestRequest={accountHistory?.latest_request}
-                    recentRequests={accountHistory?.recent_requests}
-                    loading={accountHistoryLoading && !accountHistory}
-                    unavailable={Boolean(accountHistoryError)}
-                    locale={i18n.language}
-                    onCopy={copyTextWithNotification}
-                  />
-                </div>
-
-                {renderAccountDetailTrigger({
-                  isSelectionMode,
-                  className: styles.accountCardBusiness,
-                  title: quotaWindowTitle,
-                  ariaLabel: `${t('accounts.list_header_quota')}: ${quotaWindowTitle}. ${t(
-                    'accounts.open_detail',
-                    { name: row.fileName }
-                  )}: ${t('accounts.detail_tab_quota')}`,
-                  kind: 'quota',
-                  onOpen: () => void openAccountDetail(row, 'quota'),
-                  children: (
-                    <span className={styles.quotaWindowGrid} title={quotaWindowTitle}>
-                      {mainListWindows.length > 0 ? (
-                        mainListWindows.map((window, windowIndex) => {
-                          const windowRemaining = window.remainingPercent;
-                          const windowWidth = Math.max(0, Math.min(100, windowRemaining ?? 0));
-                          const resetLabel =
-                            window.resetLabel && window.resetLabel !== '-' ? window.resetLabel : '';
-                          const resetDisplayLabel = formatQuotaResetDisplay(
-                            window.resetAtMs,
-                            resetLabel,
-                            i18n.language
-                          );
-                          const relativeReset = formatQuotaResetRelative(
-                            window.resetAtMs,
-                            resetLabel,
-                            i18n.language
-                          );
-                          const readableLabel = getQuotaWindowReadableLabel(window);
-                          const barClass = getFallbackWindowBarClass(
-                            quotaLifecycleBarOverride,
-                            windowRemaining
-                          );
-                          const windowUsageData = resolveAccountQuotaWindowUsageAndForecast(
-                            row,
-                            window,
-                            matchingListWindowUsageByKey
-                          );
-                          const hasActual =
-                            windowUsageData.hasTrustedCurrentActual &&
-                            windowUsageData.currentCost !== null &&
-                            windowUsageData.currentTokens !== null;
-                          const hasForecast =
-                            windowUsageData.forecastCost !== null &&
-                            windowUsageData.forecastTokens !== null;
-                          const percentText =
-                            windowRemaining !== null ? formatPercent(windowRemaining) : '-';
-                          const remainingParts = formatQuotaRemainingPercentParts(
-                            percentText,
-                            i18n.language
-                          );
-                          const remainingText = formatQuotaRemainingPercentDisplay(
-                            percentText,
-                            i18n.language
-                          );
-                          const cardTitle = [
-                            `${readableLabel}: ${remainingText}${
-                              relativeReset ? ` | ${relativeReset}` : ''
-                            }`,
-                            hasActual
-                              ? `${t('accounts.quota_used_short')} ${formatCompactUsd(
-                                  windowUsageData.currentCost!
-                                )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`
-                              : '',
-                            hasForecast
-                              ? `${t('accounts.quota_forecast_short')} ${formatCompactUsd(
-                                  windowUsageData.forecastCost!
-                                )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`
-                              : '',
-                            resetDisplayLabel && resetDisplayLabel !== '-'
-                              ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
-                              : '',
-                          ]
-                            .filter(Boolean)
-                            .join('. ');
-
-                          return (
-                            <span
-                              key={window.key}
-                              className={styles.quotaWindowCard}
-                              data-account-quota-window={window.key}
-                              title={cardTitle}
-                            >
-                              <span className={styles.quotaWindowHeader}>
-                                <span className={styles.quotaWindowLabel} title={readableLabel}>
-                                  {readableLabel}
-                                </span>
-                                <span className={styles.quotaWindowMeta}>
-                                  {hasCodexResetCredits && windowIndex === 0 ? (
-                                    <>
-                                       <span
-                                         role="button"
-                                         tabIndex={0}
-                                         className={styles.quotaWindowResetCredits}
-                                         data-account-reset-credits={row.selectionKey}
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           e.preventDefault();
-                                           void openAccountDetail(row, 'quota', 'reset-records');
-                                         }}
-                                         onKeyDown={(e) => {
-                                           if (e.key === 'Enter' || e.key === ' ') {
-                                             e.stopPropagation();
-                                             e.preventDefault();
-                                             void openAccountDetail(row, 'quota', 'reset-records');
-                                           }
-                                         }}
-                                         aria-label={t('accounts.detail_quota_reset_records', {
-                                           defaultValue: '重置记录',
-                                         })}
-                                       >
-                                          <span
-                                            className={styles.quotaWindowResetCreditsIcon}
-                                            aria-hidden="true"
-                                          >
-                                            <IconRotateCcw size={11} strokeWidth={2.4} />
-                                          </span>
-                                         <strong
-                                           className={styles.quotaWindowResetCreditsCount}
-                                         >
-                                           {codexResetCreditsCount}
-                                         </strong>
-                                       </span>
-                                      <span
-                                        className={styles.quotaWindowSep}
-                                        aria-hidden="true"
-                                      />
-                                    </>
-                                  ) : null}
-                                  <strong className={styles.quotaWindowPercent}>
-                                    {remainingParts ? (
-                                      <>
-                                        <span className={styles.quotaWindowPercentPrefix}>
-                                          {remainingParts.prefix}
-                                        </span>
-                                        <span className={styles.quotaWindowPercentValue}>
-                                          {remainingParts.percent}
-                                        </span>
-                                      </>
-                                    ) : (
-                                      percentText
-                                    )}
-                                  </strong>
-                                </span>
-                              </span>
-                              <span className={styles.quotaTrack} aria-hidden="true">
-                                <span
-                                  className={`${styles.quotaBar} ${barClass}`}
-                                  style={{ width: `${windowWidth}%` }}
-                                />
-                              </span>
-                              <span className={styles.quotaWindowUsageLine}>
-                                {hasActual ? (
-                                  <span
-                                    className={styles.quotaUsageGroup}
-                                    title={`${t('accounts.quota_used_short')}: ${formatCompactUsd(
-                                      windowUsageData.currentCost!
-                                    )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`}
-                                  >
-                                    <span
-                                      className={styles.quotaUsageIcon}
-                                      aria-label={t('accounts.quota_used_short')}
-                                    >
-                                      <IconChartLine size={10} />
-                                    </span>
-                                    <span className={styles.quotaWindowCost}>
-                                      {formatCompactUsd(windowUsageData.currentCost!)}
-                                    </span>
-                                    <span className={styles.quotaWindowSlash} aria-hidden="true">
-                                      /
-                                    </span>
-                                    <span className={styles.quotaWindowTokenCompact}>
-                                      {formatCompactNumber(windowUsageData.currentTokens!)}
-                                    </span>
-                                  </span>
-                                ) : (
-                                  <span className={styles.quotaSlotEmpty} aria-hidden="true" />
-                                )}
-                                {hasForecast ? (
-                                  <span
-                                    className={styles.quotaForecastGroup}
-                                    title={`${t('accounts.quota_forecast_short')}: ${formatCompactUsd(
-                                      windowUsageData.forecastCost!
-                                    )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`}
-                                  >
-                                    <span
-                                      className={styles.quotaForecastIcon}
-                                      aria-label={t('accounts.quota_forecast_short')}
-                                    >
-                                      <IconTrendingUp size={10} />
-                                    </span>
-                                    <span className={styles.quotaWindowCostPredicted}>
-                                      {formatCompactUsd(windowUsageData.forecastCost!)}
-                                    </span>
-                                    <span className={styles.quotaWindowSlash} aria-hidden="true">
-                                      /
-                                    </span>
-                                    <span className={styles.quotaWindowTokenPredictedCompact}>
-                                      {formatCompactNumber(windowUsageData.forecastTokens!)}
-                                    </span>
-                                  </span>
-                                ) : (
-                                  <span className={styles.quotaSlotEmpty} aria-hidden="true" />
-                                )}
-                                {relativeReset ? (
-                                  <span
-                                    className={styles.quotaWindowResetTime}
-                                    title={
-                                      resetDisplayLabel && resetDisplayLabel !== '-'
-                                        ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
-                                        : undefined
-                                    }
-                                  >
-                                    {relativeReset}
-                                  </span>
-                                ) : null}
-                              </span>
+                      <div className={styles.accountProviderLogo} aria-hidden="true">
+                        {ctx.providerIcon ? (
+                          <img src={ctx.providerIcon} alt="" />
+                        ) : (
+                          <IconKey size={20} className={styles.accountProviderFallback} />
+                        )}
+                      </div>
+                      <div className={styles.accountIdentityText}>
+                        <div className={styles.accountIdentityCopyLine}>
+                          <button
+                            type="button"
+                            className={styles.accountIdentityCopyTarget}
+                            title={row.accountLabel}
+                            aria-label={`${t('common.copy')} ${row.accountLabel}`}
+                            onClick={(event) =>
+                              void handleCopyIdentityText(
+                                event,
+                                row.accountLabel,
+                                `${row.selectionKey}:account`
+                              )
+                            }
+                          >
+                            <strong className={styles.accountIdentityTitle}>
+                              {getDisplayAccount(row)}
+                            </strong>
+                          </button>
+                          {copiedIdentityKey === `${row.selectionKey}:account` ? (
+                            <span className={styles.accountIdentityCopyHint}>
+                              {t('accounts.copy_feedback_copied')}
                             </span>
-                          );
-                        })
-                      ) : (
-                        <span className={styles.quotaEmptyState} data-account-quota-empty="true">
-                          {quotaEmptyLabel}
-                        </span>
-                      )}
-                    </span>
-                  ),
-                })}
+                          ) : null}
+                        </div>
+                        <div className={styles.accountIdentityCopyLine}>
+                          <button
+                            type="button"
+                            className={styles.accountIdentityCopyTarget}
+                            title={row.fileName}
+                            aria-label={`${t('common.copy')} ${row.fileName}`}
+                            onClick={(event) =>
+                              void handleCopyIdentityText(
+                                event,
+                                row.fileName,
+                                `${row.selectionKey}:file`
+                              )
+                            }
+                          >
+                            <span className={styles.accountCardFile}>
+                              {getDisplayFileName(row.fileName)}
+                            </span>
+                          </button>
+                          {copiedIdentityKey === `${row.selectionKey}:file` ? (
+                            <span className={styles.accountIdentityCopyHint}>
+                              {t('accounts.copy_feedback_copied')}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
 
-                <div className={styles.accountCardRecommendation}>
-                  {renderRowActions(row, item.health.status === 'reauth')}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                    <div
+                      className={styles.accountGridCardHeaderRight}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span
+                        className={`${styles.badge} ${getHealthStatusClass(ctx.item.health.status)}`}
+                        title={ctx.healthTitle}
+                      >
+                        {t(ctx.item.health.labelKey)}
+                      </span>
+                      <ToggleSwitch
+                        checked={!row.disabled}
+                        onChange={(enabled) => void handleBatchStatus(enabled, [row])}
+                        disabled={disableControls || statusUpdating || row.runtimeOnly}
+                        ariaLabel={t('auth_files.status_toggle_label')}
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.accountGridCardMetaRow}>
+                    <div className={styles.accountGridCardMetaBadges}>
+                      {ctx.subscriptionPresentation.planPresentation?.shortLabel &&
+                      ctx.subscriptionPresentation.planPresentation.shortLabel !== '-' ? (
+                        <span
+                          className={styles.accountPlanBadge}
+                          title={ctx.subscriptionPresentation.planPresentation?.fullLabel}
+                        >
+                          {ctx.subscriptionPresentation.planPresentation.shortLabel}
+                          {ctx.subscriptionPresentation.remainingDays !== null ? (
+                            <span className={styles.accountPlanBadgeSep}>
+                              ·{' '}
+                              {t('accounts.list_plan_remaining_days', {
+                                days: ctx.subscriptionPresentation.remainingDays,
+                                defaultValue: `${ctx.subscriptionPresentation.remainingDays} 天`,
+                              })}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : ctx.subscriptionPresentation.remainingDays !== null ? (
+                        <span
+                          className={styles.accountPlanBadge}
+                          title={t('accounts.list_plan_remaining_days_tooltip', {
+                            days: ctx.subscriptionPresentation.remainingDays,
+                            defaultValue: `剩余 ${ctx.subscriptionPresentation.remainingDays} 天`,
+                          })}
+                        >
+                          {t('accounts.list_plan_remaining_days', {
+                            days: ctx.subscriptionPresentation.remainingDays,
+                            defaultValue: `${ctx.subscriptionPresentation.remainingDays} 天`,
+                          })}
+                        </span>
+                      ) : null}
+                      {editingPriorityState?.rowKey === row.selectionKey ? (
+                        <input
+                          ref={inlinePriorityInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9\-]*"
+                          data-account-priority-input={row.selectionKey}
+                          className={styles.accountPriorityInput}
+                          value={editingPriorityState.value}
+                          aria-label={t('accounts.priority_edit', { defaultValue: '编辑优先级' })}
+                          disabled={inlinePrioritySaving}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setEditingPriorityState((prev) =>
+                              prev ? { ...prev, value: e.target.value } : null
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelInlinePriorityEdit();
+                            }
+                          }}
+                          onBlur={(e) => {
+                            void handleInlinePriorityBlur(row, e.currentTarget.value);
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          data-account-priority-trigger={row.selectionKey}
+                          className={`${styles.accountPriorityButton} ${
+                            ctx.item.identity.priorityIsNegative
+                              ? styles.accountPriorityMetaDanger
+                              : styles.accountPriorityMeta
+                          }`}
+                          title={
+                            row.runtimeOnly
+                              ? t('accounts.col_priority')
+                              : `${t('accounts.col_priority')} ${ctx.item.identity.priority} (${t('accounts.priority_edit', { defaultValue: '编辑优先级' })})`
+                          }
+                          aria-label={`${t('accounts.col_priority')} ${ctx.item.identity.priority}`}
+                          disabled={row.runtimeOnly}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!row.runtimeOnly) {
+                              startInlinePriorityEdit(row);
+                            }
+                          }}
+                        >
+                          {t('accounts.col_priority')} {ctx.item.identity.priority}
+                        </button>
+                      )}
+                      {row.note?.trim() ? (
+                        <span
+                          className={styles.accountGridCardNote}
+                          title={`${t('auth_files.note_label')}: ${row.note.trim()}`}
+                        >
+                          <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
+                          <span className={styles.accountGridCardNoteText}>{row.note.trim()}</span>
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div
+                    className={styles.accountGridCardRecentStatus}
+                    data-account-grid-recent-status={row.selectionKey}
+                    title={`${t('accounts.detail_overview_recent_status_title')} (${t('accounts.open_detail', { name: row.fileName })}: ${t('accounts.detail_overview_recent_status_title')})`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openAccountDetail(row, 'overview');
+                    }}
+                  >
+                    <div className={styles.accountGridCardRecentStatusHeader}>
+                      <div className={styles.accountGridCardRecentStatusTitleGroup}>
+                        <IconChartLine
+                          size={13}
+                          className={styles.accountGridCardRecentStatusIcon}
+                        />
+                        <span className={styles.accountGridCardRecentStatusTitle}>
+                          {t('accounts.detail_overview_recent_status_title')}
+                        </span>
+                        <span className={styles.accountGridCardRecentStatusScope}>
+                          200m
+                        </span>
+                      </div>
+                      <div className={styles.accountGridCardRecentStatusMetrics}>
+                        <span
+                          className={styles.accountGridCardRecentStatusPillSuccess}
+                          title={`${t('accounts.detail_overview_recent_status_success')}: ${ctx.overviewRecentStatus.success}`}
+                        >
+                          <span className={styles.metricDot} />
+                          <strong>{ctx.overviewRecentStatus.success}</strong>
+                        </span>
+                        <span
+                          className={`${styles.accountGridCardRecentStatusPillFailure} ${
+                            ctx.overviewRecentStatus.failure > 0 ? styles.hasFailure : ''
+                          }`}
+                          title={`${t('accounts.detail_overview_recent_status_failure')}: ${ctx.overviewRecentStatus.failure}`}
+                        >
+                          <span className={styles.metricDot} />
+                          <strong>{ctx.overviewRecentStatus.failure}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className={styles.accountGridCardRecentStatusBar}>
+                      <ProviderStatusBar statusData={ctx.recentStatusData} styles={styles} />
+                    </div>
+
+                    {ctx.overviewRecentStatus.statusMessage ? (
+                      <div
+                        className={styles.accountGridCardRecentStatusMessage}
+                        data-overview-recent-status-message="true"
+                        title={ctx.overviewRecentStatus.statusMessage}
+                      >
+                        <span className={styles.accountGridCardRecentStatusMessageLabel}>
+                          {t('accounts.detail_overview_recent_status_message')}
+                        </span>
+                        <p className={styles.accountGridCardRecentStatusMessageText}>
+                          {ctx.overviewRecentStatus.statusMessage}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div
+                    className={styles.accountGridCardQuota}
+                    title={ctx.quotaWindowTitle}
+                  >
+                    {ctx.mainListWindows.length > 0 ? (
+                      <div className={styles.accountGridCardQuotaList}>
+                        {(() => {
+                          const windowsToRender = ctx.mainListWindows.slice(0, 2);
+                          const remainingCount =
+                            ctx.mainListWindows.length - windowsToRender.length;
+                          return windowsToRender.map((window, idx) =>
+                            renderSingleQuotaWindowCard(
+                              row,
+                              window,
+                              idx,
+                              ctx.codexResetCreditsCount,
+                              ctx.hasCodexResetCredits,
+                              ctx.quotaLifecycleBarOverride,
+                              idx === windowsToRender.length - 1 && remainingCount > 0 ? (
+                                <span
+                                  className={styles.accountGridCardMoreQuotaHint}
+                                  title={ctx.quotaWindowTitle}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void openAccountDetail(row, 'quota');
+                                  }}
+                                >
+                                  {t('accounts.quota_more_windows', {
+                                    count: remainingCount,
+                                  })}
+                                </span>
+                              ) : null
+                            )
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <span className={styles.quotaEmptyState} data-account-quota-empty="true">
+                        {ctx.quotaEmptyLabel}
+                      </span>
+                    )}
+                  </div>
+
+                  <div
+                    className={styles.accountGridCardFooter}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className={styles.accountGridCardActions}>
+                      {renderRowActions(row, ctx.item.health.status === 'reauth', true)}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className={styles.accountCardList}>
+            <div className={styles.accountCardHeader} data-account-list-header="true">
+              <span>{t('accounts.list_header_credential')}</span>
+              <span>{t('accounts.list_header_plan')}</span>
+              <span>{t('accounts.list_header_availability')}</span>
+              <span>{t('accounts.list_header_recent_requests')}</span>
+              <span>{t('accounts.list_header_quota')}</span>
+              <span>{t('accounts.list_header_actions')}</span>
+            </div>
+            {rowsToRender.map((row) => {
+              const ctx = resolveAccountRowContext(row);
+              return (
+                <article
+                  key={row.selectionKey}
+                  data-account-card={row.selectionKey}
+                  aria-selected={selectedFiles.has(row.selectionKey)}
+                  className={[
+                    styles.accountCard,
+                    selectedRowKey === row.selectionKey ? styles.accountCardSelected : '',
+                    selectedFiles.has(row.selectionKey) ? styles.accountCardBulkSelected : '',
+                    isSelectionMode ? styles.accountCardSelectionMode : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={isSelectionMode ? () => handleAccountCardClick(row) : undefined}
+                >
+                  <div className={styles.accountCardIdentity}>
+                    <div className={styles.accountProviderLogo} aria-hidden="true">
+                      {ctx.providerIcon ? (
+                        <img src={ctx.providerIcon} alt="" />
+                      ) : (
+                        <IconKey size={20} className={styles.accountProviderFallback} />
+                      )}
+                    </div>
+                    <div className={styles.accountIdentityText}>
+                      <div className={styles.accountIdentityCopyLine}>
+                        <button
+                          type="button"
+                          className={styles.accountIdentityCopyTarget}
+                          title={row.accountLabel}
+                          aria-label={`${t('common.copy')} ${row.accountLabel}`}
+                          onClick={(event) =>
+                            void handleCopyIdentityText(
+                              event,
+                              row.accountLabel,
+                              `${row.selectionKey}:account`
+                            )
+                          }
+                        >
+                          <strong className={styles.accountIdentityTitle}>
+                            {getDisplayAccount(row)}
+                          </strong>
+                        </button>
+                        {copiedIdentityKey === `${row.selectionKey}:account` ? (
+                          <span className={styles.accountIdentityCopyHint}>
+                            {t('accounts.copy_feedback_copied')}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className={styles.accountIdentityCopyLine}>
+                        <button
+                          type="button"
+                          className={styles.accountIdentityCopyTarget}
+                          title={row.fileName}
+                          aria-label={`${t('common.copy')} ${row.fileName}`}
+                          onClick={(event) =>
+                            void handleCopyIdentityText(
+                              event,
+                              row.fileName,
+                              `${row.selectionKey}:file`
+                            )
+                          }
+                        >
+                          <span className={styles.accountCardFile}>
+                            {getDisplayFileName(row.fileName)}
+                          </span>
+                        </button>
+                        {copiedIdentityKey === `${row.selectionKey}:file` ? (
+                          <span className={styles.accountIdentityCopyHint}>
+                            {t('accounts.copy_feedback_copied')}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={styles.accountCardPlan}>
+                    <span
+                      className={styles.accountPlanName}
+                      title={ctx.subscriptionPresentation.planPresentation?.fullLabel}
+                    >
+                      {ctx.subscriptionPresentation.planPresentation?.shortLabel ?? '-'}
+                    </span>
+                    {ctx.subscriptionPresentation.remainingDays !== null ? (
+                      <span
+                        className={styles.accountPlanRemaining}
+                        title={t('accounts.list_plan_remaining_days_tooltip', {
+                          days: ctx.subscriptionPresentation.remainingDays,
+                          defaultValue: `剩余 ${ctx.subscriptionPresentation.remainingDays} 天`,
+                        })}
+                      >
+                        {t('accounts.list_plan_remaining_days', {
+                          days: ctx.subscriptionPresentation.remainingDays,
+                          defaultValue: `${ctx.subscriptionPresentation.remainingDays} 天`,
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className={styles.accountCardHealth}>
+                    <div className={styles.accountCardLine}>
+                      <span
+                        className={`${styles.badge} ${getHealthStatusClass(ctx.item.health.status)}`}
+                        title={ctx.healthTitle}
+                      >
+                        {t(ctx.item.health.labelKey)}
+                      </span>
+                    </div>
+                    <div className={styles.accountHealthMetaRow}>
+                      {editingPriorityState?.rowKey === row.selectionKey ? (
+                        <input
+                          ref={inlinePriorityInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9\-]*"
+                          data-account-priority-input={row.selectionKey}
+                          className={styles.accountPriorityInput}
+                          value={editingPriorityState.value}
+                          aria-label={t('accounts.priority_edit', { defaultValue: '编辑优先级' })}
+                          disabled={inlinePrioritySaving}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setEditingPriorityState((prev) =>
+                              prev ? { ...prev, value: e.target.value } : null
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelInlinePriorityEdit();
+                            }
+                          }}
+                          onBlur={(e) => {
+                            void handleInlinePriorityBlur(row, e.currentTarget.value);
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          data-account-priority-trigger={row.selectionKey}
+                          className={`${styles.accountPriorityButton} ${
+                            ctx.item.identity.priorityIsNegative
+                              ? styles.accountPriorityMetaDanger
+                              : styles.accountPriorityMeta
+                          }`}
+                          title={
+                            row.runtimeOnly
+                              ? t('accounts.col_priority')
+                              : `${t('accounts.col_priority')} ${ctx.item.identity.priority} (${t('accounts.priority_edit', { defaultValue: '编辑优先级' })})`
+                          }
+                          aria-label={`${t('accounts.col_priority')} ${ctx.item.identity.priority}`}
+                          disabled={row.runtimeOnly}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!row.runtimeOnly) {
+                              startInlinePriorityEdit(row);
+                            }
+                          }}
+                        >
+                          {t('accounts.col_priority')} {ctx.item.identity.priority}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={styles.accountCardLatestRequest}>
+                    <AccountLatestRequest
+                      latestRequest={ctx.accountHistory?.latest_request}
+                      recentRequests={ctx.accountHistory?.recent_requests}
+                      loading={accountHistoryLoading && !ctx.accountHistory}
+                      unavailable={Boolean(ctx.accountHistoryError)}
+                      locale={i18n.language}
+                      onCopy={copyTextWithNotification}
+                    />
+                  </div>
+
+                  {renderAccountDetailTrigger({
+                    isSelectionMode,
+                    className: styles.accountCardBusiness,
+                    title: ctx.quotaWindowTitle,
+                    ariaLabel: `${t('accounts.list_header_quota')}: ${ctx.quotaWindowTitle}. ${t(
+                      'accounts.open_detail',
+                      { name: row.fileName }
+                    )}: ${t('accounts.detail_tab_quota')}`,
+                    kind: 'quota',
+                    onOpen: () => void openAccountDetail(row, 'quota'),
+                    children: (
+                      <span className={styles.quotaWindowGrid} title={ctx.quotaWindowTitle}>
+                        {ctx.mainListWindows.length > 0 ? (
+                          ctx.mainListWindows.map((window, windowIndex) =>
+                            renderSingleQuotaWindowCard(
+                              row,
+                              window,
+                              windowIndex,
+                              ctx.codexResetCreditsCount,
+                              ctx.hasCodexResetCredits,
+                              ctx.quotaLifecycleBarOverride
+                            )
+                          )
+                        ) : (
+                          <span className={styles.quotaEmptyState} data-account-quota-empty="true">
+                            {ctx.quotaEmptyLabel}
+                          </span>
+                        )}
+                      </span>
+                    ),
+                  })}
+
+                  <div className={styles.accountCardRecommendation}>
+                    {renderRowActions(row, ctx.item.health.status === 'reauth')}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )
       ) : (
         renderAccountEmptyState()
       )}

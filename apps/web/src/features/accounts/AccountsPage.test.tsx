@@ -9033,7 +9033,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
-  it('keeps the accounts view in card mode without table controls', async () => {
+  it('supports view mode switching controls alongside accounts list', async () => {
     mocks.files = [
       {
         ...makeCodexFile('low.json', 'auth-low', 'low@example.com'),
@@ -9063,7 +9063,8 @@ describe('AccountsPage replacement flows', () => {
       )
     ).toHaveLength(0);
     expect(getAccountListItemTexts(renderer).join('\n')).toContain('high.json');
-    expect(() => findHostButtonByText(renderer, 'accounts.view_mode_table')).toThrow();
+    expect(findHostButtonByText(renderer, 'accounts.view_mode_table')).toBeDefined();
+    expect(findHostButtonByText(renderer, 'accounts.view_mode_grid')).toBeDefined();
   });
 
   it('renders the six localized credential list headers', async () => {
@@ -16530,6 +16531,88 @@ describe('AccountsPage replacement flows', () => {
       const textAfter = readText(cardAfter);
       expect(textAfter).toContain('$0.75');
       expect(textAfter).toContain('$1.50');
+    });
+
+    it('switches between list mode and grid card mode via toolbar switcher', async () => {
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(renderer.root.findAllByProps({ 'data-account-list-header': 'true' }).length).toBe(1);
+
+      const gridButtons = renderer.root.findAll((node) =>
+        node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      expect(gridButtons.length).toBeGreaterThan(0);
+
+      await act(async () => {
+        gridButtons[0].props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(renderer.root.findAllByProps({ 'data-account-list-header': 'true' }).length).toBe(0);
+
+      const tableButtons = renderer.root.findAll((node) =>
+        node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_table'
+      );
+      expect(tableButtons.length).toBeGreaterThan(0);
+
+      await act(async () => {
+        tableButtons[0].props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(renderer.root.findAllByProps({ 'data-account-list-header': 'true' }).length).toBe(1);
+    });
+
+    it('renders rich card presentation in grid mode including notes, traffic stats, and health status', async () => {
+      mocks.files = [
+        {
+          ...makeCodexFile('prod.json', 'auth-prod', 'prod@example.com'),
+          note: '生产备用账号',
+          priority: 50,
+          recent_requests: [{ success: 12, failed: 1 }],
+        },
+      ];
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const gridButtons = renderer.root.findAll(
+        (node) =>
+          node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      expect(gridButtons.length).toBeGreaterThan(0);
+
+      await act(async () => {
+        gridButtons[0].props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      const cards = renderer.root.findAll(
+        (node) => node.type === 'article' && typeof node.props['data-account-card'] === 'string'
+      );
+      expect(cards.length).toBe(1);
+
+      const cardText = readText(cards[0]);
+      expect(cardText).toContain('生产备用账号');
+      expect(cardText).toContain('accounts.col_priority 50');
+      expect(
+        cards[0].findAllByProps({
+          'data-account-priority-trigger': getAuthFileSelectionKey(mocks.files[0]),
+        }).length
+      ).toBe(1);
+
+      const recentStatusSection = cards[0].findByProps({
+        'data-account-grid-recent-status': getAuthFileSelectionKey(mocks.files[0]),
+      });
+      expect(recentStatusSection).toBeTruthy();
+      expect(readText(recentStatusSection)).toContain('accounts.detail_overview_recent_status_title');
+      const recentStatusBar = recentStatusSection.findByType(ProviderStatusBar);
+      expect(recentStatusBar.props.statusData.totalSuccess).toBe(12);
+      expect(recentStatusBar.props.statusData.totalFailure).toBe(1);
     });
   });
 });
