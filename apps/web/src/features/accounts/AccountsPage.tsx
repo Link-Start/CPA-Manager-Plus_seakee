@@ -19,7 +19,6 @@ import { Select } from '@/components/ui/Select';
 import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedTabs';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
-  IconBinary,
   IconCheck,
   IconArrowDownWideNarrow,
   IconArrowUpNarrowWide,
@@ -189,6 +188,7 @@ import {
   PAGE_SIZE_OPTIONS,
   formatPercent,
   formatQuotaResetDisplay,
+  formatQuotaResetRelative,
   formatQuotaResetTooltipParams,
   getAccountQuotaLifecycleBarOverride,
   getAccountSortFieldOption,
@@ -1345,6 +1345,10 @@ export function AccountsPage() {
   const [listWindowUsageByKey, setListWindowUsageByKey] = useState<
     Map<string, MonitoringAccountWindowUsageItem>
   >(() => new Map());
+  const [listWindowUsageQueryContext, setListWindowUsageQueryContext] = useState<{
+    pageKeys: string[];
+    asOfMs: number;
+  } | null>(null);
   const [accountWindowUsageQueryContext, setAccountWindowUsageQueryContext] = useState<{
     rowKey: string;
     asOfMs: number;
@@ -4676,10 +4680,20 @@ export function AccountsPage() {
     }
     return result;
   }, [buildQuotaDisplayWindows, effectiveQuotaWindowDefinitionsByRowKey, pageRows]);
+  const isListQueryContextMatching = useMemo(() => {
+    if (!listWindowUsageQueryContext) return false;
+    if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;
+    return pageRows.every(
+      (row, idx) => listWindowUsageQueryContext.pageKeys[idx] === row.selectionKey
+    );
+  }, [listWindowUsageQueryContext, pageRows]);
   const listWindowUsageTargets = useMemo(() => {
     if (pageRows.length === 0) return [];
-    return buildAccountWindowUsageTargetEntries(pageRows, listQuotaWindowsByRowKey);
-  }, [listQuotaWindowsByRowKey, pageRows]);
+    const asOfMs = isListQueryContextMatching
+      ? listWindowUsageQueryContext!.asOfMs
+      : undefined;
+    return buildAccountWindowUsageTargetEntries(pageRows, listQuotaWindowsByRowKey, asOfMs);
+  }, [isListQueryContextMatching, listQuotaWindowsByRowKey, listWindowUsageQueryContext, pageRows]);
   const matchingListWindowUsageByKey = useMemo(
     () =>
       filterAccountWindowUsageByTargetRanges(listWindowUsageTargets, listWindowUsageByKey),
@@ -6201,9 +6215,27 @@ export function AccountsPage() {
       featureAvailability.checking ||
       !managerStorageAvailable ||
       !featureAvailability.requestMonitoringAvailable ||
-      listWindowUsageTargets.length === 0
+      pageRows.length === 0
     ) {
       setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
+      setListWindowUsageQueryContext(null);
+      return;
+    }
+
+    const queryAsOfMs = Date.now();
+    const currentPageKeys = pageRows.map((r) => r.selectionKey);
+    const queryTargets = buildAccountWindowUsageTargetEntries(
+      pageRows,
+      listQuotaWindowsByRowKey,
+      queryAsOfMs
+    );
+
+    if (queryTargets.length === 0) {
+      setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
+      setListWindowUsageQueryContext({
+        pageKeys: currentPageKeys,
+        asOfMs: queryAsOfMs,
+      });
       return;
     }
 
@@ -6217,13 +6249,17 @@ export function AccountsPage() {
         featureAvailability.managerServiceBase,
         managementKey,
         {
-          windows: listWindowUsageTargets.map((entry) => entry.target),
+          windows: queryTargets.map((entry) => entry.target),
         },
         controller.signal
       );
       if (!isCurrentRequest()) return;
+      setListWindowUsageQueryContext({
+        pageKeys: currentPageKeys,
+        asOfMs: queryAsOfMs,
+      });
       setListWindowUsageByKey(
-        buildAccountWindowUsageByKey(listWindowUsageTargets, response.items ?? [])
+        buildAccountWindowUsageByKey(queryTargets, response.items ?? [])
       );
     } catch {
       // 失败静默降级，不阻塞列表显示
@@ -6238,9 +6274,10 @@ export function AccountsPage() {
     featureAvailability.checking,
     featureAvailability.managerServiceBase,
     featureAvailability.requestMonitoringAvailable,
-    listWindowUsageTargets,
+    listQuotaWindowsByRowKey,
     managementKey,
     managerStorageAvailable,
+    pageRows,
   ]);
 
   useEffect(() => {
@@ -7718,6 +7755,10 @@ export function AccountsPage() {
                             resetLabel,
                             i18n.language
                           );
+                          const relativeReset = formatQuotaResetRelative(
+                            window.resetAtMs,
+                            resetLabel
+                          );
                           const readableLabel = getQuotaWindowReadableLabel(window);
                           const barClass = getFallbackWindowBarClass(
                             quotaLifecycleBarOverride,
@@ -7733,31 +7774,64 @@ export function AccountsPage() {
                             windowUsageData.currentCost !== null &&
                             windowUsageData.currentTokens !== null;
                           const hasForecast =
-                            hasActual &&
                             windowUsageData.forecastCost !== null &&
                             windowUsageData.forecastTokens !== null;
+                          const percentText =
+                            windowRemaining !== null ? formatPercent(windowRemaining) : '-';
+                          const cardTitle = [
+                            `${readableLabel}: ${percentText}${
+                              relativeReset ? ` | ${relativeReset}` : ''
+                            }`,
+                            hasActual
+                              ? `${t('accounts.quota_used_short')} ${formatCompactUsd(
+                                  windowUsageData.currentCost!
+                                )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`
+                              : '',
+                            hasForecast
+                              ? `${t('accounts.quota_forecast_short')} ${formatCompactUsd(
+                                  windowUsageData.forecastCost!
+                                )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`
+                              : '',
+                            resetDisplayLabel && resetDisplayLabel !== '-'
+                              ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
+                              : '',
+                          ]
+                            .filter(Boolean)
+                            .join('. ');
+
                           return (
                             <span
                               key={window.key}
                               className={styles.quotaWindowCard}
                               data-account-quota-window={window.key}
-                              title={`${readableLabel}: ${formatPercent(windowRemaining)}`}
+                              title={cardTitle}
                             >
                               <span className={styles.quotaWindowHeader}>
                                 <span className={styles.quotaWindowLabel} title={readableLabel}>
                                   {readableLabel}
                                 </span>
-                                {resetDisplayLabel && resetDisplayLabel !== '-' ? (
-                                  <span
-                                    className={styles.quotaWindowReset}
-                                    title={`${t('accounts.col_reset')}: ${resetDisplayLabel}`}
-                                  >
-                                    {resetDisplayLabel}
-                                  </span>
-                                ) : null}
-                                <strong className={styles.quotaWindowPercent}>
-                                  {windowRemaining !== null ? formatPercent(windowRemaining) : '-'}
-                                </strong>
+                                <span className={styles.quotaWindowMeta}>
+                                  <strong className={styles.quotaWindowPercent}>
+                                    {percentText}
+                                  </strong>
+                                  {relativeReset ? (
+                                    <>
+                                      <span className={styles.quotaWindowSep} aria-hidden="true">
+                                        |
+                                      </span>
+                                      <span
+                                        className={styles.quotaWindowResetTime}
+                                        title={
+                                          resetDisplayLabel && resetDisplayLabel !== '-'
+                                            ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
+                                            : undefined
+                                        }
+                                      >
+                                        {relativeReset}
+                                      </span>
+                                    </>
+                                  ) : null}
+                                </span>
                               </span>
                               <span className={styles.quotaTrack} aria-hidden="true">
                                 <span
@@ -7767,38 +7841,34 @@ export function AccountsPage() {
                               </span>
                               <span className={styles.quotaWindowUsageLine}>
                                 {hasActual ? (
-                                  <span className={styles.quotaWindowUsageMetricGroup}>
-                                    <span className={styles.quotaWindowUsageMetric}>
-                                      <span className={styles.quotaWindowCost}>
-                                        {formatCompactUsd(windowUsageData.currentCost!)}
-                                      </span>
-                                      <span className={styles.quotaWindowToken}>
-                                        <IconBinary size={11} className={styles.quotaTokenIcon} />
-                                        <span>{formatCompactNumber(windowUsageData.currentTokens!)}</span>
-                                      </span>
+                                  <span className={styles.quotaUsageGroup}>
+                                    <span className={styles.quotaUsageLabel}>
+                                      {t('accounts.quota_used_short')}
                                     </span>
-                                    {hasForecast ? (
-                                      <>
-                                        <span className={styles.quotaForecastArrow} aria-hidden="true">
-                                          →
-                                        </span>
-                                        <span className={styles.quotaWindowUsageMetricPredicted}>
-                                          <span className={styles.quotaWindowCost}>
-                                            {formatCompactUsd(windowUsageData.forecastCost!)}
-                                          </span>
-                                          <span className={styles.quotaWindowToken}>
-                                            <IconBinary size={11} className={styles.quotaTokenIcon} />
-                                            <span>{formatCompactNumber(windowUsageData.forecastTokens!)}</span>
-                                          </span>
-                                        </span>
-                                      </>
-                                    ) : null}
+                                    <span className={styles.quotaWindowCost}>
+                                      {formatCompactUsd(windowUsageData.currentCost!)}
+                                    </span>
+                                    <span className={styles.quotaWindowTokenCompact}>
+                                      ({formatCompactNumber(windowUsageData.currentTokens!)})
+                                    </span>
                                   </span>
                                 ) : (
-                                  <span
-                                    className={styles.quotaWindowUsagePlaceholder}
-                                    aria-hidden="true"
-                                  />
+                                  <span className={styles.quotaSlotEmpty} aria-hidden="true" />
+                                )}
+                                {hasForecast ? (
+                                  <span className={styles.quotaForecastGroup}>
+                                    <span className={styles.quotaForecastLabel}>
+                                      {t('accounts.quota_forecast_short')}
+                                    </span>
+                                    <span className={styles.quotaWindowCostPredicted}>
+                                      {formatCompactUsd(windowUsageData.forecastCost!)}
+                                    </span>
+                                    <span className={styles.quotaWindowTokenPredictedCompact}>
+                                      ({formatCompactNumber(windowUsageData.forecastTokens!)})
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className={styles.quotaSlotEmpty} aria-hidden="true" />
                                 )}
                               </span>
                             </span>

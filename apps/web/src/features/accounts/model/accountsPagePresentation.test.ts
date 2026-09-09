@@ -6,6 +6,7 @@ import {
   formatHistorySuccessRate,
   formatMoney,
   formatQuotaResetDisplay,
+  formatQuotaResetRelative,
   getQuotaResetRemainingDays,
   formatQuotaResetTimestamp,
   formatQuotaResetTooltipParams,
@@ -124,6 +125,30 @@ describe('accountsPagePresentation', () => {
     expect(getQuotaResetRemainingDays(nowMs + 10 * 24 * 60 * 60 * 1000 - 1, nowMs)).toBe(10);
     expect(getQuotaResetRemainingDays(nowMs - 1, nowMs)).toBe(0);
     expect(getQuotaResetRemainingDays(null, nowMs)).toBeNull();
+  });
+
+  it('formats relative quota resets with day, hour, and minute resolutions', () => {
+    const nowMs = new Date(2026, 8, 9, 10, 0, 0, 0).getTime();
+
+    // 5 days later -> 5d
+    expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs)).toBe('5d');
+    // 23 hours later -> 23h
+    expect(formatQuotaResetRelative(nowMs + 23 * 60 * 60 * 1000 + 10 * 60 * 1000, null, nowMs)).toBe('23h');
+    // 59 minutes later -> 59m
+    expect(formatQuotaResetRelative(nowMs + 59 * 60 * 1000 + 30 * 1000, null, nowMs)).toBe('59m');
+    // 30 seconds later -> <1m
+    expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs)).toBe('<1m');
+    // Expired or exact zero -> 0m
+    expect(formatQuotaResetRelative(nowMs, null, nowMs)).toBe('0m');
+    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs)).toBe('0m');
+
+    // From string label fallback
+    expect(formatQuotaResetRelative(null, '5d', nowMs)).toBe('5d');
+    expect(formatQuotaResetRelative(null, '2h 18m', nowMs)).toBe('2h');
+    expect(formatQuotaResetRelative(null, '2d 20h', nowMs)).toBe('2d');
+    expect(formatQuotaResetRelative(null, 'resets in 2d', nowMs)).toBe('2d');
+    expect(formatQuotaResetRelative(null, null, nowMs)).toBe('');
+    expect(formatQuotaResetRelative(null, '-', nowMs)).toBe('');
   });
 
   it('keeps standard quota windows as the only list selection when available', () => {

@@ -5626,6 +5626,13 @@ export const getDemoAccountWindowUsage = (
       );
       const successCalls = Math.max(0, totalRequests - failureCalls);
 
+      const resolvedLastSeenMs =
+        window.period === 'previous' || window.period === 'previous_equal_range'
+          ? Math.min(generatedAtMS, window.to_ms)
+          : typeof history.last_seen_ms === 'number' && Number.isFinite(history.last_seen_ms)
+            ? Math.min(history.last_seen_ms, window.to_ms)
+            : Math.min(generatedAtMS - 15 * minute, window.to_ms);
+
       return {
         request_key: window.request_key,
         row_key: window.row_key,
@@ -5641,7 +5648,7 @@ export const getDemoAccountWindowUsage = (
         total_tokens: Math.max(1, Math.round(history.total_tokens * ratio)),
         total_cost: round2(history.total_cost * ratio),
         success_rate: totalRequests > 0 ? successCalls / totalRequests : null,
-        last_seen_ms: Math.min(generatedAtMS, window.to_ms),
+        last_seen_ms: resolvedLastSeenMs,
         sync_status: 'ready',
         scope_match_status: 'complete',
         unmatched_requests: 0,
@@ -5767,7 +5774,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-team-01.json::codex-team-01',
       authFileName: 'codex-team-01.json',
       authIndex: 'codex-team-01',
-      fetchedAtMs: now() - 8 * minute,
+      fetchedAtMs: now() - 5 * minute,
       subscriptionActiveUntil: demoResetIso(23 * day),
       windows: [
         {
@@ -5786,13 +5793,63 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
         },
       ],
     },
+    'codex-email-user.json': {
+      status: 'success',
+      planType: 'plus',
+      authFileKey: 'codex-email-user.json::codex-email-user-01',
+      authFileName: 'codex-email-user.json',
+      authIndex: 'codex-email-user-01',
+      fetchedAtMs: now() - 4 * minute,
+      subscriptionActiveUntil: demoResetIso(18 * day),
+      windows: [
+        {
+          id: 'five-hour',
+          label: '5 小时限额',
+          usedPercent: 48,
+          ...demoQuotaReset(3 * hour + 15 * minute),
+          limitWindowSeconds: 18_000,
+        },
+        {
+          id: 'weekly',
+          label: '周限额',
+          usedPercent: 56,
+          ...demoQuotaReset(4 * day + 12 * hour),
+          limitWindowSeconds: 604_800,
+        },
+      ],
+    },
+    'codex-pro-20x-01.json': {
+      status: 'success',
+      planType: 'pro',
+      authFileKey: 'codex-pro-20x-01.json::codex-pro-20x-01',
+      authFileName: 'codex-pro-20x-01.json',
+      authIndex: 'codex-pro-20x-01',
+      fetchedAtMs: now() - 4 * minute,
+      subscriptionActiveUntil: demoResetIso(45 * day),
+      windows: [
+        {
+          id: 'five-hour',
+          label: '5 小时限额',
+          usedPercent: 52,
+          ...demoQuotaReset(2 * hour + 45 * minute),
+          limitWindowSeconds: 18_000,
+        },
+        {
+          id: 'weekly',
+          label: '周限额',
+          usedPercent: 68,
+          ...demoQuotaReset(5 * day + 6 * hour),
+          limitWindowSeconds: 604_800,
+        },
+      ],
+    },
     'codex-fallback-02.json': {
       status: 'success',
       planType: 'team',
       authFileKey: 'codex-fallback-02.json::codex-fallback-02',
       authFileName: 'codex-fallback-02.json',
       authIndex: 'codex-fallback-02',
-      fetchedAtMs: now() - 18 * minute,
+      fetchedAtMs: now() - 15 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5827,6 +5884,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     'claude-team-01.json': {
       status: 'success',
       planType: 'pro',
+      fetchedAtMs: now() - 8 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5835,6 +5893,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 44,
           resetLabel: '2h',
           ...demoQuotaResetMetadata(2 * hour),
+          limitWindowSeconds: 18_000,
         },
         {
           id: 'seven-day',
@@ -5843,12 +5902,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 31,
           resetLabel: '3d',
           ...demoQuotaResetMetadata(3 * day),
+          limitWindowSeconds: 604_800,
         },
       ],
     },
     'claude-research-02.json': {
       status: 'success',
       planType: 'pro',
+      fetchedAtMs: now() - 15 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5857,6 +5918,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 88,
           resetLabel: '1h 12m',
           ...demoQuotaResetMetadata(hour + 12 * minute),
+          limitWindowSeconds: 18_000,
         },
         {
           id: 'seven-day',
@@ -5865,6 +5927,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 48,
           resetLabel: '3d 04h',
           ...demoQuotaResetMetadata(3 * day + 4 * hour),
+          limitWindowSeconds: 604_800,
         },
         {
           id: 'seven-day-sonnet',
@@ -5873,12 +5936,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 74,
           resetLabel: '2d 09h',
           ...demoQuotaResetMetadata(2 * day + 9 * hour),
+          limitWindowSeconds: 604_800,
         },
       ],
     },
     'claude-extra-usage-03.json': {
       status: 'success',
       planType: 'pro',
+      fetchedAtMs: now() - 18 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5887,6 +5952,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 62,
           resetLabel: '2h 35m',
           ...demoQuotaResetMetadata(2 * hour + 35 * minute),
+          limitWindowSeconds: 18_000,
         },
         {
           id: 'seven-day',
@@ -5895,6 +5961,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 58,
           resetLabel: '4d 06h',
           ...demoQuotaResetMetadata(4 * day + 6 * hour),
+          limitWindowSeconds: 604_800,
         },
         {
           id: 'seven-day-opus',
@@ -5903,6 +5970,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           usedPercent: 91,
           resetLabel: '1d 12h',
           ...demoQuotaResetMetadata(day + 12 * hour),
+          limitWindowSeconds: 604_800,
         },
       ],
       extraUsage: {
@@ -5916,6 +5984,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   antigravityQuota: {
     'antigravity-builder.json': {
       status: 'success',
+      fetchedAtMs: now() - 6 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -5966,6 +6035,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-daily-exhausted.json': {
       status: 'success',
+      fetchedAtMs: now() - 20 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -5979,7 +6049,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
               label: 'Five Hour Limit',
               window: '5h',
               remainingFraction: 0,
-              resetTime: demoResetIso(6 * hour),
+              resetTime: demoResetIso(2 * hour + 45 * minute),
               description: 'You have used all of your 5-hour Gemini pool.',
             },
             {
@@ -6017,6 +6087,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-monthly-low.json': {
       status: 'success',
+      fetchedAtMs: now() - 15 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6068,6 +6139,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-free-weekly.json': {
       status: 'success',
+      fetchedAtMs: now() - 8 * minute,
       subscription: { plan: 'free', tierName: 'Free', tierId: 'g1-free' },
       groups: [
         {
@@ -6104,6 +6176,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-pro-matrix.json': {
       status: 'success',
+      fetchedAtMs: now() - 25 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6158,6 +6231,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   kimiQuota: {
     'kimi-coding.json': {
       status: 'success',
+      fetchedAtMs: now() - 10 * minute,
       rows: [
         {
           id: 'summary',
@@ -6166,6 +6240,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 2048,
           resetHint: '6d 4h',
           ...demoQuotaResetMetadata(6 * day + 4 * hour),
+          limitWindowSeconds: 604_800,
         },
         {
           id: 'limit-0',
@@ -6175,11 +6250,13 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 200,
           resetHint: '3h 12m',
           ...demoQuotaResetMetadata(3 * hour + 12 * minute),
+          limitWindowSeconds: 18_000,
         },
       ],
     },
     'kimi-healthy.json': {
       status: 'success',
+      fetchedAtMs: now() - 8 * minute,
       rows: [
         {
           id: 'summary',
@@ -6188,6 +6265,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 7168,
           resetHint: '5d 18h',
           ...demoQuotaResetMetadata(5 * day + 18 * hour),
+          limitWindowSeconds: 604_800,
         },
         {
           id: 'limit-0',
@@ -6197,11 +6275,13 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 200,
           resetHint: '4h 26m',
           ...demoQuotaResetMetadata(4 * hour + 26 * minute),
+          limitWindowSeconds: 18_000,
         },
       ],
     },
     'kimi-exhausted.json': {
       status: 'success',
+      fetchedAtMs: now() - 5 * minute,
       rows: [
         {
           id: 'summary',
@@ -6210,6 +6290,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 2048,
           resetHint: '2d 03h',
           ...demoQuotaResetMetadata(2 * day + 3 * hour),
+          limitWindowSeconds: 604_800,
         },
         {
           id: 'limit-0',
@@ -6219,6 +6300,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           limit: 200,
           resetHint: '2h',
           ...demoQuotaResetMetadata(2 * hour),
+          limitWindowSeconds: 18_000,
         },
       ],
     },
@@ -6226,6 +6308,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   xaiQuota: {
     'xai-ops.json': {
       status: 'success',
+      fetchedAtMs: now() - 10 * minute,
       billing: {
         periodType: 'weekly',
         usagePercent: 42,
@@ -6246,6 +6329,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'xai-payg-buffer.json': {
       status: 'success',
+      fetchedAtMs: now() - 12 * minute,
       billing: {
         periodType: 'monthly',
         usagePercent: 100,
@@ -6265,6 +6349,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'xai-payg-cap.json': {
       status: 'success',
+      fetchedAtMs: now() - 15 * minute,
       billing: {
         periodType: 'monthly',
         usagePercent: 100,

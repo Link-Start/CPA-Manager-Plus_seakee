@@ -222,6 +222,56 @@ export const formatQuotaResetDisplay = (
   return normalizedLabel;
 };
 
+const QUOTA_RESET_MINUTE_MS = 60 * 1000;
+const QUOTA_RESET_HOUR_MS = 60 * QUOTA_RESET_MINUTE_MS;
+
+export const formatQuotaResetRelative = (
+  resetAtMs: number | null | undefined,
+  resetLabel?: string | null,
+  nowMs = Date.now()
+): string => {
+  let targetMs: number | null = null;
+  if (typeof resetAtMs === 'number' && Number.isFinite(resetAtMs) && resetAtMs > 0) {
+    targetMs = resetAtMs;
+  } else if (resetLabel) {
+    const parsed = parseQuotaResetLabelMs(resetLabel, nowMs);
+    if (parsed !== null) {
+      targetMs = parsed;
+    }
+  }
+
+  if (targetMs === null) {
+    const trimmed = resetLabel?.trim();
+    if (trimmed && trimmed !== '-') {
+      const match = trimmed.match(/(\d+\s*[dhm])/i);
+      if (match) return match[1].replace(/\s+/g, '').toLowerCase();
+    }
+    return '';
+  }
+
+  const diffMs = targetMs - nowMs;
+  if (diffMs <= 0) {
+    return '0m';
+  }
+
+  if (diffMs >= QUOTA_RESET_DAY_MS) {
+    const days = Math.floor(diffMs / QUOTA_RESET_DAY_MS);
+    return `${days}d`;
+  }
+
+  if (diffMs >= QUOTA_RESET_HOUR_MS) {
+    const hours = Math.floor(diffMs / QUOTA_RESET_HOUR_MS);
+    return `${hours}h`;
+  }
+
+  if (diffMs >= QUOTA_RESET_MINUTE_MS) {
+    const minutes = Math.floor(diffMs / QUOTA_RESET_MINUTE_MS);
+    return `${minutes}m`;
+  }
+
+  return '<1m';
+};
+
 export const formatQuotaResetTooltipParams = (
   params: Record<string, string | number>,
   resetAtMs: number | null | undefined,

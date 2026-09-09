@@ -53,7 +53,7 @@ import { AccountOverviewTab } from './components/accountDetail/AccountOverviewTa
 import { AccountQuotaTab } from './components/accountDetail/AccountQuotaTab';
 import { QuotaWindowCard } from './components/QuotaWindowCard';
 import { IconRefreshCw } from '@/components/ui/icons';
-import { formatQuotaResetTimestamp } from './model/accountsPagePresentation';
+import { formatQuotaResetTimestamp, formatQuotaResetDisplay, formatQuotaResetRelative } from './model/accountsPagePresentation';
 import { buildAccountQuotaDisplayWindow } from './model/accountQuotaDisplayWindows';
 import type { AccountQuotaDisplayWindow } from './model/accountQuotaDisplayWindows';
 import {
@@ -12152,6 +12152,180 @@ describe('AccountsPage replacement flows', () => {
     expect(accountQuotaSnapshotApi.query).toHaveBeenCalledTimes(2);
     expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
     expect(mocks.getAccountHistory).not.toHaveBeenCalled();
+  });
+
+  it('preserves list window usage presentation across re-renders and clock progression', async () => {
+    const file = makeCodexFile('codex-stable.json', 'auth-stable', 'stable@example.com');
+    mocks.files = [file];
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    const resetLabel = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const resetAtMs = Date.parse(resetLabel);
+    mocks.quotaState.codexQuota = {
+      ...buildCredentialScopedQuotaRecord(file, {
+        status: 'success',
+        windows: [
+          {
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 40,
+            resetLabel,
+            resetAtMs,
+            resetAccuracy: 'exact',
+            limitWindowSeconds: 5 * 60 * 60,
+            modelScope: CODEX_MAIN_SCOPE,
+          },
+        ],
+      }),
+    };
+
+    mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+      return {
+        generated_at_ms: Date.now(),
+        items: request.windows.map((w: any) => ({
+          request_key: w.request_key,
+          row_key: w.row_key,
+          window_key: w.window_key,
+          provider_window_id: w.provider_window_id,
+          period: w.period,
+          from_ms: w.from_ms,
+          to_ms: w.to_ms,
+          matched: true,
+          total_requests: 10,
+          success_calls: 10,
+          failure_calls: 0,
+          total_tokens: 50_000,
+          total_cost: 0.5,
+          success_rate: 1,
+          last_seen_ms: Date.now() - 6 * 60 * 1000,
+          scope_match_status: 'complete',
+          unmatched_requests: 0,
+          sync_status: 'ready',
+        })),
+      };
+    });
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+    const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+    expect(readText(card)).toContain('$0.50');
+    expect(readText(card)).toContain('50.0K');
+
+    // Simulate component re-render (e.g. mouse interaction or parent update)
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    const cardAfterRerender = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+    expect(readText(cardAfterRerender)).toContain('$0.50');
+    expect(readText(cardAfterRerender)).toContain('50.0K');
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('presents quota window with remaining in header, used and forecast in fixed slots, and reset at bottom right', async () => {
+    const file = makeCodexFile('codex-slots.json', 'auth-slots', 'slots@example.com');
+    mocks.files = [file];
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    const nowMs = Date.now();
+    const resetLabel = new Date(nowMs + (2 * 60 + 30) * 60 * 1000).toISOString();
+    const resetAtMs = Date.parse(resetLabel);
+    mocks.quotaState.codexQuota = {
+      ...buildCredentialScopedQuotaRecord(file, {
+        status: 'success',
+        fetchedAtMs: nowMs - 2 * 60 * 1000,
+        windows: [
+          {
+            id: 'five-hour',
+            label: '5h',
+            usedPercent: 40,
+            resetLabel,
+            resetAtMs,
+            resetAccuracy: 'exact',
+            limitWindowSeconds: 5 * 60 * 60,
+            modelScope: CODEX_MAIN_SCOPE,
+          },
+        ],
+      }),
+    };
+
+    mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+      return {
+        generated_at_ms: nowMs,
+        items: request.windows.map((w: any) => ({
+          request_key: w.request_key,
+          row_key: w.row_key,
+          window_key: w.window_key,
+          provider_window_id: w.provider_window_id,
+          period: w.period,
+          from_ms: w.from_ms,
+          to_ms: w.to_ms,
+          matched: true,
+          total_requests: 10,
+          success_calls: 10,
+          failure_calls: 0,
+          total_tokens: 50_000,
+          total_cost: 0.5,
+          success_rate: 1,
+          last_seen_ms: nowMs - 4 * 60 * 1000,
+          scope_match_status: 'complete',
+          unmatched_requests: 0,
+          sync_status: 'ready',
+        })),
+      };
+    });
+
+    const expectedRelativeReset = formatQuotaResetRelative(resetAtMs, resetLabel);
+    expect(expectedRelativeReset).toBeTruthy();
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+
+    const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+    const cardText = readText(card);
+
+    // 1. Header shows window label and percentage with relative reset
+    expect(cardText).toContain('5h');
+    expect(cardText).toContain('60%');
+    expect(cardText).toContain('|');
+    expect(cardText).toContain(expectedRelativeReset);
+
+    // 2. Second line displays "used" label, current cost and token in parentheses
+    expect(cardText).toContain('accounts.quota_used_short');
+    expect(cardText).toContain('$0.50');
+    expect(cardText).toContain('(50.0K)');
+
+    // 3. Second line displays "forecast" label and predicted values
+    expect(cardText).toContain('accounts.quota_forecast_short');
+
+    // 4. Arrow must NOT be rendered
+    expect(cardText).not.toContain('→');
+
+    // 5. Reset time is rendered in header, not in usage line
+    const windowCards = card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string');
+    expect(windowCards).toHaveLength(1);
+    const windowCard = windowCards[0];
+    const headerNode = windowCard.children[0];
+    const headerText = readText(headerNode);
+    expect(headerText).toContain(expectedRelativeReset);
+
+    // Second line (usage line) does NOT contain reset time
+    const usageLineNode = windowCard.children[2];
+    const usageLineText = readText(usageLineNode);
+    expect(usageLineText).not.toContain(formatQuotaResetDisplay(resetAtMs, resetLabel, 'zh-CN'));
+    expect(usageLineText).not.toContain(expectedRelativeReset);
   });
 
   it('loads history for a deep-linked credential outside the visible page', async () => {

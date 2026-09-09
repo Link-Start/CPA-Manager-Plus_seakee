@@ -284,13 +284,13 @@
 .accountCard {
   display: grid;
   grid-template-columns:
-    minmax(170px, 220px)
-    90px
-    96px
-    136px
-    minmax(340px, 1fr)
+    minmax(150px, 190px)
+    78px
+    84px
+    124px
+    minmax(400px, 1fr)
     124px;
-  column-gap: clamp(10px, 0.8vw, 14px);
+  column-gap: clamp(8px, 0.8vw, 12px);
   min-width: 0;
 }
 
@@ -350,14 +350,14 @@
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
-      minmax(200px, 1.15fr)
-      100px
-      100px
-      144px
-      minmax(380px, 2fr)
-      176px;
+      minmax(170px, 1fr)
+      84px
+      88px
+      130px
+      minmax(460px, 2.2fr)
+      165px;
     justify-content: space-between;
-    column-gap: clamp(16px, 1.15vw, 22px);
+    column-gap: clamp(10px, 0.9vw, 16px);
   }
 
   .rowActions {
@@ -463,15 +463,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 
   img {
-    max-width: 22px;
-    max-height: 22px;
+    width: 100%;
+    height: 100%;
+    max-width: 28px;
+    max-height: 28px;
     object-fit: contain;
   }
 }
@@ -1055,7 +1055,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: center;
-  gap: 12px;
+  gap: 10px;
   position: relative;
   height: 100%;
   min-width: 0;
@@ -1071,7 +1071,7 @@
 
   & + & {
     position: relative;
-    padding-left: 12px;
+    padding-left: 10px;
     border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
   }
 }
@@ -1080,96 +1080,125 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   white-space: nowrap;
-  font-size: 11px;
   line-height: 1.2;
 }
 
 .quotaWindowLabel {
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 650;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 1;
 }
 
-.quotaWindowReset {
-  color: var(--accounts-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-  margin-left: auto;
-  margin-right: 4px;
-}
-
 .quotaWindowPercent {
   color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.quotaWindowMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
   flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.quotaWindowSep {
+  color: color-mix(in srgb, var(--accounts-muted) 60%, transparent);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1;
+  user-select: none;
+}
+
+.quotaWindowResetTime {
+  color: var(--accounts-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  cursor: help;
 }
 
 .quotaWindowUsageLine {
   display: flex;
   align-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  flex-wrap: wrap;
   min-height: 16px;
-  font-size: 11px;
+  min-width: 0;
   line-height: 1.2;
+}
+
+.quotaUsageGroup,
+.quotaForecastGroup {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
   min-width: 0;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.quotaWindowUsageMetricGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.quotaWindowUsageMetric {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-
-.quotaWindowUsageMetricPredicted {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.quotaUsageLabel,
+.quotaForecastLabel {
+  font-size: 9.5px;
+  font-weight: 600;
   color: var(--accounts-muted);
-  font-variant-numeric: tabular-nums;
-  font-weight: 400;
+  user-select: none;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .quotaWindowCost {
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
-}
-
-.quotaWindowToken {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-variant-numeric: tabular-nums;
-}
-
-.quotaTokenIcon {
-  color: var(--accounts-muted);
-  flex-shrink: 0;
-}
-
-.quotaForecastArrow {
-  color: var(--accounts-muted);
-  font-size: 11px;
   line-height: 1;
-  flex-shrink: 0;
-  user-select: none;
+  white-space: nowrap;
+}
+
+.quotaWindowTokenCompact {
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.quotaWindowCostPredicted {
+  font-size: 10.5px;
+  font-weight: 550;
+  color: color-mix(in srgb, var(--text-primary) 70%, var(--accounts-muted));
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.quotaWindowTokenPredictedCompact {
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--accounts-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.quotaSlotEmpty {
+  display: inline-block;
+  min-width: 0;
 }
 
 .quotaWindowUsagePlaceholder {
