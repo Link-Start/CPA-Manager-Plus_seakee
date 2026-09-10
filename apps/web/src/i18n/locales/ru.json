@@ -907,6 +907,7 @@
     "disable": "Отключить",
     "no_refreshable_accounts": "Нет выбранных учётных данных, для которых можно обновить квоту",
     "quota_refresh_result": "Обновление квот завершено: успешно {{success}} / {{total}}",
+    "quota_refresh_rate_limited_skipped": "Пропущен(о) {{count}} учётных записей из-за превышения лимита запросов к провайдеру",
     "quota_refresh_success": "Квота для {{name}} обновлена",
     "quota_refresh_failed": "Не удалось обновить квоту для {{name}}: {{message}}",
     "quota_refresh_result_with_error": "Обновление квот завершено: успешно {{success}} / {{total}}. Причина сбоя: {{message}}",

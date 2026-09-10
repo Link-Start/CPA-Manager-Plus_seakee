@@ -901,6 +901,7 @@
     "disable": "停用",
     "no_refreshable_accounts": "目前沒有可刷新額度的憑證",
     "quota_refresh_result": "額度刷新完成：成功 {{success}} / {{total}}",
+    "quota_refresh_rate_limited_skipped": "因 Provider 請求頻率限制，已跳過 {{count}} 個憑證",
     "quota_refresh_success": "已刷新 {{name}} 的額度資訊",
     "quota_refresh_failed": "刷新 {{name}} 的額度失敗：{{message}}",
     "quota_refresh_result_with_error": "額度刷新完成：成功 {{success}} / {{total}}。失敗原因：{{message}}",

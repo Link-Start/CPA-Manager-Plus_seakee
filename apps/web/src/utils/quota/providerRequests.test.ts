@@ -565,6 +565,43 @@ describe('fetchClaudeQuota', () => {
     });
   });
 
+  it('preserves usage windows and marks rateLimited when profile returns 429', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: {
+          five_hour: {
+            utilization: 25,
+            resets_at: '2026-07-01T10:00:00Z',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        statusCode: 429,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'Too Many Requests',
+        body: null,
+      });
+
+    const result = await fetchClaudeQuota(
+      {
+        name: 'claude-429.json',
+        type: 'claude',
+        authIndex: 'claude-429',
+      },
+      t
+    );
+
+    expect(result.windows).toHaveLength(1);
+    expect(result.windows[0].id).toBe('five-hour');
+    expect(result.planType).toBeNull();
+    expect(result.rateLimited).toBe(true);
+  });
+
   it('restores base windows from a limits-only response before scoped weekly rows', async () => {
     const sessionResetAt = '2026-07-01T10:00:00Z';
     const weeklyResetAt = '2026-07-07T10:00:00Z';
@@ -2528,6 +2565,49 @@ describe('fetchXaiQuota', () => {
     });
   });
 
+  it('preserves partial monthly summary and sets rateLimited when weekly billing returns 429', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 429,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'Too Many Requests',
+        body: null,
+      })
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: {
+          config: {
+            monthly_limit: 10000,
+            used: 3000,
+            on_demand_cap: 5000,
+            billing_period_end: '2026-08-01T00:00:00Z',
+          },
+        },
+      });
+
+    const result = await fetchXaiQuota(
+      {
+        name: 'xai-429.json',
+        type: 'xai',
+        authIndex: 'xai-429',
+      },
+      t
+    );
+
+    expect(result.partial).toBe(true);
+    expect(result.monthlyLimitCents).toBe(10000);
+    expect(result.rateLimited).toBe(true);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ statusCode: 429 }),
+      ])
+    );
+  });
+
   it('keeps monthly billing data when weekly billing fails', async () => {
     mocks.request
       .mockResolvedValueOnce({
@@ -3423,6 +3503,48 @@ describe('fetchAntigravityQuota', () => {
       ],
     });
     expect(result.quotaInventoryObserved).toBe(true);
+  });
+
+  it('preserves quota groups and marks rateLimited when subscription returns 429', async () => {
+    const error429 = new Error('Too Many Requests') as Error & { status?: number };
+    error429.status = 429;
+    mocks.getSubscription.mockRejectedValueOnce(error429);
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '',
+      body: {
+        groups: [
+          {
+            displayName: 'Gemini models',
+            buckets: [
+              {
+                bucketId: 'gemini-weekly',
+                displayName: 'Weekly limit',
+                window: 'weekly',
+                remainingFraction: 0.8,
+                resetTime: '2026-07-02T00:00:00Z',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const result = await fetchAntigravityQuota(
+      {
+        name: 'antigravity-429.json',
+        type: 'antigravity',
+        authIndex: 'ag-429',
+        project_id: 'project-429',
+      },
+      t
+    );
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.subscription).toBeNull();
+    expect(result.rateLimited).toBe(true);
   });
 
   it('keeps Antigravity quota and subscription requests on the captured CPA scope', async () => {

@@ -605,6 +605,7 @@ export interface XaiBillingSummary {
   officialApiHealth?: XaiOfficialApiHealth;
   partial?: boolean;
   diagnostics?: XaiBillingDiagnostic[];
+  rateLimited?: boolean;
 }
 
 export interface XaiQuotaState extends CredentialScopedQuotaState {

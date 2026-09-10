@@ -714,12 +714,7 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
 
 export const CODEX_SUMMARY_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
   ...CODEX_CONFIG,
-  fetchQuota: (file, t, requestScope) => {
-    if (CODEX_CONFIG.fetchQuota !== fetchCodexQuota) {
-      return CODEX_CONFIG.fetchQuota(file, t, requestScope);
-    }
-    return fetchCodexQuotaSummary(file, t, requestScope);
-  },
+  fetchQuota: fetchCodexQuotaSummary,
 };
 
 export const KIMI_CONFIG: QuotaConfig<KimiQuotaState, KimiQuotaData> = {

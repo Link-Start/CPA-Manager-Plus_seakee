@@ -124,6 +124,7 @@ export type ClaudeQuotaData = {
   quotaInventoryObserved: boolean;
   extraUsage?: ClaudeExtraUsage | null;
   planType?: string | null;
+  rateLimited?: boolean;
 };
 
 export type AntigravityQuotaData = {
@@ -131,6 +132,7 @@ export type AntigravityQuotaData = {
   quotaInventoryObserved: boolean;
   subscription?: AntigravityQuotaSubscription | null;
   serverTimeOffsetMs: number | null;
+  rateLimited?: boolean;
 };
 
 export type KimiQuotaData = {
@@ -146,9 +148,14 @@ const hasExplicitEmptyAntigravityInventory = (payload: AntigravityQuotaSummaryPa
   return isRecord(payload.models) && Object.keys(payload.models).length === 0;
 };
 
+type AntigravityQuotaSubscriptionResult = {
+  subscription: AntigravityQuotaSubscription | null;
+  rateLimited: boolean;
+};
+
 const antigravitySubscriptionRequests = new Map<
   string,
-  Promise<AntigravityQuotaSubscription | null>
+  Promise<AntigravityQuotaSubscriptionResult>
 >();
 
 const toAntigravityQuotaSubscription = (
@@ -165,7 +172,7 @@ const toAntigravityQuotaSubscription = (
 const fetchAntigravityQuotaSubscription = (
   authIndex: string,
   requestScope?: ApiClientRequestScope
-): Promise<AntigravityQuotaSubscription | null> => {
+): Promise<AntigravityQuotaSubscriptionResult> => {
   const requestKey = requestScope
     ? `${sha256Hex(`${requestScope.apiBase.trim()}\u0000${requestScope.managementKey.trim()}`)}\u0000${authIndex}`
     : authIndex;
@@ -174,8 +181,14 @@ const fetchAntigravityQuotaSubscription = (
 
   const request = antigravitySubscriptionApi
     .get(authIndex, requestScope)
-    .then(toAntigravityQuotaSubscription)
-    .catch(() => null)
+    .then((summary): AntigravityQuotaSubscriptionResult => ({
+      subscription: toAntigravityQuotaSubscription(summary),
+      rateLimited: false,
+    }))
+    .catch((err: unknown): AntigravityQuotaSubscriptionResult => ({
+      subscription: null,
+      rateLimited: getStatusFromError(err) === 429,
+    }))
     .finally(() => {
       antigravitySubscriptionRequests.delete(requestKey);
     });
@@ -316,11 +329,13 @@ export const fetchAntigravityQuota = async (
         continue;
       }
 
+      const subscriptionResult = await subscriptionPromise;
       return {
         groups,
         quotaInventoryObserved: true,
-        subscription: await subscriptionPromise,
+        subscription: subscriptionResult.subscription,
         serverTimeOffsetMs: resolveResponseServerTimeOffsetMs(result.header),
+        ...(subscriptionResult.rateLimited ? { rateLimited: true } : {}),
       };
     } catch (err: unknown) {
       const status = getStatusFromError(err);
@@ -338,11 +353,13 @@ export const fetchAntigravityQuota = async (
   }
 
   if (hadSuccess) {
+    const subscriptionResult = await subscriptionPromise;
     return {
       groups: [],
       quotaInventoryObserved,
-      subscription: await subscriptionPromise,
+      subscription: subscriptionResult.subscription,
       serverTimeOffsetMs: null,
+      ...(subscriptionResult.rateLimited ? { rateLimited: true } : {}),
     };
   }
 
@@ -1079,7 +1096,12 @@ export const fetchClaudeQuota = async (
   }
 
   const windows = buildClaudeQuotaWindows(payload, t);
+  const profileRateLimited =
+    (profileResult.status === 'fulfilled' && profileResult.value.statusCode === 429) ||
+    (profileResult.status === 'rejected' && getStatusFromError(profileResult.reason) === 429);
+
   const planType =
+    !profileRateLimited &&
     profileResult.status === 'fulfilled' &&
     profileResult.value.statusCode >= 200 &&
     profileResult.value.statusCode < 300
@@ -1093,6 +1115,7 @@ export const fetchClaudeQuota = async (
     quotaInventoryObserved: hasClaudeQuotaInventory(payload, windows),
     extraUsage: payload.extra_usage,
     planType,
+    ...(profileRateLimited ? { rateLimited: true } : {}),
   };
 };
 
@@ -1975,21 +1998,29 @@ export const fetchXaiQuota = async (
     file,
     t,
     requestScope ? createScopedApiRequestConfig(requestScope) : undefined
-  ).then(({ summary, partial, failures }) => ({
-    ...summary,
-    partial,
-    diagnostics: failures.map((failure): XaiBillingDiagnostic => {
-      if (failure instanceof XaiProbeError) {
+  ).then(({ summary, partial, failures }) => {
+    const rateLimited = failures.some(
+      (failure) =>
+        getStatusFromError(failure) === 429 ||
+        (failure instanceof XaiProbeError && failure.envelope.statusCode === 429)
+    );
+    return {
+      ...summary,
+      partial,
+      ...(rateLimited ? { rateLimited: true } : {}),
+      diagnostics: failures.map((failure): XaiBillingDiagnostic => {
+        if (failure instanceof XaiProbeError) {
+          return {
+            classification: failure.decision.classification,
+            statusCode: failure.envelope.statusCode,
+            message: failure.message,
+          };
+        }
         return {
-          classification: failure.decision.classification,
-          statusCode: failure.envelope.statusCode,
-          message: failure.message,
+          classification: 'unknown',
+          statusCode: null,
+          message: failure instanceof Error ? failure.message : String(failure),
         };
-      }
-      return {
-        classification: 'unknown',
-        statusCode: null,
-        message: failure instanceof Error ? failure.message : String(failure),
-      };
-    }),
-  }));
+      }),
+    };
+  });
