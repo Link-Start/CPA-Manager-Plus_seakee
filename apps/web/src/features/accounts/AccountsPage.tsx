@@ -5037,6 +5037,7 @@ export function AccountsPage() {
       setAccountSort(next.accountSort);
       setPageSize(next.pageSize);
       setAccountDisplayMode(next.accountDisplayMode);
+      setLayoutMode(next.layoutMode);
       setSelectedRowKey(next.account);
       setDetailTab(next.detailTab);
       setOauthExcludedEditorProvider(next.editor === 'excluded' ? next.editorProvider : null);
@@ -7991,7 +7992,7 @@ export function AccountsPage() {
     const resetLabel = window.resetLabel && window.resetLabel !== '-' ? window.resetLabel : '';
     const resetDisplayLabel = formatQuotaResetDisplay(window.resetAtMs, resetLabel, i18n.language);
     const relativeReset = formatQuotaResetRelative(window.resetAtMs, resetLabel, i18n.language);
-    const readableLabel = getQuotaWindowReadableLabel(window);
+    const readableLabel = getQuotaWindowReadableLabel(window, t);
     const barClass = getFallbackWindowBarClass(quotaLifecycleBarOverride, windowRemaining);
     const windowUsageData = resolveAccountQuotaWindowUsageAndForecast(
       row,
@@ -8013,12 +8014,12 @@ export function AccountsPage() {
       hasActual
         ? `${t('accounts.quota_used_short')} ${formatCompactUsd(
             windowUsageData.currentCost!
-          )} (${formatCompactNumber(windowUsageData.currentTokens!)} tokens)`
+          )} (${formatCompactNumber(windowUsageData.currentTokens!)} ${t('accounts.history_tokens', { defaultValue: 'tokens' })})`
         : '',
       hasForecast
         ? `${t('accounts.quota_forecast_short')} ${formatCompactUsd(
             windowUsageData.forecastCost!
-          )} (${formatCompactNumber(windowUsageData.forecastTokens!)} tokens)`
+          )} (${formatCompactNumber(windowUsageData.forecastTokens!)} ${t('accounts.history_tokens', { defaultValue: 'tokens' })})`
         : '',
       resetDisplayLabel && resetDisplayLabel !== '-'
         ? `${t('accounts.col_reset')}: ${resetDisplayLabel}`
@@ -8190,7 +8191,7 @@ export function AccountsPage() {
     const quotaWindowTitle =
       mainListWindows
         .map((window) => {
-          const label = getQuotaWindowReadableLabel(window);
+          const label = getQuotaWindowReadableLabel(window, t);
           return `${label}: ${formatPercent(window.remainingPercent)}`;
         })
         .join('\n') || quotaEmptyLabel;
@@ -8426,9 +8427,9 @@ export function AccountsPage() {
                               void openAccountDetail(row, 'quota', 'reset-records');
                             }
                           }}
-                          aria-label={t('accounts.detail_quota_reset_records', {
+                          aria-label={`${t('accounts.detail_quota_reset_records', {
                             defaultValue: '重置记录',
-                          })}
+                          })}: ${ctx.codexResetCreditsCount}`}
                         >
                           <span
                             className={styles.accountResetCreditsIcon}
@@ -8921,18 +8922,23 @@ export function AccountsPage() {
                     />
                   </div>
 
-                  {renderAccountDetailTrigger({
-                    isSelectionMode,
-                    className: styles.accountCardBusiness,
-                    title: ctx.quotaWindowTitle,
-                    ariaLabel: `${t('accounts.list_header_quota')}: ${ctx.quotaWindowTitle}. ${t(
-                      'accounts.open_detail',
-                      { name: row.fileName }
-                    )}: ${t('accounts.detail_tab_quota')}`,
-                    kind: 'quota',
-                    onOpen: () => void openAccountDetail(row, 'quota'),
-                    children: (
-                      <span className={styles.quotaWindowGrid} title={ctx.quotaWindowTitle}>
+                  {(() => {
+                    const resetCreditsAriaSuffix =
+                      ctx.hasCodexResetCredits && ctx.codexResetCreditsCount !== null
+                        ? `. ${t('accounts.detail_quota_reset_records', { defaultValue: '重置记录' })}: ${ctx.codexResetCreditsCount}`
+                        : '';
+                    return renderAccountDetailTrigger({
+                      isSelectionMode,
+                      className: styles.accountCardBusiness,
+                      title: ctx.quotaWindowTitle,
+                      ariaLabel: `${t('accounts.list_header_quota')}: ${ctx.quotaWindowTitle}${resetCreditsAriaSuffix}. ${t(
+                        'accounts.open_detail',
+                        { name: row.fileName }
+                      )}: ${t('accounts.detail_tab_quota')}`,
+                      kind: 'quota',
+                      onOpen: () => void openAccountDetail(row, 'quota'),
+                      children: (
+                        <span className={styles.quotaWindowGrid} title={ctx.quotaWindowTitle}>
                         {ctx.mainListWindows.length > 0 ? (
                           ctx.mainListWindows.map((window, windowIndex) =>
                             renderSingleQuotaWindowCard(
@@ -8950,8 +8956,9 @@ export function AccountsPage() {
                           </span>
                         )}
                       </span>
-                    ),
-                  })}
+                      ),
+                    });
+                  })()}
 
                   <div className={styles.accountCardRecommendation}>
                     {renderRowActions(row, ctx.item.health.status === 'reauth')}

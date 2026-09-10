@@ -3266,6 +3266,55 @@ describe('AccountsPage replacement flows', () => {
     ).toHaveLength(1);
   });
 
+  it('synchronizes layout mode from location search after mount and updates UI layout', async () => {
+    mocks.location = { pathname: '/accounts', search: '?layout=table' };
+    const renderer = await renderAccountsPage();
+
+    expect(
+      renderer.root.findAllByProps({ 'data-account-list-header': 'true' })
+    ).toHaveLength(1);
+    const tableButton = renderer.root.findByProps({
+      'aria-label': 'accounts.view_mode_table',
+    });
+    expect(tableButton.props['aria-pressed']).toBe(true);
+    const gridButton = renderer.root.findByProps({
+      'aria-label': 'accounts.view_mode_grid',
+    });
+    expect(gridButton.props['aria-pressed']).toBe(false);
+
+    mocks.location = { pathname: '/accounts', search: '?layout=grid' };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+
+    expect(
+      renderer.root.findAllByProps({ 'data-account-list-header': 'true' })
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props['aria-pressed']
+    ).toBe(true);
+    expect(
+      renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_table' }).props['aria-pressed']
+    ).toBe(false);
+
+    mocks.location = { pathname: '/accounts', search: '?layout=table' };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+
+    expect(
+      renderer.root.findAllByProps({ 'data-account-list-header': 'true' })
+    ).toHaveLength(1);
+    expect(
+      renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_table' }).props['aria-pressed']
+    ).toBe(true);
+    expect(
+      renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props['aria-pressed']
+    ).toBe(false);
+  });
+
   it('resets omitted filters when the hash changes outside React Router navigation', async () => {
     const windowEvents = new EventTarget();
     const location = { hash: '#/accounts?provider=codex' };
@@ -8049,10 +8098,10 @@ describe('AccountsPage replacement flows', () => {
 
     expect(text).not.toContain('accounts.quota_details_only');
     expect(text).not.toContain('accounts.quota_source_none');
-    expect(text).toContain('Billing');
-    expect(text).toContain('Pay-As-You-Go');
-    expect(quotaRegion.props['aria-label']).toContain('Billing');
-    expect(quotaRegion.props['aria-label']).toContain('Pay-As-You-Go');
+    expect(text).toContain('xai_quota.monthly_credits');
+    expect(text).toContain('xai_quota.pay_as_you_go_label');
+    expect(quotaRegion.props['aria-label']).toContain('xai_quota.monthly_credits');
+    expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
 
     await act(async () => {
       quotaRegion.props.onClick();
@@ -8127,8 +8176,8 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
 
-    expect(readText(card)).toContain('Billing');
-    expect(readText(card)).toContain('Pay-As-You-Go');
+    expect(readText(card)).toContain('xai_quota.monthly_credits');
+    expect(readText(card)).toContain('xai_quota.pay_as_you_go_label');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(findQuotaBarByWindow(card, 'billing').props.className).toContain('quotaBarBad');
     expect(findQuotaBarByWindow(card, 'pay-as-you-go').props.className).toContain('quotaBarBad');
@@ -8170,8 +8219,8 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
-    expect(readText(card)).toContain('Billing');
-    expect(readText(card)).toContain('Pay-As-You-Go');
+    expect(readText(card)).toContain('xai_quota.monthly_credits');
+    expect(readText(card)).toContain('xai_quota.pay_as_you_go_label');
     expect(readText(card)).not.toContain('Grok Code Fast');
     expect(findQuotaBarByWindow(card, 'billing').props.className).toContain('quotaBarGood');
     expect(findQuotaBarByWindow(card, 'pay-as-you-go').props.className).toContain('quotaBarGood');
@@ -8224,11 +8273,11 @@ describe('AccountsPage replacement flows', () => {
     const cardText = readText(card);
     expect(cardText).not.toContain('accounts.quota_details_only');
     expect(cardText).not.toContain('accounts.quota_source_none');
-    expect(cardText).toContain('Billing');
-    expect(cardText).toContain('Pay-As-You-Go');
+    expect(cardText).toContain('xai_quota.monthly_credits');
+    expect(cardText).toContain('xai_quota.pay_as_you_go_label');
     expect(cardText).not.toContain('Grok Code Fast');
-    expect(quotaRegion.props['aria-label']).toContain('Billing');
-    expect(quotaRegion.props['aria-label']).toContain('Pay-As-You-Go');
+    expect(quotaRegion.props['aria-label']).toContain('xai_quota.monthly_credits');
+    expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
 
     await act(async () => {
       findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
@@ -8504,7 +8553,7 @@ describe('AccountsPage replacement flows', () => {
     const card = findAccountCardByKey(renderer, selectionKey);
 
     expect(readText(card)).toContain('5h');
-    expect(readText(card)).toContain('Summary');
+    expect(readText(card)).toContain('accounts.col_quota');
     expect(readText(card)).not.toContain('accounts.quota_details_only');
   });
 
@@ -16361,6 +16410,63 @@ describe('AccountsPage replacement flows', () => {
         }),
         expect.anything()
       );
+    });
+
+    it('includes reset credit count in table quota trigger and grid shortcut accessible names without nested buttons', async () => {
+      const targetFile = mocks.files[0];
+      const targetSelectionKey = `codex.json\u0000auth-1`;
+      const now = Date.now();
+
+      mocks.quotaState.codexQuota = buildCredentialScopedQuotaRecord(targetFile, {
+        status: 'success',
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 10,
+          }),
+        ],
+        rateLimitResetCreditsAvailableCount: 2,
+        rateLimitResetCredits: [
+          {
+            id: 'credit-1',
+            status: 'available',
+            grantedAt: new Date(now - 86400 * 1000).toISOString(),
+            expiresAt: new Date(now + 2 * 86400 * 1000).toISOString(),
+          },
+        ],
+      });
+
+      // 1. Table view: quota trigger accessible name includes count 2 and reset record label
+      mocks.location = { pathname: '/accounts', search: '?layout=table' };
+      const renderer = await renderAccountsPage();
+
+      const quotaTrigger = renderer.root.findByProps({
+        'data-account-detail-trigger': 'quota',
+      });
+      expect(quotaTrigger.props['aria-label']).toContain('2');
+      expect(quotaTrigger.props['aria-label']).toContain('accounts.detail_quota_reset_records');
+
+      // Table visual indicator is not an interactive button (no nested buttons)
+      const tableIndicator = renderer.root.findByProps({
+        'data-account-reset-credits': targetSelectionKey,
+      });
+      expect(tableIndicator.props.role).toBeUndefined();
+      expect(tableIndicator.props.onClick).toBeUndefined();
+
+      // 2. Grid view: grid reset shortcut accessible name includes count 2
+      mocks.location = { pathname: '/accounts', search: '?layout=grid' };
+      await act(async () => {
+        renderer.update(<AccountsPage />);
+        await Promise.resolve();
+      });
+
+      const gridShortcut = renderer.root.findByProps({
+        role: 'button',
+        'data-account-reset-credits': targetSelectionKey,
+      });
+      expect(gridShortcut.props['aria-label']).toContain('2');
+      expect(gridShortcut.props['aria-label']).toContain('accounts.detail_quota_reset_records');
     });
 
     it('reproduces quota usage and forecast retention after opening quota tab', async () => {

@@ -638,13 +638,77 @@ describe('accountsPagePresentation', () => {
   });
 
   describe('getQuotaWindowReadableLabel', () => {
-    it('formats known window kinds with standard uppercase words', () => {
+    it('formats known window kinds with standard uppercase words in English', () => {
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'five_hour' }))).toBe('5h');
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'daily' }))).toBe('24h');
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly' }))).toBe('Weekly');
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'monthly' }))).toBe('Monthly');
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'billing' }))).toBe('Billing');
       expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'payg' }))).toBe('Pay-As-You-Go');
+    });
+
+    it('preserves already localized labels for zh-CN without replacing them with English', () => {
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly', label: '周额度' }))
+      ).toBe('周额度');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'monthly', label: '月额度' }))
+      ).toBe('月额度');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'billing', label: '月度积分' }))
+      ).toBe('月度积分');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'payg', label: '按需用量' }))
+      ).toBe('按需用量');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly', label: '周积分' }))
+      ).toBe('周积分');
+    });
+
+    it('preserves already localized labels for ru without replacing them with English', () => {
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly', label: 'Недельный лимит' }))
+      ).toBe('Недельный лимит');
+      expect(
+        getQuotaWindowReadableLabel(
+          makeQuotaWindow({ kind: 'billing', label: 'Ежемесячные кредиты' })
+        )
+      ).toBe('Ежемесячные кредиты');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'payg', label: 'Оплата по факту' }))
+      ).toBe('Оплата по факту');
+    });
+
+    it('uses locale translation function t when window label is not already localized', () => {
+      const zhT = ((key: string) => {
+        if (key === 'accounts.detail_snapshot_window_weekly') return '周额度';
+        if (key === 'accounts.detail_snapshot_window_monthly') return '月额度';
+        if (key === 'accounts.col_quota') return '额度';
+        return key;
+      }) as unknown as TFunction;
+
+      const ruT = ((key: string) => {
+        if (key === 'accounts.detail_snapshot_window_weekly') return 'Недельная квота';
+        if (key === 'accounts.detail_snapshot_window_monthly') return 'Месячная квота';
+        if (key === 'accounts.col_quota') return 'Квота';
+        return key;
+      }) as unknown as TFunction;
+
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly', label: '' }), zhT)).toBe(
+        '周额度'
+      );
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'monthly', label: '' }), zhT)
+      ).toBe('月额度');
+      expect(getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'weekly', label: '' }), ruT)).toBe(
+        'Недельная квота'
+      );
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ kind: 'monthly', label: '' }), ruT)
+      ).toBe('Месячная квота');
+      expect(
+        getQuotaWindowReadableLabel(makeQuotaWindow({ label: '7-day limit' }), zhT)
+      ).toBe('周额度');
     });
 
     it('formats custom/unknown labels with capitalized first letter', () => {

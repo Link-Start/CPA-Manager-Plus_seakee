@@ -582,6 +582,50 @@ const getAntigravityMatrixGroupDisplayLabel = (label: string) => {
   return label;
 };
 
+const resolveWeeklyQuotaLabel = (window: AccountQuotaDisplayWindow, t?: TFunction): string => {
+  const rawLabel = window.label?.trim();
+  if (rawLabel && rawLabel !== 'Quota window') {
+    const lower = rawLabel.toLowerCase();
+    const isEnglishWeekly =
+      lower.includes('weekly') ||
+      lower.includes('7 day') ||
+      lower.includes('7-day') ||
+      lower.includes('7d');
+    if (!isEnglishWeekly) {
+      return rawLabel;
+    }
+  }
+  if (t) {
+    const localized = t('accounts.detail_snapshot_window_weekly');
+    if (localized && !localized.toLowerCase().includes('weekly')) {
+      return localized;
+    }
+  }
+  return 'Weekly';
+};
+
+const resolveMonthlyQuotaLabel = (window: AccountQuotaDisplayWindow, t?: TFunction): string => {
+  const rawLabel = window.label?.trim();
+  if (rawLabel && rawLabel !== 'Quota window') {
+    const lower = rawLabel.toLowerCase();
+    const isEnglishMonthly =
+      lower.includes('monthly') ||
+      lower.includes('30 day') ||
+      lower.includes('30-day') ||
+      lower.includes('30d');
+    if (!isEnglishMonthly) {
+      return rawLabel;
+    }
+  }
+  if (t) {
+    const localized = t('accounts.detail_snapshot_window_monthly');
+    if (localized && !localized.toLowerCase().includes('monthly')) {
+      return localized;
+    }
+  }
+  return 'Monthly';
+};
+
 export const getQuotaWindowReadableLabel = (
   window: AccountQuotaDisplayWindow,
   t?: TFunction
@@ -595,27 +639,41 @@ export const getQuotaWindowReadableLabel = (
       baseLabel = '24h';
       break;
     case 'weekly':
-      baseLabel = 'Weekly';
+      baseLabel = resolveWeeklyQuotaLabel(window, t);
       break;
     case 'monthly':
-      baseLabel = 'Monthly';
+      baseLabel = resolveMonthlyQuotaLabel(window, t);
       break;
-    case 'billing':
-      baseLabel = 'Billing';
+    case 'billing': {
+      const rawLabel = window.label?.trim();
+      if (rawLabel && rawLabel !== 'Quota window') {
+        baseLabel = rawLabel;
+      } else if (t) {
+        baseLabel = t('accounts.detail_snapshot_window_monthly');
+      } else {
+        baseLabel = 'Billing';
+      }
       break;
-    case 'payg':
-      baseLabel = 'Pay-As-You-Go';
+    }
+    case 'payg': {
+      const rawLabel = window.label?.trim();
+      if (rawLabel && rawLabel !== 'Quota window') {
+        baseLabel = rawLabel;
+      } else {
+        baseLabel = 'Pay-As-You-Go';
+      }
       break;
+    }
     case 'product':
-      baseLabel = window.label;
+      baseLabel = window.label?.trim() || 'Product';
       break;
     case 'summary':
-      baseLabel = t ? t('accounts.col_quota') : 'Summary';
+      baseLabel = t ? t('accounts.col_quota') : (window.label?.trim() || 'Summary');
       break;
     default: {
       const label = window.label?.trim() ?? '';
-      if (!label) {
-        baseLabel = 'Quota';
+      if (!label || label === 'Quota window') {
+        baseLabel = t ? t('accounts.col_quota') : 'Quota';
       } else {
         const lower = label.toLowerCase();
         if (
@@ -627,10 +685,20 @@ export const getQuotaWindowReadableLabel = (
           baseLabel = '5h';
         } else if (lower.includes('24 hour') || lower.includes('24h') || lower.includes('daily')) {
           baseLabel = '24h';
-        } else if (lower.includes('weekly') || lower.includes('7 day') || lower.includes('7d')) {
-          baseLabel = 'Weekly';
-        } else if (lower.includes('monthly') || lower.includes('30 day') || lower.includes('30d')) {
-          baseLabel = 'Monthly';
+        } else if (
+          lower.includes('weekly') ||
+          lower.includes('7 day') ||
+          lower.includes('7-day') ||
+          lower.includes('7d')
+        ) {
+          baseLabel = resolveWeeklyQuotaLabel(window, t);
+        } else if (
+          lower.includes('monthly') ||
+          lower.includes('30 day') ||
+          lower.includes('30-day') ||
+          lower.includes('30d')
+        ) {
+          baseLabel = resolveMonthlyQuotaLabel(window, t);
         } else {
           baseLabel = label.charAt(0).toUpperCase() + label.slice(1);
         }
