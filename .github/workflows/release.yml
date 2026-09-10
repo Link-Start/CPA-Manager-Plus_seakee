@@ -473,7 +473,7 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
           if [ "${http_code}" != "200" ]; then
-            echo "GitHub Release lookup after asset upload failed with HTTP ${http_code} for id ${RELEASE_ID}." >&2
+            echo "Published GitHub Release lookup after asset upload failed with HTTP ${http_code} for id ${RELEASE_ID}." >&2
             exit 1
           fi
           node bin/release/verify-published-release.mjs \
@@ -749,6 +749,7 @@ jobs:
     needs:
       - preflight
       - publish_github_release
+      - publish_update_index
     if: needs.preflight.outputs.dry_run != 'true' && github.run_attempt == 1
     runs-on: ubuntu-latest
     permissions:
