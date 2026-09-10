@@ -104,6 +104,7 @@ export type CodexQuotaData = {
   rateLimitResetCreditsAvailableCount: number | null;
   rateLimitResetCredits: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError: string | null;
+  resetCreditsEvidenceAtMs?: number | null;
 };
 
 const isCodexRateLimitInventory = (value: unknown): boolean =>
@@ -290,6 +291,9 @@ export const fetchAntigravityQuota = async (
       if (result.statusCode < 200 || result.statusCode >= 300) {
         lastError = getApiCallErrorMessage(result);
         lastStatus = result.statusCode;
+        if (result.statusCode === 429) {
+          throw createStatusError(lastError, 429);
+        }
         if (result.statusCode === 403 || result.statusCode === 404) {
           priorityStatus ??= result.statusCode;
         }
@@ -319,8 +323,11 @@ export const fetchAntigravityQuota = async (
         serverTimeOffsetMs: resolveResponseServerTimeOffsetMs(result.header),
       };
     } catch (err: unknown) {
-      lastError = err instanceof Error ? err.message : t('common.unknown_error');
       const status = getStatusFromError(err);
+      if (status === 429) {
+        throw err;
+      }
+      lastError = err instanceof Error ? err.message : t('common.unknown_error');
       if (status) {
         lastStatus = status;
         if (status === 403 || status === 404) {
@@ -427,10 +434,12 @@ const resolveCodexSpendControlInfo = (payload: CodexUsagePayload) => {
   };
 };
 
-type CodexResetCreditsData = {
+export type CodexResetCreditsData = {
   availableCount: number | null;
   credits: CodexRateLimitResetCredit[];
   error: string | null;
+  observedAtMs?: number;
+  resetCreditsEvidenceAtMs?: number | null;
 };
 
 const resolveCodexResetCreditsAvailableCount = (
@@ -442,12 +451,20 @@ const resolveCodexResetCreditsAvailableCount = (
   return usageAvailableCount;
 };
 
-const fetchCodexResetCredits = async (
-  authIndex: string,
-  accountId: string | null | undefined,
+export const fetchCodexResetCredits = async (
+  file: AuthFileItem,
   t: TFunction,
-  requestConfig?: AxiosRequestConfig
+  requestScope?: ApiClientRequestScope
 ): Promise<CodexResetCreditsData> => {
+  const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+  const authIndex = normalizeAuthIndex(rawAuthIndex);
+  if (!authIndex) {
+    throw new Error(t('codex_quota.missing_auth_index'));
+  }
+
+  const accountId = resolveCodexChatgptAccountId(file);
+  const requestConfig = requestScope ? createScopedApiRequestConfig(requestScope) : undefined;
+
   try {
     const result = await apiCallApi.request(
       {
@@ -476,10 +493,13 @@ const fetchCodexResetCredits = async (
       };
     }
 
+    const observedAtMs = Date.now();
     return {
       availableCount: payload.availableCount,
       credits: payload.credits,
       error: null,
+      observedAtMs,
+      resetCreditsEvidenceAtMs: observedAtMs,
     };
   } catch (err: unknown) {
     return {
@@ -490,7 +510,7 @@ const fetchCodexResetCredits = async (
   }
 };
 
-export const fetchCodexQuota = async (
+export const fetchCodexQuotaSummary = async (
   file: AuthFileItem,
   t: TFunction,
   requestScope?: ApiClientRequestScope
@@ -528,7 +548,7 @@ export const fetchCodexQuota = async (
   const observedAtMs = Date.now();
   const windows = buildCodexQuotaWindows(payload, t, planType, observedAtMs);
   const usageResetCreditsAvailableCount = resolveCodexRateLimitResetCreditsAvailableCount(payload);
-  const resetCredits = await fetchCodexResetCredits(authIndex, accountId, t, requestConfig);
+
   return {
     planType,
     windows,
@@ -537,12 +557,37 @@ export const fetchCodexQuota = async (
     subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(payload),
     ...resolveCodexCreditsInfo(payload),
     ...resolveCodexSpendControlInfo(payload),
-    rateLimitResetCreditsAvailableCount: resolveCodexResetCreditsAvailableCount(
-      resetCredits,
-      usageResetCreditsAvailableCount
-    ),
+    rateLimitResetCreditsAvailableCount: usageResetCreditsAvailableCount,
+    rateLimitResetCredits: [],
+    rateLimitResetCreditsError: null,
+    resetCreditsEvidenceAtMs: usageResetCreditsAvailableCount !== null ? observedAtMs : null,
+  };
+};
+
+export const fetchCodexQuota = async (
+  file: AuthFileItem,
+  t: TFunction,
+  requestScope?: ApiClientRequestScope
+): Promise<CodexQuotaData> => {
+  const summary = await fetchCodexQuotaSummary(file, t, requestScope);
+  const resetCredits = await fetchCodexResetCredits(file, t, requestScope);
+
+  const hasValidResetDetail = !resetCredits.error && resetCredits.resetCreditsEvidenceAtMs != null;
+  const rateLimitResetCreditsAvailableCount = hasValidResetDetail
+    ? resolveCodexResetCreditsAvailableCount(
+        resetCredits,
+        summary.rateLimitResetCreditsAvailableCount
+      )
+    : summary.rateLimitResetCreditsAvailableCount;
+
+  return {
+    ...summary,
+    rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: resetCredits.credits,
     rateLimitResetCreditsError: resetCredits.error,
+    resetCreditsEvidenceAtMs: hasValidResetDetail
+      ? resetCredits.resetCreditsEvidenceAtMs
+      : summary.resetCreditsEvidenceAtMs,
   };
 };
 

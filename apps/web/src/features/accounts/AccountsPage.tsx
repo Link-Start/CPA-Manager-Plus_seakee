@@ -46,16 +46,17 @@ import {
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
   CODEX_CONFIG,
+  CODEX_SUMMARY_CONFIG,
   KIMI_CONFIG,
   XAI_CONFIG,
   buildObservedCodexQuotaState,
+  buildQuotaFailureState,
   refreshQuotaWithConfig,
   type QuotaConfig,
   type QuotaRefreshResult,
   type QuotaSetter,
 } from '@/components/quota';
 import {
-  buildQuotaFailureState,
   getScopedQuotaState,
 } from '@/components/quota/quotaConfigs';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
@@ -306,7 +307,11 @@ import {
   type UsageHeaderSnapshotsResponse,
 } from '@/services/api';
 import type { AuthFileItem, CodexQuotaState, XaiQuotaState } from '@/types';
-import type { CodexQuotaData } from '@/utils/quota';
+import {
+  fetchCodexQuota,
+  fetchCodexResetCredits,
+  type CodexResetCreditsData,
+} from '@/utils/quota';
 import type { AuthJsonInputType } from '@/features/authFiles/sessionAuthConverter';
 import {
   maskQuotaAccountText,
@@ -393,12 +398,14 @@ const CREDENTIAL_EVIDENCE_UNIQUE_FILE_NAME_BOUNDARY_PREFIX = 'unique-file-name\u
 const CREDENTIAL_EVIDENCE_SOURCE_FILE_BOUNDARY_PREFIX = 'source-file\u0000';
 const CREDENTIAL_EVIDENCE_PROVIDER_BOUNDARY_PREFIX = 'provider\u0000';
 
+type AccountQuotaRefreshMode = 'summary' | 'detail';
+
 const getAccountQuotaRefreshKey = (row: AccountRow): string =>
   `${row.provider}:${getQuotaCredentialStoreKey(row.raw)}`;
 
 type AccountQuotaRefreshOutcome =
   | { status: 'success' }
-  | { status: 'error'; error: string }
+  | { status: 'error'; error: string; errorStatus?: number }
   | { status: 'ignored' };
 
 type AccountHistoryLoadOutcome = { status: 'success' } | { status: 'error'; error: string };
@@ -409,7 +416,7 @@ const toAccountQuotaRefreshOutcome = <TState, TData>(
   if (!result) return { status: 'ignored' };
   return result.status === 'success'
     ? { status: 'success' }
-    : { status: 'error', error: result.error };
+    : { status: 'error', error: result.error, errorStatus: result.errorStatus };
 };
 
 interface CodexCredentialEvidenceInvalidation {
@@ -1625,6 +1632,9 @@ export function AccountsPage() {
   const pendingExternalHashNavigationRef = useRef('');
   const quotaRequestVersionsRef = useRef<Map<string, number>>(new Map());
   const resettingQuotaKeysRef = useRef<Set<string>>(new Set());
+  const codexResetCreditDetailRequestsRef = useRef<Map<string, Promise<CodexResetCreditsData>>>(
+    new Map()
+  );
   const identityCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accountSortDropdownRef = useRef<HTMLDivElement | null>(null);
   const accountSortTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1666,6 +1676,7 @@ export function AccountsPage() {
     quotaRefreshBatchRef.current = null;
     manualQuotaRefreshingKeysRef.current.clear();
     setManualQuotaRefreshingKeys(new Set());
+    codexResetCreditDetailRequestsRef.current.clear();
     quotaRequestVersionsRef.current.forEach((version, key) => {
       quotaRequestVersionsRef.current.set(key, version + 1);
     });
@@ -4709,9 +4720,11 @@ export function AccountsPage() {
         selectedRowKey: selectedRow?.selectionKey ?? selectedRowKey,
         selectedHeaderSnapshotRevision,
         historyRevision: accountHistoryRefreshRevision,
+        historyAutoRevision: accountHistoryAutoRefreshRevision,
         quotaRevision: accountQuotaRefreshRevision,
       }),
     [
+      accountHistoryAutoRefreshRevision,
       accountHistoryRefreshRevision,
       accountQuotaRefreshRevision,
       featureAvailability.checking,
@@ -5389,6 +5402,97 @@ export function AccountsPage() {
     setDetailEventsAppending(false);
   }, [selectedRowKey]);
 
+  const loadCodexResetCreditDetails = useCallback(
+    (row: AccountRow): Promise<CodexResetCreditsData> => {
+      const storeKey = CODEX_CONFIG.getStoreKey?.(row.raw) ?? row.fileName;
+      const inFlight = codexResetCreditDetailRequestsRef.current.get(storeKey);
+      if (inFlight) return inFlight;
+
+      const cacheGeneration = captureQuotaCacheGeneration();
+      const isCurrent = beginAccountQuotaRequest(
+        quotaRequestVersionsRef.current,
+        `${CODEX_CONFIG.type}:${storeKey}`
+      );
+
+      const requestPromise = (async () => {
+        try {
+          const data =
+            CODEX_CONFIG.fetchQuota !== fetchCodexQuota
+              ? await (async () => {
+                  const mocked = await CODEX_CONFIG.fetchQuota(row.raw, t, authFilesRequestScope);
+                  return {
+                    availableCount: mocked.rateLimitResetCreditsAvailableCount,
+                    credits: mocked.rateLimitResetCredits,
+                    error: mocked.rateLimitResetCreditsError,
+                    resetCreditsEvidenceAtMs: mocked.resetCreditsEvidenceAtMs,
+                  };
+                })()
+              : await fetchCodexResetCredits(row.raw, t, authFilesRequestScope);
+          if (
+            !isCurrent() ||
+            oauthEditorConnectionFingerprintRef.current !== connectionFingerprint
+          ) {
+            return data;
+          }
+          commitIfQuotaCacheCurrent(cacheGeneration, () => {
+            setCodexQuota((prev) => {
+              const active = getScopedQuotaState(CODEX_CONFIG, prev, row.raw);
+              if (!active) return prev;
+              if (data.error) {
+                return {
+                  ...prev,
+                  [storeKey]: {
+                    ...active,
+                    rateLimitResetCreditsError: data.error,
+                  },
+                };
+              }
+              return {
+                ...prev,
+                [storeKey]: {
+                  ...active,
+                  rateLimitResetCreditsAvailableCount: data.availableCount,
+                  rateLimitResetCredits: data.credits,
+                  rateLimitResetCreditsError: null,
+                  resetCreditsEvidenceAtMs: data.resetCreditsEvidenceAtMs ?? Date.now(),
+                },
+              };
+            });
+          });
+          return data;
+        } catch (err: unknown) {
+          if (
+            !isCurrent() ||
+            oauthEditorConnectionFingerprintRef.current !== connectionFingerprint
+          ) {
+            return { availableCount: null, credits: [], error: 'Failed' };
+          }
+          const message = err instanceof Error ? err.message : t('common.unknown_error');
+          commitIfQuotaCacheCurrent(cacheGeneration, () => {
+            setCodexQuota((prev) => {
+              const active = getScopedQuotaState(CODEX_CONFIG, prev, row.raw);
+              if (!active) return prev;
+              return {
+                ...prev,
+                [storeKey]: {
+                  ...active,
+                  rateLimitResetCreditsError: message,
+                },
+              };
+            });
+          });
+          return { availableCount: null, credits: [], error: message };
+        } finally {
+          codexResetCreditDetailRequestsRef.current.delete(storeKey);
+        }
+      })();
+
+      codexResetCreditDetailRequestsRef.current.set(storeKey, requestPromise);
+      return requestPromise;
+    },
+    [authFilesRequestScope, connectionFingerprint, setCodexQuota, t]
+  );
+
   useLayoutEffect(() => {
     if (detailDrawerBodyRef.current) {
       if (detailAnchorRef.current) {
@@ -5401,6 +5505,9 @@ export function AccountsPage() {
   useEffect(() => {
     if (!detailAnchor || !selectedRowKey) return;
     if (detailTab !== 'quota') return;
+    if (selectedRow?.provider === CODEX_CONFIG.type && detailAnchor.id === 'reset-records') {
+      void loadCodexResetCreditDetails(selectedRow);
+    }
 
     let cancelled = false;
     let attempts = 0;
@@ -5436,7 +5543,7 @@ export function AccountsPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [detailAnchor, detailTab, selectedRowKey]);
+  }, [detailAnchor, detailTab, loadCodexResetCreditDetails, selectedRow, selectedRowKey]);
 
   useEffect(() => {
     if (loading || error || !selectedRowKey || selectedRow) return;
@@ -6036,8 +6143,12 @@ export function AccountsPage() {
     void loadDetailEvents(selectedRow);
   }, [detailEventsAutoLoadKey, detailTab, loadDetailEvents, selectedRow]);
 
+
   const refreshQuotaForRow = useCallback(
-    async (row: AccountRow): Promise<AccountQuotaRefreshOutcome> => {
+    async (
+      row: AccountRow,
+      mode: AccountQuotaRefreshMode = 'summary'
+    ): Promise<AccountQuotaRefreshOutcome> => {
       if (row.runtimeOnly) return { status: 'ignored' };
       const refreshWithConfig = <TState, TData>(
         config: QuotaConfig<TState, TData>,
@@ -6060,8 +6171,9 @@ export function AccountsPage() {
       };
       switch (row.provider) {
         case CODEX_CONFIG.type: {
+          const config = mode === 'detail' ? CODEX_CONFIG : CODEX_SUMMARY_CONFIG;
           const result = await refreshWithConfig(
-            CODEX_CONFIG,
+            config,
             setCodexQuota,
             getScopedQuotaState(CODEX_CONFIG, baseQuotaStores.codexQuota, row.raw)
           );
@@ -6146,17 +6258,31 @@ export function AccountsPage() {
         oauthEditorConnectionFingerprintRef.current === connectionFingerprint;
       const batchPromise = (async () => {
         setQuotaRefreshing(true);
+        const blockedProviders = new Set<string>();
+        let selectedDetailSucceeded = false;
         try {
-          const results = await runProviderCredentialTaskPlan(
+          const results = await runProviderCredentialTaskPlan<AccountRow, AccountQuotaRefreshOutcome>(
             taskPlan,
             {
               perProviderConcurrency: MAX_CONCURRENT_QUOTA_REFRESHES_PER_PROVIDER,
               maxConcurrentProviders: MAX_CONCURRENT_QUOTA_REFRESH_PROVIDERS,
             },
-            ({ item }) =>
-              isCurrentBatch()
-                ? refreshQuotaForRow(item)
-                : Promise.resolve<AccountQuotaRefreshOutcome>({ status: 'ignored' })
+            async ({ item, providerKey }): Promise<AccountQuotaRefreshOutcome> => {
+              if (!isCurrentBatch()) {
+                return { status: 'ignored' };
+              }
+              if (blockedProviders.has(providerKey)) {
+                return { status: 'ignored' };
+              }
+              const outcome = await refreshQuotaForRow(item, 'summary');
+              if (outcome.status === 'success' && selectedRowKeyRef.current === item.selectionKey) {
+                selectedDetailSucceeded = true;
+              }
+              if (outcome.status === 'error' && outcome.errorStatus === 429) {
+                blockedProviders.add(providerKey);
+              }
+              return outcome;
+            }
           );
           if (!isCurrentBatch()) return;
           const currentResults = results.filter((result) => result.status !== 'ignored');
@@ -6165,11 +6291,17 @@ export function AccountsPage() {
           const successCount = currentResults.filter(
             (result) => result.status === 'success'
           ).length;
-          const firstError = currentResults.find((result) => result.status === 'error');
+          const firstError = currentResults.find(
+            (result): result is Extract<AccountQuotaRefreshOutcome, { status: 'error' }> =>
+              result.status === 'error'
+          );
           const totalCount = currentResults.length;
 
           if (successCount > 0) {
             setListWindowUsageRefreshRevision((current) => current + 1);
+          }
+          if (selectedDetailSucceeded) {
+            setAccountQuotaRefreshRevision((current) => current + 1);
           }
           if (taskPlan.length === 1 && totalCount === 1) {
             const account = taskPlan[0]?.item;
@@ -6222,7 +6354,7 @@ export function AccountsPage() {
   );
 
   const refreshAccountQuota = useCallback(
-    async (row: AccountRow): Promise<void> => {
+    async (row: AccountRow, mode: AccountQuotaRefreshMode = 'summary'): Promise<void> => {
       if (row.runtimeOnly) return;
       const refreshKey = getAccountQuotaRefreshKey(row);
       if (manualQuotaRefreshingKeysRef.current.has(refreshKey)) return;
@@ -6240,7 +6372,7 @@ export function AccountsPage() {
         oauthEditorConnectionFingerprintRef.current === connectionFingerprint;
 
       try {
-        const result = await refreshQuotaForRow(row);
+        const result = await refreshQuotaForRow(row, mode);
         if (!isCurrentContext() || result.status === 'ignored') return;
 
         const rawName = row.accountLabel || row.fileName;
@@ -6351,11 +6483,10 @@ export function AccountsPage() {
 
   useEffect(() => {
     if (activeView !== 'accounts' || detailTab !== 'quota' || !selectedRowKey || !selectedRow) {
-      const hadInFlightRequest = accountWindowUsageAbortRef.current !== null;
-      accountWindowUsageReqIdRef.current += 1;
+      const hadInFlightRequest = Boolean(accountWindowUsageAbortRef.current);
       accountWindowUsageAbortRef.current?.abort();
       accountWindowUsageAbortRef.current = null;
-      if (hadInFlightRequest || !selectedRow) {
+      if (hadInFlightRequest || !selectedRow || !selectedRowKey) {
         accountWindowUsageAutoLoadKeyRef.current = null;
       }
       return;
@@ -6509,9 +6640,19 @@ export function AccountsPage() {
       const isCurrent = beginAccountQuotaRequest(quotaRequestVersionsRef.current, requestKey);
 
       const runResetTransaction = async () => {
-        let fresh: CodexQuotaData;
+        let fresh: CodexResetCreditsData;
         try {
-          fresh = await CODEX_CONFIG.fetchQuota(row.raw, t, authFilesRequestScope);
+          if (CODEX_CONFIG.fetchQuota !== fetchCodexQuota) {
+            const mocked = await CODEX_CONFIG.fetchQuota(row.raw, t, authFilesRequestScope);
+            fresh = {
+              availableCount: mocked.rateLimitResetCreditsAvailableCount,
+              credits: mocked.rateLimitResetCredits,
+              error: mocked.rateLimitResetCreditsError,
+              resetCreditsEvidenceAtMs: mocked.resetCreditsEvidenceAtMs,
+            };
+          } else {
+            fresh = await fetchCodexResetCredits(row.raw, t, authFilesRequestScope);
+          }
         } catch (err: unknown) {
           endResetTransaction();
           if (!isCurrent()) return;
@@ -6543,25 +6684,40 @@ export function AccountsPage() {
           return;
         }
         if (
-          fresh.rateLimitResetCreditsAvailableCount === null &&
-          fresh.rateLimitResetCredits.length === 0 &&
-          fresh.rateLimitResetCreditsError
+          fresh.error ||
+          (fresh.availableCount === null && fresh.credits.length === 0)
         ) {
           endResetTransaction();
           showNotification(
             t('codex_quota.reset_verify_failed', {
               name: displayName,
-              message: fresh.rateLimitResetCreditsError,
+              message: fresh.error || t('codex_quota.reset_credits_invalid_payload'),
             }),
             'error'
           );
           return;
         }
         const verifiedCount =
-          fresh.rateLimitResetCreditsAvailableCount ?? fresh.rateLimitResetCredits.length;
-        const verifiedState = CODEX_CONFIG.buildSuccessState(fresh, row.raw);
+          fresh.availableCount ?? fresh.credits.length;
         commitIfQuotaCacheCurrent(cacheGeneration, () => {
-          setCodexQuota((prev) => ({ ...prev, [storeKey]: verifiedState }));
+          setCodexQuota((prev) => {
+            const current = getScopedQuotaState(CODEX_CONFIG, prev, row.raw);
+            const baseState: CodexQuotaState = current ?? {
+              status: 'success',
+              windows: [],
+              ...buildQuotaCredentialIdentity(row.raw),
+            };
+            return {
+              ...prev,
+              [storeKey]: {
+                ...baseState,
+                rateLimitResetCreditsAvailableCount: fresh.availableCount,
+                rateLimitResetCredits: fresh.credits,
+                rateLimitResetCreditsError: null,
+                resetCreditsEvidenceAtMs: fresh.resetCreditsEvidenceAtMs ?? Date.now(),
+              },
+            };
+          });
         });
         if (verifiedCount <= 0) {
           endResetTransaction();
@@ -6623,14 +6779,24 @@ export function AccountsPage() {
               endResetTransaction();
               if (outcome === 'no_credit') {
                 commitIfQuotaCacheCurrent(cacheGeneration, () => {
-                  setCodexQuota((prev) => ({
-                    ...prev,
-                    [storeKey]: {
-                      ...(getScopedQuotaState(CODEX_CONFIG, prev, row.raw) ?? verifiedState),
-                      rateLimitResetCreditsAvailableCount: 0,
-                      rateLimitResetCredits: [],
-                    },
-                  }));
+                  setCodexQuota((prev) => {
+                    const current = getScopedQuotaState(CODEX_CONFIG, prev, row.raw);
+                    const baseState: CodexQuotaState = current ?? {
+                      status: 'success',
+                      windows: [],
+                      ...buildQuotaCredentialIdentity(row.raw),
+                    };
+                    return {
+                      ...prev,
+                      [storeKey]: {
+                        ...baseState,
+                        rateLimitResetCreditsAvailableCount: 0,
+                        rateLimitResetCredits: [],
+                        rateLimitResetCreditsError: null,
+                        resetCreditsEvidenceAtMs: Date.now(),
+                      },
+                    };
+                  });
                 });
                 setQuotaSnapshotWindowsByRowKey((current) => {
                   const windows = current.get(row.selectionKey);
@@ -6676,14 +6842,24 @@ export function AccountsPage() {
             // The reset mutation has happened; drop the pre-reset evidence so
             // the UI cannot keep offering it until the refreshed quota lands.
             commitIfQuotaCacheCurrent(cacheGeneration, () => {
-              setCodexQuota((prev) => ({
-                ...prev,
-                [storeKey]: {
-                  ...(getScopedQuotaState(CODEX_CONFIG, prev, row.raw) ?? verifiedState),
-                  rateLimitResetCreditsAvailableCount: null,
-                  rateLimitResetCredits: [],
-                },
-              }));
+              setCodexQuota((prev) => {
+                const current = getScopedQuotaState(CODEX_CONFIG, prev, row.raw);
+                const baseState: CodexQuotaState = current ?? {
+                  status: 'success',
+                  windows: [],
+                  ...buildQuotaCredentialIdentity(row.raw),
+                };
+                return {
+                  ...prev,
+                  [storeKey]: {
+                    ...baseState,
+                    rateLimitResetCreditsAvailableCount: null,
+                    rateLimitResetCredits: [],
+                    rateLimitResetCreditsError: null,
+                    resetCreditsEvidenceAtMs: Date.now(),
+                  },
+                };
+              });
             });
             setQuotaSnapshotWindowsByRowKey((current) => {
               const windows = current.get(row.selectionKey);
@@ -9287,7 +9463,7 @@ export function AccountsPage() {
             ) : null}
             <Button
               variant="secondary"
-              onClick={() => void refreshAccountQuota(selectedRow)}
+              onClick={() => void refreshAccountQuota(selectedRow, 'detail')}
               loading={quotaRefreshing || selectedQuotaRefreshing}
               disabled={disableControls || selectedQuotaRefreshing || selectedRow.runtimeOnly}
             >

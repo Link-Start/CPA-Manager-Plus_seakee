@@ -7,7 +7,7 @@ import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
-import { CODEX_CONFIG } from '@/components/quota';
+import { CODEX_CONFIG, CODEX_SUMMARY_CONFIG } from '@/components/quota';
 import { accountQuotaSnapshotApi, type ApiCallResult } from '@/services/api';
 import type {
   AuthFileItem,
@@ -40,7 +40,9 @@ import {
   listAccountCredentialMutationMarkers,
   recordAccountCredentialMutationMarker,
 } from './model/accountCredentialMutationMarker';
-import type { CodexQuotaData } from '@/utils/quota/providerRequests';
+import {
+  type CodexQuotaData,
+} from '@/utils/quota';
 import { buildKimiQuotaRows } from '@/utils/quota/builders';
 import type {
   CredentialInspectionSnapshot,
@@ -394,6 +396,15 @@ const { mocks } = vi.hoisted(() => {
         })
       ),
       resetQuota: vi.fn(async () => ({ status: 'ok', auth_index: 'auth-1', models: [] })),
+      apiRequest: vi.fn(
+        async (): Promise<ApiCallResult> => ({
+          statusCode: 200,
+          hasStatusCode: true,
+          header: {},
+          body: {},
+          bodyText: '{}',
+        })
+      ),
       batchDownload: vi.fn(async () => undefined),
       batchDelete: vi.fn(),
       handleDelete: vi.fn(),
@@ -811,6 +822,9 @@ vi.mock('@/features/oauth/CodexReauthDialog', () => ({
 }));
 
 vi.mock('@/services/api', () => ({
+  apiCallApi: {
+    request: mocks.apiRequest,
+  },
   accountQuotaSnapshotApi: {
     write: vi.fn(async (_base, _managementKey, entries: unknown[]) => ({
       observed_at_ms: Date.now(),
@@ -1268,6 +1282,14 @@ describe('AccountsPage replacement flows', () => {
       bodyText: '{"code":"reset"}',
     });
     mocks.resetQuota.mockClear();
+    mocks.apiRequest.mockClear();
+    mocks.apiRequest.mockResolvedValue({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      body: {},
+      bodyText: '{}',
+    });
     mocks.batchDelete.mockClear();
     mocks.handleDelete.mockClear();
     mocks.handleDownload.mockClear();
@@ -12084,7 +12106,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.listCodexInspectionRuns.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.loadFiles.mock.invocationCallOrder[1]
     );
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(4);
     expect(quotaFetch).not.toHaveBeenCalled();
   });
 
@@ -17385,6 +17407,276 @@ describe('AccountsPage replacement flows', () => {
       await flushPromises();
 
       expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
+    });
+  });
+
+  describe('responsive quota presentation and split codex refresh flows', () => {
+    it('calls summary only on single row refresh for Codex (1 usage, 0 reset credits)', async () => {
+      const file = makeCodexFile('codex-row-summary.json', 'auth-summary-1', 'summary@example.com');
+      mocks.files = [file];
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota').mockResolvedValue(makeCodexQuotaData());
+      const detailSpy = vi.spyOn(CODEX_CONFIG, 'fetchQuota');
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      await act(async () => {
+        findAccountCardButtonByAriaLabel(
+          renderer,
+          getAuthFileSelectionKey(file),
+          'accounts.refresh_quota'
+        ).props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(summarySpy).toHaveBeenCalledTimes(1);
+      expect(detailSpy).not.toHaveBeenCalled();
+    });
+
+    it('calls full refresh on credential detail quota refresh for Codex (1 usage, 1 reset credits)', async () => {
+      const file = makeCodexFile('codex-detail-full.json', 'auth-detail-1', 'detail@example.com');
+      mocks.files = [file];
+      const detailSpy = vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue(makeCodexQuotaData());
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota');
+
+      const renderer = await renderAccountsPage();
+      await openCodexQuotaTab(renderer, 'codex-detail-full.json');
+      await flushPromises();
+
+      await act(async () => {
+        const detailRefreshButton = renderer.root
+          .findByType(Drawer)
+          .findAllByType(Button)
+          .find((node) => readText(node.props.children).includes('accounts.refresh_quota'));
+        if (!detailRefreshButton) throw new Error('Detail quota refresh button not found');
+        detailRefreshButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(detailSpy).toHaveBeenCalledTimes(1);
+      expect(summarySpy).not.toHaveBeenCalled();
+    });
+
+    it('calls summary only for each credential during batch quota refresh', async () => {
+      const fileA = makeCodexFile('codex-batch-1.json', 'auth-b-1', 'b1@example.com');
+      const fileB = makeCodexFile('codex-batch-2.json', 'auth-b-2', 'b2@example.com');
+      mocks.files = [fileA, fileB];
+      mocks.selectedFiles = new Set([getAuthFileSelectionKey(fileA), getAuthFileSelectionKey(fileB)]);
+
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota').mockResolvedValue(makeCodexQuotaData());
+      const detailSpy = vi.spyOn(CODEX_CONFIG, 'fetchQuota');
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const batchRefreshButton = findButtonByText(renderer, 'accounts.refresh_quota');
+      await act(async () => {
+        batchRefreshButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(summarySpy).toHaveBeenCalledTimes(2);
+      expect(detailSpy).not.toHaveBeenCalled();
+    });
+
+    it('triggers account detail parity check once when open credential succeeds in batch refresh', async () => {
+      const fileA = makeCodexFile('codex-open.json', 'auth-open-1', 'open@example.com');
+      const fileB = makeCodexFile('codex-other.json', 'auth-other-1', 'other@example.com');
+      mocks.files = [fileA, fileB];
+      mocks.selectedFiles = new Set([getAuthFileSelectionKey(fileA), getAuthFileSelectionKey(fileB)]);
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const storeKeyA = CODEX_CONFIG.getStoreKey?.(fileA) ?? fileA.name;
+      mocks.quotaState.codexQuota = {
+        [storeKeyA]: {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 10,
+              resetAtMs: Date.now() + 3600_000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+            },
+          ],
+          ...buildQuotaCredentialIdentity(fileA),
+          fetchedAtMs: 1,
+        },
+      };
+
+      installCodexQuotaStoreMutationMock();
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota').mockResolvedValue({
+        ...makeCodexQuotaData(),
+        windows: [
+          makeCodexQuotaWindow({
+            label: 'Primary limit',
+            usedPercent: 20,
+            resetAtMs: Date.now() + 3600_000,
+            limitWindowSeconds: 5 * 3600,
+          }),
+        ],
+      });
+
+      const renderer = await renderAccountsPage();
+      await openCodexQuotaTab(renderer, 'codex-open.json');
+      await flushPromises();
+
+      const callsBefore = mocks.getAccountWindowUsage.mock.calls.length;
+
+      const batchRefreshButton = findButtonByText(renderer, 'accounts.refresh_quota');
+      await act(async () => {
+        batchRefreshButton.props.onClick();
+        await Promise.resolve();
+      });
+      for (let i = 0; i < 5; i++) {
+        await flushPromises();
+      }
+
+      expect(summarySpy).toHaveBeenCalled();
+      expect(mocks.getAccountWindowUsage.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+
+    it('verifies reset credits only and then requests full quota after consuming credit', async () => {
+      const file = makeCodexFile('codex-consume.json', 'auth-c-1', 'consume@example.com');
+      mocks.files = [file];
+      const storeKey = CODEX_CONFIG.getStoreKey?.(file) ?? file.name;
+      mocks.quotaState.codexQuota = {
+        [storeKey]: {
+          status: 'success',
+          windows: [],
+          quotaInventoryObserved: true,
+          rateLimitResetCreditsAvailableCount: 1,
+          rateLimitResetCredits: [makeResetCredit('cred-1')],
+          ...buildQuotaCredentialIdentity(file),
+          fetchedAtMs: 1,
+        },
+      };
+
+      installCodexQuotaStoreMutationMock();
+      const fullSpy = vi
+        .spyOn(CODEX_CONFIG, 'fetchQuota')
+        .mockResolvedValueOnce(makeCodexQuotaData(1, [makeResetCredit('cred-1')]))
+        .mockResolvedValueOnce(makeCodexQuotaData(0));
+
+      const renderer = await renderAccountsPage();
+      await openCodexQuotaTab(renderer, 'codex-consume.json');
+      await flushPromises();
+
+      const resetAction = renderer.root.findByProps({ 'data-quota-reset-action': 'true' });
+      await act(async () => {
+        resetAction.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(mocks.showConfirmation).toHaveBeenCalledTimes(1);
+      const confirmation = mocks.showConfirmation.mock.calls[0]?.[0] as {
+        onConfirm: () => Promise<void>;
+      };
+
+      await act(async () => {
+        await confirmation.onConfirm();
+      });
+      await flushPromises();
+
+      expect(mocks.consumeResetCredit).toHaveBeenCalledTimes(1);
+      expect(fullSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('requests reset credits only on reset records anchor click with single-flight control', async () => {
+      const file = makeCodexFile('codex-anchor.json', 'auth-anc-1', 'anchor@example.com');
+      mocks.files = [file];
+      const storeKey = CODEX_CONFIG.getStoreKey?.(file) ?? file.name;
+      mocks.quotaState.codexQuota = {
+        [storeKey]: {
+          status: 'success',
+          windows: [],
+          rateLimitResetCreditsAvailableCount: 1,
+          ...buildQuotaCredentialIdentity(file),
+          fetchedAtMs: 1,
+        },
+      };
+
+      installCodexQuotaStoreMutationMock();
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota');
+      const deferred = createDeferred<CodexQuotaData>();
+      const detailSpy = vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockReturnValue(deferred.promise);
+
+      const renderer = await renderAccountsPage();
+      await openCodexQuotaTab(renderer, 'codex-anchor.json');
+      await flushPromises();
+
+      const anchorButtons = renderer.root
+        .findAll((node) => node.type === 'button' && node.props['data-detail-anchor'] === 'reset-records');
+      if (anchorButtons.length > 0) {
+        await act(async () => {
+          anchorButtons[0].props.onClick();
+          anchorButtons[0].props.onClick();
+          await Promise.resolve();
+        });
+        expect(detailSpy).toHaveBeenCalledTimes(1);
+        expect(summarySpy).not.toHaveBeenCalled();
+        deferred.resolve(makeCodexQuotaData());
+        await flushPromises();
+      }
+    });
+
+    it('fails fast on 429 in batch refresh and blocks subsequent accounts of the same provider', async () => {
+      const file1 = makeCodexFile('codex-rate-1.json', 'auth-r-1', 'r1@example.com');
+      const file2 = makeCodexFile('codex-rate-2.json', 'auth-r-2', 'r2@example.com');
+      mocks.files = [file1, file2];
+      mocks.selectedFiles = new Set([getAuthFileSelectionKey(file1), getAuthFileSelectionKey(file2)]);
+
+      installCodexQuotaStoreMutationMock();
+      const rateLimitError = new Error('429 Too Many Requests') as Error & { status?: number };
+      rateLimitError.status = 429;
+
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota')
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce(makeCodexQuotaData());
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const batchRefreshButton = findButtonByText(renderer, 'accounts.refresh_quota');
+      await act(async () => {
+        batchRefreshButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(summarySpy).toHaveBeenCalledTimes(1);
+      expect(mocks.showNotification).toHaveBeenCalledWith(
+        expect.stringContaining('429'),
+        'error'
+      );
+    });
+
+    it('invalidates window usage on 60s passive interval without auto-requesting reset credits', async () => {
+      const file = makeCodexFile('codex-passive.json', 'auth-p-1', 'passive@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const detailSpy = vi.spyOn(CODEX_CONFIG, 'fetchQuota');
+      const summarySpy = vi.spyOn(CODEX_SUMMARY_CONFIG, 'fetchQuota');
+
+      await renderAccountsPage();
+      await flushPromises();
+
+      expect(detailSpy).not.toHaveBeenCalled();
+      expect(summarySpy).not.toHaveBeenCalled();
     });
   });
 });

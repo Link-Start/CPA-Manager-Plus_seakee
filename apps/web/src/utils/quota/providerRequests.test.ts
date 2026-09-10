@@ -49,6 +49,8 @@ import {
   fetchAntigravityQuota,
   fetchClaudeQuota,
   fetchCodexQuota,
+  fetchCodexQuotaSummary,
+  fetchCodexResetCredits,
   fetchKimiQuota,
   mergeXaiBillingSummaries,
   probeXaiBilling,
@@ -101,6 +103,117 @@ describe('buildCodexQuotaWindows', () => {
       observedAtMs: 1_000,
       quotaProgressObservedAtMs: null,
     });
+  });
+});
+
+describe('fetchCodexQuotaSummary', () => {
+  it('fetches only usage summary and does not call rate limit reset credits endpoint', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '',
+      body: {
+        plan_type: 'team',
+        rate_limit: {
+          primary_window: { used_percent: 45, limit_window_seconds: 18_000 },
+        },
+      },
+    });
+
+    const result = await fetchCodexQuotaSummary(
+      {
+        name: 'codex.json',
+        type: 'codex',
+        authIndex: 'auth-1',
+      },
+      t
+    );
+
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(mocks.request.mock.calls[0][0].url).toBe(CODEX_USAGE_URL);
+    expect(result.planType).toBe('team');
+    expect(result.rateLimitResetCreditsAvailableCount).toBeNull();
+    expect(result.rateLimitResetCredits).toEqual([]);
+    expect(result.rateLimitResetCreditsError).toBeNull();
+    expect(result.resetCreditsEvidenceAtMs).toBeNull();
+    expect(result.windows).toHaveLength(1);
+    expect(result.windows[0].usedPercent).toBe(45);
+  });
+});
+
+describe('fetchCodexResetCredits', () => {
+  it('fetches rate limit reset credits successfully and records evidence timestamp', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      hasStatusCode: true,
+      header: {},
+      bodyText: '',
+      body: {
+        available_count: 2,
+        credits: [
+          {
+            id: 'credit-1',
+            reset_type: 'codex_rate_limits',
+            status: 'available',
+            granted_at: '2026-06-01T00:00:00Z',
+            expires_at: '2026-06-30T00:00:00Z',
+          },
+        ],
+      },
+    });
+
+    const result = await fetchCodexResetCredits(
+      {
+        name: 'codex.json',
+        type: 'codex',
+        authIndex: 'auth-1',
+        id_token: { account_id: 'acct-1' },
+      },
+      t
+    );
+
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(mocks.request.mock.calls[0][0]).toMatchObject({
+      authIndex: 'auth-1',
+      method: 'GET',
+      url: CODEX_RATE_LIMIT_RESET_CREDITS_URL,
+    });
+    expect(result.availableCount).toBe(2);
+    expect(result.credits).toHaveLength(1);
+    expect(result.error).toBeNull();
+    expect(result.observedAtMs).toBeTypeOf('number');
+    expect(result.resetCreditsEvidenceAtMs).toBeTypeOf('number');
+  });
+
+  it('returns graceful error when reset credit endpoint returns 502', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 502,
+      hasStatusCode: true,
+      header: {},
+      bodyText: 'Bad Gateway',
+      body: null,
+    });
+
+    const result = await fetchCodexResetCredits(
+      {
+        name: 'codex.json',
+        type: 'codex',
+        authIndex: 'auth-1',
+      },
+      t
+    );
+
+    expect(result.availableCount).toBeNull();
+    expect(result.credits).toEqual([]);
+    expect(result.error).toBe('502 Bad Gateway');
+    expect(result.resetCreditsEvidenceAtMs).toBeUndefined();
+  });
+
+  it('throws error when auth index is missing', async () => {
+    await expect(
+      fetchCodexResetCredits({ name: 'codex.json', type: 'codex' }, t)
+    ).rejects.toThrow('codex_quota.missing_auth_index');
   });
 });
 
@@ -3427,6 +3540,30 @@ describe('fetchAntigravityQuota', () => {
         'User-Agent': ANTIGRAVITY_USER_AGENT,
       }),
     });
+  });
+
+  it('fails fast on 429 response without retrying other fallback URLs', async () => {
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 429,
+      hasStatusCode: true,
+      header: {},
+      bodyText: 'rate limit exceeded',
+      body: null,
+    });
+
+    await expect(
+      fetchAntigravityQuota(
+        {
+          name: 'antigravity.json',
+          type: 'antigravity',
+          authIndex: 'ag-1',
+          project_id: 'project-1',
+        },
+        t
+      )
+    ).rejects.toThrow();
+
+    expect(mocks.request).toHaveBeenCalledTimes(1);
   });
 
   it('does not treat unrecognized successful endpoint payloads as a complete inventory', async () => {

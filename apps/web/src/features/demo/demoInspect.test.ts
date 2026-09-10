@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   getDemoAuthFiles,
   getDemoQuotaStoreState,
   getDemoAccountWindowUsage,
+  resetDemoEvidenceEpoch,
 } from './demoFixtures';
 import { buildAccountRows } from '@/features/accounts/model/accountRows';
 import {
@@ -153,5 +154,56 @@ describe('Demo accounts quota & usage presentation regression', () => {
     expect(emailQuota).toBeDefined();
     expect(emailQuota?.rateLimitResetCreditsAvailableCount).toBe(0);
     expect(emailQuota?.rateLimitResetCredits).toEqual([]);
+  });
+
+  it('anchors demo evidence epoch and maintains valid forecasts across fake timer progression', () => {
+    resetDemoEvidenceEpoch();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-10T12:00:00Z'));
+      const quotaState = getDemoQuotaStoreState();
+      const authFiles = getDemoAuthFiles().files;
+      const rows = buildAccountRows(authFiles, quotaState);
+
+      const proRow = rows.find((r) => r.fileName === 'codex-pro-20x-01.json')!;
+      const proQuota = Object.values(quotaState.codexQuota).find(
+        (q) => q?.authFileName === proRow.fileName
+      );
+      expect(proQuota?.resetCreditsEvidenceAtMs).toBeTypeOf('number');
+      expect(proQuota?.resetCreditsEvidenceAtMs).toBeGreaterThan(0);
+
+      const options: BuildAccountQuotaDisplayWindowsOptions = {
+        stores: quotaState,
+        getDisplayCodexQuota: (raw: { name?: string }) =>
+          Object.values(quotaState.codexQuota).find((q) => q?.authFileName === raw.name),
+        translateQuotaWindowLabel: (label?: string, key?: string) => label || key || '',
+        t: ((k: string) => k) as unknown as BuildAccountQuotaDisplayWindowsOptions['t'],
+      };
+
+      const displayWindows = buildAccountQuotaDisplayWindows(proRow, options);
+      const definitions = buildAccountQuotaWindowDefinitions(displayWindows);
+      const windowsByRowKey = new Map([[proRow.selectionKey, definitions]]);
+      const targetEntries = buildAccountWindowUsageTargetEntries([proRow], windowsByRowKey);
+
+      // Advance time by 30 minutes
+      vi.advanceTimersByTime(30 * 60 * 1000);
+
+      const response = getDemoAccountWindowUsage({
+        windows: targetEntries.map((e) => e.target),
+      });
+      const usageByKey = new Map<string, MonitoringAccountWindowUsageItem>();
+      response.items.forEach((item) => {
+        if (item.request_key) usageByKey.set(item.request_key, item);
+      });
+
+      const mainWindows = selectAccountQuotaMainListWindows(proRow, displayWindows);
+      mainWindows.forEach((w) => {
+        const usageData = resolveAccountQuotaWindowUsageAndForecast(proRow, w, usageByKey);
+        expect(usageData.forecast).not.toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+      resetDemoEvidenceEpoch();
+    }
   });
 });

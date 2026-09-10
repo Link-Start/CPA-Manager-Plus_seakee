@@ -69,6 +69,19 @@ const clone = <T>(value: T): T => {
   return JSON.parse(JSON.stringify(value)) as T;
 };
 
+let demoEvidenceEpochMs: number | null = null;
+
+export const resetDemoEvidenceEpoch = (): void => {
+  demoEvidenceEpochMs = null;
+};
+
+export const getDemoEvidenceEpochMs = (): number => {
+  if (demoEvidenceEpochMs === null) {
+    demoEvidenceEpochMs = Date.now();
+  }
+  return demoEvidenceEpochMs;
+};
+
 const now = () => Date.now();
 const minute = 60 * 1000;
 const hour = 60 * minute;
@@ -170,7 +183,8 @@ const buildDemoScopedAccountStats = (
 const isDemoOAuthAccountProvider = (provider: unknown) =>
   typeof provider === 'string' && demoOAuthAccountProviders.has(provider);
 
-const demoResetIso = (offsetMs: number) => new Date(now() + offsetMs).toISOString();
+const demoResetIso = (offsetMs: number, baseMs: number = getDemoEvidenceEpochMs()) =>
+  new Date(baseMs + offsetMs).toISOString();
 const formatDemoQuotaResetAtMs = (resetAtMs: number) => {
   const value = new Date(resetAtMs);
   const month = String(value.getMonth() + 1).padStart(2, '0');
@@ -179,12 +193,12 @@ const formatDemoQuotaResetAtMs = (resetAtMs: number) => {
   const minutes = String(value.getMinutes()).padStart(2, '0');
   return `${month}/${dayOfMonth} ${hours}:${minutes}`;
 };
-const demoQuotaResetMetadata = (offsetMs: number) => ({
-  resetAtMs: now() + offsetMs,
+const demoQuotaResetMetadata = (offsetMs: number, baseMs: number = getDemoEvidenceEpochMs()) => ({
+  resetAtMs: baseMs + offsetMs,
   resetAccuracy: 'estimated' as const,
 });
-const demoQuotaReset = (offsetMs: number) => {
-  const metadata = demoQuotaResetMetadata(offsetMs);
+const demoQuotaReset = (offsetMs: number, baseMs: number = getDemoEvidenceEpochMs()) => {
+  const metadata = demoQuotaResetMetadata(offsetMs, baseMs);
   return {
     resetLabel: formatDemoQuotaResetAtMs(metadata.resetAtMs),
     ...metadata,
@@ -5551,7 +5565,7 @@ export const getDemoMonitoringAnalytics = (request?: MonitoringAnalyticsRequest)
 export const getDemoAccountHistory = (
   request: MonitoringAccountHistoryRequest
 ): MonitoringAccountHistoryResponse => {
-  const generatedAtMS = now();
+  const generatedAtMS = getDemoEvidenceEpochMs();
   const historyByKey = buildDemoAccountHistoryIndex(generatedAtMS);
   const latestID = 184_260;
 
@@ -5588,7 +5602,7 @@ export const getDemoAccountHistory = (
 export const getDemoAccountWindowUsage = (
   request: MonitoringAccountWindowUsageRequest
 ): MonitoringAccountWindowUsageResponse => {
-  const generatedAtMS = now();
+  const generatedAtMS = getDemoEvidenceEpochMs();
   const historyByKey = buildDemoAccountHistoryIndex(generatedAtMS);
 
   return clone({
@@ -5768,7 +5782,9 @@ export const getDemoUsageServiceStatus = (): UsageServiceStatus => ({
   databaseMaintenance: getDemoDatabaseMaintenanceStatus(),
 });
 
-const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
+const getDemoQuotaStoreStateByFileName = (
+  baseNow = getDemoEvidenceEpochMs()
+): DemoQuotaStoreState => ({
   codexQuota: {
     'codex-team-01.json': {
       status: 'success',
@@ -5776,21 +5792,22 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-team-01.json::codex-team-01',
       authFileName: 'codex-team-01.json',
       authIndex: 'codex-team-01',
-      fetchedAtMs: now() - 5 * minute,
-      subscriptionActiveUntil: demoResetIso(23 * day),
+      fetchedAtMs: baseNow - 5 * minute,
+      resetCreditsEvidenceAtMs: baseNow - 5 * minute,
+      subscriptionActiveUntil: demoResetIso(23 * day, baseNow),
       rateLimitResetCreditsAvailableCount: 2,
       rateLimitResetCredits: [
         {
           id: 'demo-credit-1',
           status: 'available',
-          grantedAt: demoResetIso(-day),
-          expiresAt: demoResetIso(6 * day),
+          grantedAt: demoResetIso(-day, baseNow),
+          expiresAt: demoResetIso(6 * day, baseNow),
         },
         {
           id: 'demo-credit-2',
           status: 'available',
-          grantedAt: demoResetIso(-12 * hour),
-          expiresAt: demoResetIso(14 * day),
+          grantedAt: demoResetIso(-12 * hour, baseNow),
+          expiresAt: demoResetIso(14 * day, baseNow),
         },
       ],
       windows: [
@@ -5798,14 +5815,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           id: 'five-hour',
           label: '5 小时限额',
           usedPercent: 36,
-          ...demoQuotaReset(2 * hour + 18 * minute),
+          ...demoQuotaReset(2 * hour + 18 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
           id: 'weekly',
           label: '周限额',
           usedPercent: 41,
-          ...demoQuotaReset(3 * day + 8 * hour),
+          ...demoQuotaReset(3 * day + 8 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
       ],
@@ -5816,8 +5833,9 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-email-user.json::codex-email-user-01',
       authFileName: 'codex-email-user.json',
       authIndex: 'codex-email-user-01',
-      fetchedAtMs: now() - 4 * minute,
-      subscriptionActiveUntil: demoResetIso(5 * day),
+      fetchedAtMs: baseNow - 4 * minute,
+      resetCreditsEvidenceAtMs: baseNow - 4 * minute,
+      subscriptionActiveUntil: demoResetIso(5 * day, baseNow),
       rateLimitResetCreditsAvailableCount: 0,
       rateLimitResetCredits: [],
       windows: [
@@ -5825,14 +5843,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           id: 'five-hour',
           label: '5 小时限额',
           usedPercent: 48,
-          ...demoQuotaReset(3 * hour + 15 * minute),
+          ...demoQuotaReset(3 * hour + 15 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
           id: 'weekly',
           label: '周限额',
           usedPercent: 56,
-          ...demoQuotaReset(4 * day + 12 * hour),
+          ...demoQuotaReset(4 * day + 12 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
       ],
@@ -5843,27 +5861,28 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-pro-20x-01.json::codex-pro-20x-01',
       authFileName: 'codex-pro-20x-01.json',
       authIndex: 'codex-pro-20x-01',
-      fetchedAtMs: now() - 4 * minute,
-      subscriptionActiveUntil: demoResetIso(2 * day),
+      fetchedAtMs: baseNow - 4 * minute,
+      resetCreditsEvidenceAtMs: baseNow - 4 * minute,
+      subscriptionActiveUntil: demoResetIso(2 * day, baseNow),
       rateLimitResetCreditsAvailableCount: 3,
       rateLimitResetCredits: [
         {
           id: 'demo-pro-credit-1',
           status: 'available',
-          grantedAt: demoResetIso(-2 * day),
-          expiresAt: demoResetIso(3 * day + 4 * hour),
+          grantedAt: demoResetIso(-2 * day, baseNow),
+          expiresAt: demoResetIso(3 * day + 4 * hour, baseNow),
         },
         {
           id: 'demo-pro-credit-2',
           status: 'available',
-          grantedAt: demoResetIso(-day),
-          expiresAt: demoResetIso(9 * day),
+          grantedAt: demoResetIso(-day, baseNow),
+          expiresAt: demoResetIso(9 * day, baseNow),
         },
         {
           id: 'demo-pro-credit-3',
           status: 'available',
-          grantedAt: demoResetIso(-6 * hour),
-          expiresAt: demoResetIso(18 * day),
+          grantedAt: demoResetIso(-6 * hour, baseNow),
+          expiresAt: demoResetIso(18 * day, baseNow),
         },
       ],
       windows: [
@@ -5871,21 +5890,21 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           id: 'five-hour',
           label: '5 小时限额',
           usedPercent: 88,
-          ...demoQuotaReset(2 * hour + 45 * minute),
+          ...demoQuotaReset(2 * hour + 45 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
           id: 'weekly',
           label: '周限额',
           usedPercent: 68,
-          ...demoQuotaReset(5 * day + 6 * hour),
+          ...demoQuotaReset(5 * day + 6 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
         {
           id: 'monthly',
           label: '月限额',
           usedPercent: 35,
-          ...demoQuotaReset(24 * day + 6 * hour),
+          ...demoQuotaReset(24 * day + 6 * hour, baseNow),
           limitWindowSeconds: 2_592_000,
         },
       ],
@@ -5896,14 +5915,15 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-fallback-02.json::codex-fallback-02',
       authFileName: 'codex-fallback-02.json',
       authIndex: 'codex-fallback-02',
-      fetchedAtMs: now() - 15 * minute,
+      fetchedAtMs: baseNow - 15 * minute,
+      resetCreditsEvidenceAtMs: baseNow - 15 * minute,
       rateLimitResetCreditsAvailableCount: 1,
       rateLimitResetCredits: [
         {
           id: 'demo-fallback-credit-1',
           status: 'available',
-          grantedAt: demoResetIso(-day),
-          expiresAt: demoResetIso(2 * day),
+          grantedAt: demoResetIso(-day, baseNow),
+          expiresAt: demoResetIso(2 * day, baseNow),
         },
       ],
       windows: [
@@ -5911,14 +5931,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           id: 'five-hour',
           label: '5 小时限额',
           usedPercent: 100,
-          ...demoQuotaReset(68 * minute),
+          ...demoQuotaReset(68 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
           id: 'weekly',
           label: '周限额',
           usedPercent: 72,
-          ...demoQuotaReset(2 * day + 4 * hour),
+          ...demoQuotaReset(2 * day + 4 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
       ],
@@ -5929,7 +5949,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
       authFileKey: 'codex-expired-oauth-03.json::codex-expired-oauth-03',
       authFileName: 'codex-expired-oauth-03.json',
       authIndex: 'codex-expired-oauth-03',
-      failedAtMs: now() - 3 * minute,
+      failedAtMs: baseNow - 3 * minute,
       errorStatus: 401,
       error:
         '额度获取失败：401 Your authentication token has been invalidated. Please try signing in again.',
@@ -5940,7 +5960,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     'claude-team-01.json': {
       status: 'success',
       planType: 'pro',
-      fetchedAtMs: now() - 8 * minute,
+      fetchedAtMs: baseNow - 8 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5948,7 +5968,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           labelKey: 'claude_quota.five_hour',
           usedPercent: 44,
           resetLabel: '2h',
-          ...demoQuotaResetMetadata(2 * hour),
+          ...demoQuotaResetMetadata(2 * hour, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
@@ -5957,7 +5977,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           labelKey: 'claude_quota.seven_day',
           usedPercent: 31,
           resetLabel: '3d',
-          ...demoQuotaResetMetadata(3 * day),
+          ...demoQuotaResetMetadata(3 * day, baseNow),
           limitWindowSeconds: 604_800,
         },
       ],
@@ -5965,7 +5985,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     'claude-research-02.json': {
       status: 'success',
       planType: 'pro',
-      fetchedAtMs: now() - 15 * minute,
+      fetchedAtMs: baseNow - 15 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -5973,7 +5993,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           labelKey: 'claude_quota.five_hour',
           usedPercent: 88,
           resetLabel: '1h 12m',
-          ...demoQuotaResetMetadata(hour + 12 * minute),
+          ...demoQuotaResetMetadata(hour + 12 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
         {
@@ -5982,7 +6002,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           labelKey: 'claude_quota.seven_day',
           usedPercent: 48,
           resetLabel: '3d 04h',
-          ...demoQuotaResetMetadata(3 * day + 4 * hour),
+          ...demoQuotaResetMetadata(3 * day + 4 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
         {
@@ -5991,7 +6011,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           labelKey: 'claude_quota.seven_day_sonnet',
           usedPercent: 74,
           resetLabel: '2d 09h',
-          ...demoQuotaResetMetadata(2 * day + 9 * hour),
+          ...demoQuotaResetMetadata(2 * day + 9 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
       ],
@@ -5999,7 +6019,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     'claude-extra-usage-03.json': {
       status: 'success',
       planType: 'pro',
-      fetchedAtMs: now() - 18 * minute,
+      fetchedAtMs: baseNow - 18 * minute,
       windows: [
         {
           id: 'five-hour',
@@ -6040,7 +6060,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   antigravityQuota: {
     'antigravity-builder.json': {
       status: 'success',
-      fetchedAtMs: now() - 6 * minute,
+      fetchedAtMs: baseNow - 6 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6091,7 +6111,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-daily-exhausted.json': {
       status: 'success',
-      fetchedAtMs: now() - 20 * minute,
+      fetchedAtMs: baseNow - 20 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6143,7 +6163,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-monthly-low.json': {
       status: 'success',
-      fetchedAtMs: now() - 15 * minute,
+      fetchedAtMs: baseNow - 15 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6195,7 +6215,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-free-weekly.json': {
       status: 'success',
-      fetchedAtMs: now() - 8 * minute,
+      fetchedAtMs: baseNow - 8 * minute,
       subscription: { plan: 'free', tierName: 'Free', tierId: 'g1-free' },
       groups: [
         {
@@ -6232,7 +6252,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'antigravity-pro-matrix.json': {
       status: 'success',
-      fetchedAtMs: now() - 25 * minute,
+      fetchedAtMs: baseNow - 25 * minute,
       subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
       groups: [
         {
@@ -6287,7 +6307,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   kimiQuota: {
     'kimi-coding.json': {
       status: 'success',
-      fetchedAtMs: now() - 10 * minute,
+      fetchedAtMs: baseNow - 10 * minute,
       rows: [
         {
           id: 'summary',
@@ -6295,7 +6315,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 214,
           limit: 2048,
           resetHint: '6d 4h',
-          ...demoQuotaResetMetadata(6 * day + 4 * hour),
+          ...demoQuotaResetMetadata(6 * day + 4 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
         {
@@ -6305,14 +6325,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 139,
           limit: 200,
           resetHint: '3h 12m',
-          ...demoQuotaResetMetadata(3 * hour + 12 * minute),
+          ...demoQuotaResetMetadata(3 * hour + 12 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
       ],
     },
     'kimi-healthy.json': {
       status: 'success',
-      fetchedAtMs: now() - 8 * minute,
+      fetchedAtMs: baseNow - 8 * minute,
       rows: [
         {
           id: 'summary',
@@ -6320,7 +6340,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 320,
           limit: 7168,
           resetHint: '5d 18h',
-          ...demoQuotaResetMetadata(5 * day + 18 * hour),
+          ...demoQuotaResetMetadata(5 * day + 18 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
         {
@@ -6330,14 +6350,14 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 18,
           limit: 200,
           resetHint: '4h 26m',
-          ...demoQuotaResetMetadata(4 * hour + 26 * minute),
+          ...demoQuotaResetMetadata(4 * hour + 26 * minute, baseNow),
           limitWindowSeconds: 18_000,
         },
       ],
     },
     'kimi-exhausted.json': {
       status: 'success',
-      fetchedAtMs: now() - 5 * minute,
+      fetchedAtMs: baseNow - 5 * minute,
       rows: [
         {
           id: 'summary',
@@ -6345,7 +6365,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 1810,
           limit: 2048,
           resetHint: '2d 03h',
-          ...demoQuotaResetMetadata(2 * day + 3 * hour),
+          ...demoQuotaResetMetadata(2 * day + 3 * hour, baseNow),
           limitWindowSeconds: 604_800,
         },
         {
@@ -6355,7 +6375,7 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
           used: 200,
           limit: 200,
           resetHint: '2h',
-          ...demoQuotaResetMetadata(2 * hour),
+          ...demoQuotaResetMetadata(2 * hour, baseNow),
           limitWindowSeconds: 18_000,
         },
       ],
@@ -6364,12 +6384,12 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
   xaiQuota: {
     'xai-ops.json': {
       status: 'success',
-      fetchedAtMs: now() - 10 * minute,
+      fetchedAtMs: baseNow - 10 * minute,
       billing: {
         periodType: 'weekly',
         usagePercent: 42,
-        periodStart: demoResetIso(-2 * day),
-        periodEnd: demoResetIso(5 * day),
+        periodStart: demoResetIso(-2 * day, baseNow),
+        periodEnd: demoResetIso(5 * day, baseNow),
         productUsage: [
           { product: 'Grok Code Fast', usagePercent: 37 },
           { product: 'Grok Code Thinking', usagePercent: 52 },
@@ -6385,12 +6405,12 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
     },
     'xai-payg-buffer.json': {
       status: 'success',
-      fetchedAtMs: now() - 12 * minute,
+      fetchedAtMs: baseNow - 12 * minute,
       billing: {
         periodType: 'monthly',
         usagePercent: 100,
-        periodStart: demoResetIso(-18 * day),
-        periodEnd: demoResetIso(12 * day),
+        periodStart: demoResetIso(-18 * day, baseNow),
+        periodEnd: demoResetIso(12 * day, baseNow),
         productUsage: [],
         monthlyLimitCents: 100_000,
         usedCents: 126_000,
@@ -6398,19 +6418,19 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
         onDemandCapCents: 100_000,
         onDemandUsedCents: 26_000,
         onDemandUsedPercent: 26,
-        billingPeriodStart: demoResetIso(-18 * day),
-        billingPeriodEnd: demoResetIso(12 * day),
+        billingPeriodStart: demoResetIso(-18 * day, baseNow),
+        billingPeriodEnd: demoResetIso(12 * day, baseNow),
         usedPercent: 100,
       },
     },
     'xai-payg-cap.json': {
       status: 'success',
-      fetchedAtMs: now() - 15 * minute,
+      fetchedAtMs: baseNow - 15 * minute,
       billing: {
         periodType: 'monthly',
         usagePercent: 100,
-        periodStart: demoResetIso(-20 * day),
-        periodEnd: demoResetIso(10 * day),
+        periodStart: demoResetIso(-20 * day, baseNow),
+        periodEnd: demoResetIso(10 * day, baseNow),
         productUsage: [],
         monthlyLimitCents: 100_000,
         usedCents: 150_000,
@@ -6418,8 +6438,8 @@ const getDemoQuotaStoreStateByFileName = (): DemoQuotaStoreState => ({
         onDemandCapCents: 50_000,
         onDemandUsedCents: 50_000,
         onDemandUsedPercent: 100,
-        billingPeriodStart: demoResetIso(-20 * day),
-        billingPeriodEnd: demoResetIso(10 * day),
+        billingPeriodStart: demoResetIso(-20 * day, baseNow),
+        billingPeriodEnd: demoResetIso(10 * day, baseNow),
         usedPercent: 100,
       },
     },
@@ -6448,8 +6468,10 @@ const scopeDemoQuotaRecord = <TState extends CredentialScopedQuotaState>(
   return scoped;
 };
 
-export const getDemoQuotaStoreState = (): DemoQuotaStoreState => {
-  const raw = getDemoQuotaStoreStateByFileName();
+export const getDemoQuotaStoreState = (
+  baseNow = getDemoEvidenceEpochMs()
+): DemoQuotaStoreState => {
+  const raw = getDemoQuotaStoreStateByFileName(baseNow);
   const filesByName = new Map<string, AuthFileItem[]>();
   getDemoAuthFiles().files.forEach((file) => {
     const candidates = filesByName.get(file.name) ?? [];

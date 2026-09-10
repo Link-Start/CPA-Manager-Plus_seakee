@@ -393,6 +393,7 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   rateLimitResetCreditsAvailableCount?: number | null;
   rateLimitResetCredits?: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError?: string | null;
+  resetCreditsEvidenceAtMs?: number | null;
   error?: string;
   errorStatus?: number;
   observedFromUsageHeaders?: boolean;
