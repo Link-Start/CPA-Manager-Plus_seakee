@@ -1004,25 +1004,6 @@
   }
 }
 
-.accountGridCardMoreQuotaHint {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: var(--accounts-primary);
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accounts-primary) 12%, transparent);
-  cursor: pointer;
-  margin-left: 4px;
-  transition: all 0.14s ease;
-
-  &:hover {
-    background: color-mix(in srgb, var(--accounts-primary) 20%, transparent);
-  }
-}
-
 .accountGridCardFooter {
   display: flex;
   align-items: center;
@@ -1041,12 +1022,16 @@
   gap: 8px;
   min-width: 0;
 
-  .accountIconButton {
-    width: 28px;
+  .accountIconButton,
+  .rowDetailButton {
     height: 28px;
     min-height: 28px !important;
-    padding: 0;
     border-radius: 7px;
+  }
+
+  .accountIconButton {
+    width: 28px;
+    padding: 0;
   }
 }
 

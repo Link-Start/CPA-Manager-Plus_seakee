@@ -191,8 +191,19 @@ type AccountWindowUsageResponseForTest = {
   }>;
 };
 
+type AccountWindowUsageTargetItemForTest = {
+  request_key: string;
+  row_key: string;
+  window_key: string;
+  provider_window_id: string;
+  period: string;
+  from_ms: number;
+  to_ms: number;
+  [key: string]: unknown;
+};
+
 type AccountWindowUsageRequestForTest = {
-  windows: unknown[];
+  windows: AccountWindowUsageTargetItemForTest[];
 };
 
 const makeCodexFile = (name: string, authIndex: string, account: string): AuthFileItem =>
@@ -12024,7 +12035,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.listCodexInspectionRuns.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.loadFiles.mock.invocationCallOrder[1]
     );
-    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+    expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
     expect(quotaFetch).not.toHaveBeenCalled();
   });
 
@@ -16711,6 +16722,425 @@ describe('AccountsPage replacement flows', () => {
       expect(
         renderer.root.findAllByProps({ 'data-account-note-input': targetKey }).length
       ).toBe(0);
+    });
+
+    it('queries list window usage only for the selected main list quota windows (max 2)', async () => {
+      const file = makeCodexFile('codex-multi.json', 'auth-multi', 'multi@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const now = Date.now();
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(file, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 40,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              cycleStartMs: now - 2 * 3600 * 1000,
+              cycleEndMs: now + 3 * 3600 * 1000,
+              windowMode: 'fixed',
+              kind: 'five_hour',
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+            {
+              id: 'weekly',
+              label: 'Weekly',
+              usedPercent: 30,
+              resetLabel: new Date(now + 4 * 86400 * 1000).toISOString(),
+              resetAtMs: now + 4 * 86400 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 7 * 86400,
+              cycleStartMs: now - 3 * 86400 * 1000,
+              cycleEndMs: now + 4 * 86400 * 1000,
+              windowMode: 'fixed',
+              kind: 'weekly',
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+            {
+              id: 'monthly',
+              label: 'Monthly',
+              usedPercent: 20,
+              resetLabel: new Date(now + 20 * 86400 * 1000).toISOString(),
+              resetAtMs: now + 20 * 86400 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 30 * 86400,
+              cycleStartMs: now - 10 * 86400 * 1000,
+              cycleEndMs: now + 20 * 86400 * 1000,
+              windowMode: 'fixed',
+              kind: 'monthly',
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+      };
+
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        return {
+          generated_at_ms: Date.now(),
+          items: request.windows.map((w) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: 20_000,
+            total_cost: 0.2,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          })),
+        };
+      });
+
+      await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      const listRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as {
+        windows: Array<{ provider_window_id: string; window_key: string; period: string }>;
+      };
+      expect(listRequest).toBeDefined();
+
+      const monthlyEntries = listRequest.windows.filter(
+        (w) => w.provider_window_id === 'monthly' || w.window_key === 'monthly'
+      );
+      expect(monthlyEntries).toHaveLength(0);
+
+      const queriedPairs = listRequest.windows.map((w) => `${w.provider_window_id}/${w.period}`);
+      expect(queriedPairs).toContain('five-hour/current');
+      expect(queriedPairs).toContain('weekly/current');
+    });
+
+    it('refreshes list window usage on passive 60s evidence refresh interval', async () => {
+      vi.useFakeTimers();
+      const file = makeCodexFile('codex-passive.json', 'auth-passive', 'passive@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const now = Date.now();
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(file, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 40,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+      };
+
+      let callCount = 0;
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        callCount++;
+        const cost = callCount === 1 ? 0.5 : 0.8;
+        const tokens = callCount === 1 ? 50_000 : 80_000;
+        return {
+          generated_at_ms: Date.now(),
+          items: request.windows.map((w) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: tokens,
+            total_cost: cost,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          })),
+        };
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(card)).toContain('$0.50');
+      expect(readText(card)).toContain('50.0K');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      const updatedCard = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(updatedCard)).toContain('$0.80');
+      expect(readText(updatedCard)).toContain('80.0K');
+    });
+
+    it('refreshes list window usage after single account quota refresh succeeds without opening drawer', async () => {
+      const file = makeCodexFile('codex-manual-row.json', 'auth-manual-row', 'manual-row@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const now = Date.now();
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(file, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 40,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+      };
+      vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue(makeCodexQuotaData());
+
+      let callCount = 0;
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        callCount++;
+        const cost = callCount === 1 ? 0.5 : 0.95;
+        const tokens = callCount === 1 ? 50_000 : 95_000;
+        return {
+          generated_at_ms: Date.now(),
+          items: request.windows.map((w) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: tokens,
+            total_cost: cost,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          })),
+        };
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(card)).toContain('$0.50');
+
+      const refreshButton = findAccountCardButtonByAriaLabel(
+        renderer,
+        getAuthFileSelectionKey(file),
+        'accounts.refresh_quota'
+      );
+      await act(async () => {
+        await refreshButton.props.onClick();
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      const updatedCard = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(updatedCard)).toContain('$0.95');
+    });
+
+    it('clears stale exact usage and forecast data when a live list usage request fails silently', async () => {
+      vi.useFakeTimers();
+      const file = makeCodexFile('codex-fail-clear.json', 'auth-fail-clear', 'fail-clear@example.com');
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const now = Date.now();
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(file, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 40,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+      };
+
+      let callCount = 0;
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            generated_at_ms: Date.now(),
+            items: request.windows.map((w) => ({
+              request_key: w.request_key,
+              row_key: w.row_key,
+              window_key: w.window_key,
+              provider_window_id: w.provider_window_id,
+              period: w.period,
+              from_ms: w.from_ms,
+              to_ms: w.to_ms,
+              matched: true,
+              total_requests: 10,
+              success_calls: 10,
+              failure_calls: 0,
+              total_tokens: 50_000,
+              total_cost: 0.5,
+              success_rate: 1,
+              last_seen_ms: Date.now() - 1000,
+              scope_match_status: 'complete',
+              unmatched_requests: 0,
+              sync_status: 'ready',
+            })),
+          };
+        }
+        throw new Error('Manager server connection dropped');
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(card)).toContain('$0.50');
+
+      mocks.showNotification.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      const cardAfterFailure = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
+      expect(readText(cardAfterFailure)).not.toContain('$0.50');
+      expect(mocks.showNotification).not.toHaveBeenCalled();
+    });
+
+    it('provides keyboard accessibility for Grid card shortcuts and includes footer detail button', async () => {
+      const file = makeCodexFile('codex-a11y.json', 'auth-a11y', 'a11y@example.com');
+      mocks.files = [file];
+      const targetSelectionKey = getAuthFileSelectionKey(file);
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const gridButton = renderer.root.find(
+        (node) => node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      await act(async () => {
+        gridButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      const card = renderer.root.findByProps({ 'data-account-card': targetSelectionKey });
+      expect(card.type).toBe('article');
+      expect(card.props.role).toBeUndefined();
+      expect(card.props.tabIndex).toBeUndefined();
+
+      const detailButton = card.findAll(
+        (node) =>
+          node.type === 'button' &&
+          typeof node.props?.className === 'string' &&
+          node.props.className.includes('rowDetailButton')
+      )[0];
+      expect(detailButton).toBeTruthy();
+      expect(detailButton.props['aria-label']).toContain('accounts.open_detail');
+
+      const recentStatusSection = card.findByProps({
+        'data-account-grid-recent-status': targetSelectionKey,
+      });
+      expect(recentStatusSection.props.role).toBe('button');
+      expect(recentStatusSection.props.tabIndex).toBe(0);
+
+      const stopPropagation = vi.fn();
+      const preventDefault = vi.fn();
+
+      await act(async () => {
+        recentStatusSection.props.onKeyDown({
+          key: 'Enter',
+          stopPropagation,
+          preventDefault,
+        });
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(stopPropagation).toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalled();
+      expect(renderer.root.findByType(AccountOverviewTab)).toBeTruthy();
+
+      const quotaSection = card.findAll(
+        (node) =>
+          typeof node.props?.className === 'string' &&
+          node.props.className.includes('accountGridCardQuota')
+      )[0];
+      expect(quotaSection.props.role).toBe('button');
+      expect(quotaSection.props.tabIndex).toBe(0);
+
+      await act(async () => {
+        quotaSection.props.onKeyDown({
+          key: ' ',
+          stopPropagation,
+          preventDefault,
+        });
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
     });
   });
 });

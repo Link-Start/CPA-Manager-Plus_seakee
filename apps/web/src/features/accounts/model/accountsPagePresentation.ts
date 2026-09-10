@@ -345,7 +345,7 @@ export function formatQuotaResetRelative(
 
   const diffMs = targetMs - nowMs;
   if (diffMs <= 0) {
-    return style === 'short' ? '0m' : formatSubMinuteRelative(localeType);
+    return '';
   }
 
   if (diffMs >= QUOTA_RESET_DAY_MS) {

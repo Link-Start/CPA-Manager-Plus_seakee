@@ -1304,6 +1304,7 @@ export function AccountsPage() {
   const [accountHistoryRefreshRevision, setAccountHistoryRefreshRevision] = useState(0);
   const [accountHistoryAutoRefreshRevision, setAccountHistoryAutoRefreshRevision] = useState(0);
   const [accountQuotaRefreshRevision, setAccountQuotaRefreshRevision] = useState(0);
+  const [listWindowUsageRefreshRevision, setListWindowUsageRefreshRevision] = useState(0);
   const [suppressedInspectionResultKeys, setSuppressedInspectionResultKeys] = useState<Set<string>>(
     () => readCompletedAccountReauthResultKeys(connectionFingerprint)
   );
@@ -4724,13 +4725,29 @@ export function AccountsPage() {
   const listQuotaWindowsByRowKey = useMemo(() => {
     const result = new Map<string, AccountQuotaWindowDefinition[]>();
     for (const row of pageRows) {
-      const definitions =
-        quotaWindowDefinitionsByRowKey.get(row.selectionKey) ??
-        buildAccountQuotaWindowDefinitions(buildQuotaDisplayWindows(row));
+      const quotaWindows =
+        quotaDisplayWindowsByRowKey.get(row.selectionKey) ??
+        buildQuotaDisplayWindows(row);
+      const mainListWindows = selectAccountQuotaMainListWindows(row, quotaWindows);
+      const existingDefinitions = quotaWindowDefinitionsByRowKey.get(row.selectionKey);
+      let definitions: AccountQuotaWindowDefinition[];
+      if (existingDefinitions && existingDefinitions.length > 0) {
+        const selectedKeys = new Set(mainListWindows.map((w) => w.key));
+        definitions = existingDefinitions.filter(
+          (d) => selectedKeys.has(d.display?.key) || selectedKeys.has(d.key)
+        );
+      } else {
+        definitions = buildAccountQuotaWindowDefinitions(mainListWindows);
+      }
       result.set(row.selectionKey, definitions);
     }
     return result;
-  }, [buildQuotaDisplayWindows, pageRows, quotaWindowDefinitionsByRowKey]);
+  }, [
+    buildQuotaDisplayWindows,
+    pageRows,
+    quotaDisplayWindowsByRowKey,
+    quotaWindowDefinitionsByRowKey,
+  ]);
   const isListQueryContextMatching = useMemo(() => {
     if (!listWindowUsageQueryContext) return false;
     if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;
@@ -4750,6 +4767,51 @@ export function AccountsPage() {
       filterAccountWindowUsageByTargetRanges(listWindowUsageTargets, listWindowUsageByKey),
     [listWindowUsageByKey, listWindowUsageTargets]
   );
+  const listWindowUsageDefinitionsSignature = useMemo(() => {
+    const payload = pageRows.map((row) => {
+      const definitions = listQuotaWindowsByRowKey.get(row.selectionKey) ?? [];
+      return {
+        rowKey: row.selectionKey,
+        definitions: definitions.map((def) => ({
+          key: def.key,
+          providerWindowId: def.providerWindowId,
+          windowMode: def.windowMode,
+          modelScope: def.modelScope,
+          boundaryAccuracy: def.boundaryAccuracy,
+          cycleStartMs: def.cycleStartMs,
+          cycleEndMs: def.cycleEndMs,
+          durationSeconds: def.durationSeconds,
+          stale: def.stale,
+          availability: def.availability,
+          currentCycle: def.currentCycle
+            ? {
+                id: def.currentCycle.id,
+                activationId: def.currentCycle.activationId,
+                state: def.currentCycle.state,
+                actualStartMs: def.currentCycle.actualStartMs,
+                actualEndMs: def.currentCycle.actualEndMs,
+                scheduledStartMs: def.currentCycle.scheduledStartMs,
+                scheduledEndMs: def.currentCycle.scheduledEndMs,
+                boundaryAccuracy: def.currentCycle.boundaryAccuracy,
+              }
+            : null,
+          previousCycle: def.previousCycle
+            ? {
+                id: def.previousCycle.id,
+                activationId: def.previousCycle.activationId,
+                state: def.previousCycle.state,
+                actualStartMs: def.previousCycle.actualStartMs,
+                actualEndMs: def.previousCycle.actualEndMs,
+                scheduledStartMs: def.previousCycle.scheduledStartMs,
+                scheduledEndMs: def.previousCycle.scheduledEndMs,
+                boundaryAccuracy: def.previousCycle.boundaryAccuracy,
+              }
+            : null,
+        })),
+      };
+    });
+    return JSON.stringify(payload);
+  }, [listQuotaWindowsByRowKey, pageRows]);
   const listWindowUsageAutoContextKey = useMemo(
     () =>
       JSON.stringify({
@@ -4757,17 +4819,17 @@ export function AccountsPage() {
         managerConnectionFingerprint,
         requestMonitoringAvailable: featureAvailability.requestMonitoringAvailable,
         pageKeys: pageRows.map((r) => r.selectionKey),
-        targetsCount: listWindowUsageTargets.length,
+        definitionsSignature: listWindowUsageDefinitionsSignature,
       }),
     [
       featureAvailability.checking,
       featureAvailability.requestMonitoringAvailable,
-      listWindowUsageTargets.length,
+      listWindowUsageDefinitionsSignature,
       managerConnectionFingerprint,
       pageRows,
     ]
   );
-  const listWindowUsageAutoLoadKey = `${listWindowUsageAutoContextKey}\u0000${accountQuotaRefreshRevision}`;
+  const listWindowUsageAutoLoadKey = `${listWindowUsageAutoContextKey}\u0000${accountHistoryAutoRefreshRevision}\u0000${listWindowUsageRefreshRevision}`;
   const accountDisplayHint = t(
     accountDisplayMode === 'masked'
       ? 'accounts.show_full_credentials_hint'
@@ -6185,6 +6247,7 @@ export function AccountsPage() {
           );
         } else {
           showNotification(t('accounts.quota_refresh_success', { name }), 'success');
+          setListWindowUsageRefreshRevision((current) => current + 1);
         }
 
         if (selectedRowKeyRef.current === row.selectionKey) {
@@ -6370,6 +6433,9 @@ export function AccountsPage() {
         buildAccountWindowUsageByKey(queryTargets, response.items ?? [])
       );
     } catch {
+      if (isCurrentRequest()) {
+        setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
+      }
       // 失败静默降级，不阻塞列表显示
     } finally {
       if (listWindowUsageReqIdRef.current === requestId) {
@@ -7814,6 +7880,19 @@ export function AccountsPage() {
       </Button>
     );
 
+    const detailButton = (
+      <Button
+        variant="ghost"
+        size="xs"
+        className={styles.rowDetailButton}
+        onClick={() => void openAccountDetail(row)}
+        title={t('accounts.open_detail', { name: row.fileName })}
+        aria-label={t('accounts.open_detail', { name: row.fileName })}
+      >
+        {t('accounts.open_detail_short')}
+      </Button>
+    );
+
     if (isGridCard) {
       return (
         <div className={styles.accountGridCardActions} onClick={(event) => event.stopPropagation()}>
@@ -7826,6 +7905,7 @@ export function AccountsPage() {
             {refreshButton}
             {modelsButton}
             {settingsButton}
+            {detailButton}
           </div>
         </div>
       );
@@ -7853,16 +7933,7 @@ export function AccountsPage() {
                   ariaLabel={t('auth_files.status_toggle_label')}
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="xs"
-                className={styles.rowDetailButton}
-                onClick={() => void openAccountDetail(row)}
-                title={t('accounts.open_detail', { name: row.fileName })}
-                aria-label={t('accounts.open_detail', { name: row.fileName })}
-              >
-                {t('accounts.open_detail_short')}
-              </Button>
+              {detailButton}
             </div>
           </>
         ) : null}
@@ -8531,10 +8602,27 @@ export function AccountsPage() {
                     className={styles.accountGridCardRecentStatus}
                     data-account-grid-recent-status={row.selectionKey}
                     title={`${t('accounts.detail_overview_recent_status_title')} (${t('accounts.open_detail', { name: row.fileName })}: ${t('accounts.detail_overview_recent_status_title')})`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void openAccountDetail(row, 'overview');
-                    }}
+                    role={isSelectionMode ? undefined : 'button'}
+                    tabIndex={isSelectionMode ? undefined : 0}
+                    onClick={
+                      isSelectionMode
+                        ? undefined
+                        : (e) => {
+                            e.stopPropagation();
+                            void openAccountDetail(row, 'overview');
+                          }
+                    }
+                    onKeyDown={
+                      isSelectionMode
+                        ? undefined
+                        : (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void openAccountDetail(row, 'overview');
+                            }
+                          }
+                    }
                   >
                     <div className={styles.accountGridCardRecentStatusHeader}>
                       <div className={styles.accountGridCardRecentStatusTitleGroup}>
@@ -8585,6 +8673,8 @@ export function AccountsPage() {
                   <div
                     className={styles.accountGridCardQuota}
                     title={ctx.quotaWindowTitle}
+                    role={isSelectionMode ? undefined : 'button'}
+                    tabIndex={isSelectionMode ? undefined : 0}
                     onClick={
                       isSelectionMode
                         ? undefined
@@ -8593,38 +8683,30 @@ export function AccountsPage() {
                             void openAccountDetail(row, 'quota');
                           }
                     }
+                    onKeyDown={
+                      isSelectionMode
+                        ? undefined
+                        : (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void openAccountDetail(row, 'quota');
+                            }
+                          }
+                    }
                   >
                     {ctx.mainListWindows.length > 0 ? (
                       <div className={styles.accountGridCardQuotaList}>
-                        {(() => {
-                          const windowsToRender = ctx.mainListWindows.slice(0, 2);
-                          const remainingCount =
-                            ctx.mainListWindows.length - windowsToRender.length;
-                          return windowsToRender.map((window, idx) =>
-                            renderSingleQuotaWindowCard(
-                              row,
-                              window,
-                              idx,
-                              null,
-                              false,
-                              ctx.quotaLifecycleBarOverride,
-                              idx === windowsToRender.length - 1 && remainingCount > 0 ? (
-                                <span
-                                  className={styles.accountGridCardMoreQuotaHint}
-                                  title={ctx.quotaWindowTitle}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void openAccountDetail(row, 'quota');
-                                  }}
-                                >
-                                  {t('accounts.quota_more_windows', {
-                                    count: remainingCount,
-                                  })}
-                                </span>
-                              ) : null
-                            )
-                          );
-                        })()}
+                        {ctx.mainListWindows.map((window, idx) =>
+                          renderSingleQuotaWindowCard(
+                            row,
+                            window,
+                            idx,
+                            null,
+                            false,
+                            ctx.quotaLifecycleBarOverride
+                          )
+                        )}
                       </div>
                     ) : (
                       <span className={styles.quotaEmptyState} data-account-quota-empty="true">

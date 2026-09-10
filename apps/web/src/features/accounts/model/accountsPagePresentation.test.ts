@@ -142,9 +142,9 @@ describe('accountsPagePresentation', () => {
     expect(formatQuotaResetRelative(nowMs + 59 * 60 * 1000 + 30 * 1000, null, nowMs)).toBe('59 分钟后');
     // 30 seconds later -> <1 分钟后
     expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs)).toBe('<1 分钟后');
-    // Expired or exact zero -> <1 分钟后
-    expect(formatQuotaResetRelative(nowMs, null, nowMs)).toBe('<1 分钟后');
-    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs)).toBe('<1 分钟后');
+    // Expired or exact zero -> empty string
+    expect(formatQuotaResetRelative(nowMs, null, nowMs)).toBe('');
+    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs)).toBe('');
 
     // From string label fallback
     expect(formatQuotaResetRelative(null, '5d', nowMs)).toBe('5 天后');
@@ -157,8 +157,14 @@ describe('accountsPagePresentation', () => {
     // Short style mode
     expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs, { style: 'short' })).toBe('5d');
     expect(formatQuotaResetRelative(nowMs + 23 * 60 * 60 * 1000, null, nowMs, { style: 'short' })).toBe('23h');
-    expect(formatQuotaResetRelative(nowMs, null, nowMs, { style: 'short' })).toBe('0m');
+    expect(formatQuotaResetRelative(nowMs, null, nowMs, { style: 'short' })).toBe('');
+    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs, { style: 'short' })).toBe('');
     expect(formatQuotaResetRelative(null, '5d', nowMs, { style: 'short' })).toBe('5d');
+
+    // Localization support: future <1m vs expired
+    expect(formatQuotaResetRelative(nowMs + 30 * 1000, null, nowMs, 'en')).toBe('in <1 min');
+    expect(formatQuotaResetRelative(nowMs, null, nowMs, 'en')).toBe('');
+    expect(formatQuotaResetRelative(nowMs - 5000, null, nowMs, 'en')).toBe('');
 
     // Localization support
     expect(formatQuotaResetRelative(nowMs + 5 * 24 * 60 * 60 * 1000, null, nowMs, 'en')).toBe('in 5 days');

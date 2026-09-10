@@ -840,7 +840,6 @@
     "quota_filter": "Фильтр квоты",
     "view_mode_table": "Таблица",
     "view_mode_grid": "Карточки",
-    "quota_more_windows": "+{{count}} окон",
     "quota_reset_credits_unit": "сбросов",
     "note_placeholder_empty": "Заметка",
     "note_edit": "Редактировать заметку",
