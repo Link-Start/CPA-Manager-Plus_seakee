@@ -737,6 +737,33 @@
     }
   }
 
+  &.accountGridCardNoteReadOnly {
+    cursor: default;
+
+    &:hover {
+      background: transparent;
+      color: var(--accounts-muted);
+
+      .accountGridCardNoteIcon {
+        color: var(--accounts-muted);
+        opacity: 0.65;
+      }
+
+      .accountGridCardNotePlaceholder {
+        color: var(--accounts-muted);
+        opacity: 1;
+      }
+    }
+
+    &.accountGridCardNoteRowEmpty {
+      opacity: 0.6;
+
+      &:hover {
+        opacity: 0.6;
+      }
+    }
+  }
+
   .accountGridCardNoteIcon {
     flex-shrink: 0;
     opacity: 0.65;
@@ -1966,27 +1993,9 @@
   font-weight: 750;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  cursor: pointer;
   user-select: none;
   border-radius: 3px;
   padding: 1px 3px;
-  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
-
-  &:hover {
-    color: color-mix(in srgb, var(--primary-color) 82%, #000);
-    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  &:active {
-    opacity: 0.8;
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 1px;
-  }
 }
 
 .quotaWindowResetCreditsIcon {

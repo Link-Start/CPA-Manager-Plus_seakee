@@ -836,6 +836,8 @@
     "quota_filter": "Quota filter",
     "view_mode_table": "Table",
     "view_mode_grid": "Card",
+    "view_mode_switcher": "View mode",
+    "priority_edit": "Edit priority",
     "quota_reset_credits_unit": "resets",
     "note_placeholder_empty": "Note",
     "note_edit": "Edit note",

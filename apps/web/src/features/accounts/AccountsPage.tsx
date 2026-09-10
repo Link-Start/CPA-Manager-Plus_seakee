@@ -6166,6 +6166,10 @@ export function AccountsPage() {
           ).length;
           const firstError = currentResults.find((result) => result.status === 'error');
           const totalCount = currentResults.length;
+
+          if (successCount > 0) {
+            setListWindowUsageRefreshRevision((current) => current + 1);
+          }
           if (taskPlan.length === 1 && totalCount === 1) {
             const account = taskPlan[0]?.item;
             if (!account) return;
@@ -8038,25 +8042,8 @@ export function AccountsPage() {
             {hasCodexResetCredits && windowIndex === 0 ? (
               <>
                 <span
-                  role="button"
-                  tabIndex={0}
                   className={styles.quotaWindowResetCredits}
                   data-account-reset-credits={row.selectionKey}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    void openAccountDetail(row, 'quota', 'reset-records');
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      void openAccountDetail(row, 'quota', 'reset-records');
-                    }
-                  }}
-                  aria-label={t('accounts.detail_quota_reset_records', {
-                    defaultValue: '重置记录',
-                  })}
                 >
                   <span
                     className={styles.quotaWindowResetCreditsIcon}
@@ -8557,6 +8544,26 @@ export function AccountsPage() {
                         }}
                       />
                     </div>
+                  ) : row.runtimeOnly ? (
+                    <div
+                      className={`${styles.accountGridCardNoteRow} ${styles.accountGridCardNoteReadOnly} ${
+                        !row.note?.trim() ? styles.accountGridCardNoteRowEmpty : ''
+                      }`}
+                      title={
+                        row.note?.trim()
+                          ? `${t('auth_files.note_label')}: ${row.note.trim()}`
+                          : undefined
+                      }
+                    >
+                      <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
+                      <span
+                        className={`${styles.accountGridCardNoteText} ${
+                          !row.note?.trim() ? styles.accountGridCardNotePlaceholder : ''
+                        }`}
+                      >
+                        {row.note?.trim() || t('accounts.note_placeholder_empty', { defaultValue: '备注' })}
+                      </span>
+                    </div>
                   ) : (
                     <div
                       role="button"
@@ -8572,17 +8579,13 @@ export function AccountsPage() {
                       }
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (!row.runtimeOnly) {
-                          startInlineNoteEdit(row);
-                        }
+                        startInlineNoteEdit(row);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.stopPropagation();
                           e.preventDefault();
-                          if (!row.runtimeOnly) {
-                            startInlineNoteEdit(row);
-                          }
+                          startInlineNoteEdit(row);
                         }
                       }}
                     >

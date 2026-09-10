@@ -834,6 +834,8 @@
     "quota_filter": "額度篩選",
     "view_mode_table": "表格",
     "view_mode_grid": "卡片",
+    "view_mode_switcher": "檢視模式",
+    "priority_edit": "編輯優先順序",
     "quota_reset_credits_unit": "次重置",
     "note_placeholder_empty": "備註",
     "note_edit": "編輯備註",

@@ -16282,7 +16282,10 @@ describe('AccountsPage replacement flows', () => {
       const node = resetCreditsNodes[0];
       expect(readText(node.props.children)).toContain('2');
       expect(node.props.title).toBeUndefined();
-      expect(node.props.role).toBe('button');
+      expect(node.props.role).toBeUndefined();
+      expect(node.props.tabIndex).toBeUndefined();
+      expect(node.props.onClick).toBeUndefined();
+      expect(node.props.onKeyDown).toBeUndefined();
     });
 
     it('does not display reset credits when count is 0 or null', async () => {
@@ -16310,7 +16313,7 @@ describe('AccountsPage replacement flows', () => {
       expect(resetCreditsNodes).toHaveLength(0);
     });
 
-    it('clicking reset credits badge opens credential detail drawer with quota tab and anchor', async () => {
+    it('clicking table quota detail trigger opens credential detail drawer with quota tab', async () => {
       const targetFile = mocks.files[0];
       const targetSelectionKey = `codex.json\u0000auth-1`;
       const now = Date.now();
@@ -16341,25 +16344,16 @@ describe('AccountsPage replacement flows', () => {
       });
 
       expect(resetCreditsNodes).toHaveLength(1);
-      const node = resetCreditsNodes[0];
 
-      let stopped = false;
-      let prevented = false;
+      const quotaTrigger = renderer.root.findByProps({
+        'data-account-detail-trigger': 'quota',
+      });
       await act(async () => {
-        node.props.onClick({
-          stopPropagation: () => {
-            stopped = true;
-          },
-          preventDefault: () => {
-            prevented = true;
-          },
-        });
+        quotaTrigger.props.onClick();
         await Promise.resolve();
       });
       await flushPromises();
 
-      expect(stopped).toBe(true);
-      expect(prevented).toBe(true);
       expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
       expect(mocks.navigate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -16523,15 +16517,12 @@ describe('AccountsPage replacement flows', () => {
       expect(textBefore).toContain('$0.75');
       expect(textBefore).toContain('$1.50');
 
-      const resetCreditsNode = renderer.root.findByProps({
-        'data-account-reset-credits': targetSelectionKey,
+      const quotaTrigger = renderer.root.findByProps({
+        'data-account-detail-trigger': 'quota',
       });
 
       await act(async () => {
-        resetCreditsNode.props.onClick({
-          stopPropagation: () => {},
-          preventDefault: () => {},
-        });
+        quotaTrigger.props.onClick();
         await Promise.resolve();
       });
       await flushPromises();
@@ -16722,6 +16713,50 @@ describe('AccountsPage replacement flows', () => {
       expect(
         renderer.root.findAllByProps({ 'data-account-note-input': targetKey }).length
       ).toBe(0);
+    });
+
+    it('renders note in read-only mode without button affordance for runtime-only credentials', async () => {
+      const runtimeFile = {
+        ...makeCodexFile('runtime-note.json', 'auth-runtime', 'runtime@example.com'),
+        note: '运行时只读备注',
+        runtimeOnly: true,
+      };
+      mocks.files = [runtimeFile];
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const gridButton = renderer.root.find(
+        (node) =>
+          node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      await act(async () => {
+        gridButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      const targetKey = getAuthFileSelectionKey(runtimeFile);
+      const editableTriggers = renderer.root.findAllByProps({
+        'data-account-note-trigger': targetKey,
+      });
+      expect(editableTriggers).toHaveLength(0);
+
+      const card = findAccountCardByKey(renderer, targetKey);
+      expect(readText(card)).toContain('运行时只读备注');
+
+      const noteRows = card.findAll(
+        (node) =>
+          typeof node.props.className === 'string' &&
+          node.props.className.includes('accountGridCardNoteRow')
+      );
+      expect(noteRows.length).toBeGreaterThan(0);
+      const noteRow = noteRows[0];
+      expect(noteRow.props.role).toBeUndefined();
+      expect(noteRow.props.tabIndex).toBeUndefined();
+      expect(noteRow.props.onClick).toBeUndefined();
+      expect(noteRow.props.onKeyDown).toBeUndefined();
+      expect(noteRow.props.title).not.toContain('accounts.note_edit');
     });
 
     it('queries list window usage only for the selected main list quota windows (max 2)', async () => {
@@ -16986,6 +17021,109 @@ describe('AccountsPage replacement flows', () => {
       expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
       const updatedCard = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
       expect(readText(updatedCard)).toContain('$0.95');
+    });
+
+    it('refreshes list window usage once after batch account quota refresh succeeds', async () => {
+      const first = makeCodexFile('codex-batch-1.json', 'auth-batch-1', 'batch-1@example.com');
+      const second = makeCodexFile('codex-batch-2.json', 'auth-batch-2', 'batch-2@example.com');
+      mocks.files = [first, second];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      const now = Date.now();
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(first, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 40,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+        ...buildCredentialScopedQuotaRecord(second, {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: 'Five hours',
+              usedPercent: 20,
+              resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+              resetAtMs: now + 3 * 3600 * 1000,
+              resetAccuracy: 'exact',
+              limitWindowSeconds: 5 * 3600,
+              modelScope: CODEX_MAIN_SCOPE,
+            },
+          ],
+        }),
+      };
+      vi.spyOn(CODEX_CONFIG, 'fetchQuota').mockResolvedValue({
+        ...makeCodexQuotaData(),
+        windows: [
+          makeCodexQuotaWindow({
+            id: 'five-hour',
+            label: 'Five hours',
+            usedPercent: 45,
+            resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+            resetAtMs: now + 3 * 3600 * 1000,
+            resetAccuracy: 'exact',
+            limitWindowSeconds: 5 * 3600,
+            modelScope: CODEX_MAIN_SCOPE,
+          }),
+        ],
+      });
+
+      let callCount = 0;
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        callCount++;
+        const cost = callCount === 1 ? 0.5 : 0.95;
+        const tokens = callCount === 1 ? 50_000 : 95_000;
+        return {
+          generated_at_ms: Date.now(),
+          items: request.windows.map((w) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: tokens,
+            total_cost: cost,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          })),
+        };
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+
+      const batchRefreshButton = findButtonByText(renderer, 'accounts.refresh_quota');
+      await act(async () => {
+        await batchRefreshButton.props.onClick();
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     });
 
     it('clears stale exact usage and forecast data when a live list usage request fails silently', async () => {

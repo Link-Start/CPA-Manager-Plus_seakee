@@ -189,4 +189,14 @@ describe('accounts workspace wiring', () => {
       locale.accounts.list_header_actions,
     ]).toEqual(expectedHeaders);
   });
+
+  it.each([
+    [en, 'Edit priority', 'View mode'],
+    [ru, 'Редактировать приоритет', 'Режим отображения'],
+    [zhCN, '编辑优先级', '视图模式'],
+    [zhTW, '編輯優先順序', '檢視模式'],
+  ])('defines accounts priority_edit and view_mode_switcher across all locales', (locale, priorityEdit, viewModeSwitcher) => {
+    expect(locale.accounts.priority_edit).toBe(priorityEdit);
+    expect(locale.accounts.view_mode_switcher).toBe(viewModeSwitcher);
+  });
 });
