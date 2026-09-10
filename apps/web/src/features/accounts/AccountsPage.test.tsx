@@ -16564,6 +16564,48 @@ describe('AccountsPage replacement flows', () => {
       await flushPromises();
 
       expect(renderer.root.findAllByProps({ 'data-account-list-header': 'true' }).length).toBe(1);
+      const scroller = renderer.root.findAll((node) =>
+        typeof node.props?.className === 'string' &&
+        node.props.className.includes('tableScroller')
+      );
+      expect(scroller.length).toBeGreaterThan(0);
+    });
+
+    it('automatically switches to card grid mode and hides the mode switcher on compact screens', async () => {
+      vi.stubGlobal('window', {
+        ...(typeof window !== 'undefined' ? window : {}),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        matchMedia: vi.fn().mockImplementation((query: string) => ({
+          matches: query.includes('1024px'),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        })),
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      expect(renderer.root.findAllByProps({ 'data-account-list-header': 'true' }).length).toBe(0);
+
+      const cards = renderer.root.findAll((node) =>
+        typeof node.props?.className === 'string' &&
+        node.props.className.includes('accountGridCard')
+      );
+      expect(cards.length).toBeGreaterThan(0);
+
+      const modeButtons = renderer.root.findAll(
+        (node) =>
+          node.type === 'button' &&
+          (node.props['aria-label'] === 'accounts.view_mode_grid' ||
+            node.props['aria-label'] === 'accounts.view_mode_table')
+      );
+      expect(modeButtons.length).toBe(0);
     });
 
     it('renders rich card presentation in grid mode including notes, traffic stats, and health status', async () => {

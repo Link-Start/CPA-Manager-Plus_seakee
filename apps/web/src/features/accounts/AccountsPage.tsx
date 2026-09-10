@@ -62,6 +62,7 @@ import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
   useAuthFilesData,
@@ -1537,6 +1538,8 @@ export function AccountsPage() {
   const [layoutMode, setLayoutMode] = useState<AccountsLayoutMode>(
     () => initialWorkspaceUrlState.current.layoutMode
   );
+  const isCompactScreen = useMediaQuery('(max-width: 1024px)');
+  const effectiveLayoutMode = isCompactScreen ? 'grid' : layoutMode;
   const [copiedIdentityKey, setCopiedIdentityKey] = useState<string | null>(null);
   const detailEventsRequestIdRef = useRef(0);
   const detailEventsAutoLoadKeyRef = useRef<string | null>(null);
@@ -7328,44 +7331,49 @@ export function AccountsPage() {
     </div>
   );
 
-  const renderViewModeSwitcher = () => (
-    <div
-      className={styles.viewModeSwitcher}
-      role="group"
-      aria-label={t('accounts.view_mode_switcher', { defaultValue: '视图模式' })}
-    >
-      <button
-        type="button"
-        className={[
-          styles.viewModeButton,
-          layoutMode === 'table' ? styles.viewModeButtonActive : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        onClick={() => setLayoutMode('table')}
-        title={t('accounts.view_mode_table')}
-        aria-label={t('accounts.view_mode_table')}
-        aria-pressed={layoutMode === 'table'}
+  const renderViewModeSwitcher = () => {
+    if (isCompactScreen) {
+      return null;
+    }
+    return (
+      <div
+        className={styles.viewModeSwitcher}
+        role="group"
+        aria-label={t('accounts.view_mode_switcher', { defaultValue: '视图模式' })}
       >
-        {t('accounts.view_mode_table')}
-      </button>
-      <button
-        type="button"
-        className={[
-          styles.viewModeButton,
-          layoutMode === 'grid' ? styles.viewModeButtonActive : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        onClick={() => setLayoutMode('grid')}
-        title={t('accounts.view_mode_grid')}
-        aria-label={t('accounts.view_mode_grid')}
-        aria-pressed={layoutMode === 'grid'}
-      >
-        {t('accounts.view_mode_grid')}
-      </button>
-    </div>
-  );
+        <button
+          type="button"
+          className={[
+            styles.viewModeButton,
+            effectiveLayoutMode === 'table' ? styles.viewModeButtonActive : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => setLayoutMode('table')}
+          title={t('accounts.view_mode_table')}
+          aria-label={t('accounts.view_mode_table')}
+          aria-pressed={effectiveLayoutMode === 'table'}
+        >
+          {t('accounts.view_mode_table')}
+        </button>
+        <button
+          type="button"
+          className={[
+            styles.viewModeButton,
+            effectiveLayoutMode === 'grid' ? styles.viewModeButtonActive : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => setLayoutMode('grid')}
+          title={t('accounts.view_mode_grid')}
+          aria-label={t('accounts.view_mode_grid')}
+          aria-pressed={effectiveLayoutMode === 'grid'}
+        >
+          {t('accounts.view_mode_grid')}
+        </button>
+      </div>
+    );
+  };
 
   const renderToolbar = () => (
     <>
@@ -8177,7 +8185,7 @@ export function AccountsPage() {
     <section className={styles.tablePanel}>
       {paged ? renderBatchBar() : null}
       {rowsToRender.length > 0 ? (
-        layoutMode === 'grid' ? (
+        effectiveLayoutMode === 'grid' ? (
           <div className={styles.accountGridList}>
             {rowsToRender.map((row) => {
               const ctx = resolveAccountRowContext(row);
@@ -8636,15 +8644,16 @@ export function AccountsPage() {
             })}
           </div>
         ) : (
-          <div className={styles.accountCardList}>
-            <div className={styles.accountCardHeader} data-account-list-header="true">
-              <span>{t('accounts.list_header_credential')}</span>
-              <span>{t('accounts.list_header_plan')}</span>
-              <span>{t('accounts.list_header_availability')}</span>
-              <span>{t('accounts.list_header_recent_requests')}</span>
-              <span>{t('accounts.list_header_quota')}</span>
-              <span>{t('accounts.list_header_actions')}</span>
-            </div>
+          <div className={styles.tableScroller}>
+            <div className={styles.accountCardList}>
+              <div className={styles.accountCardHeader} data-account-list-header="true">
+                <span>{t('accounts.list_header_credential')}</span>
+                <span>{t('accounts.list_header_plan')}</span>
+                <span>{t('accounts.list_header_availability')}</span>
+                <span>{t('accounts.list_header_recent_requests')}</span>
+                <span>{t('accounts.list_header_quota')}</span>
+                <span>{t('accounts.list_header_actions')}</span>
+              </div>
             {rowsToRender.map((row) => {
               const ctx = resolveAccountRowContext(row);
               return (
@@ -8865,6 +8874,7 @@ export function AccountsPage() {
                 </article>
               );
             })}
+            </div>
           </div>
         )
       ) : (

@@ -78,19 +78,113 @@
 
 @container monitoring-page (max-width: 1240px) {
   .metricsGrid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@container monitoring-page (max-width: 900px) {
-  .metricsGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @container monitoring-page (max-width: 768px) {
   .metricsGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    gap: 6px;
+
+    :global(.card) {
+      min-height: unset !important;
+      height: auto !important;
+      padding: 7px 8px !important;
+      border-radius: 10px !important;
+    }
+
+    [class*='summaryCardChart'] {
+      display: none !important;
+    }
+
+    [class*='summaryMeta'] {
+      display: none !important;
+    }
+
+    [class*='summaryCardHeader'] {
+      gap: 4px;
+    }
+
+    [class*='summaryIcon'] {
+      width: 20px !important;
+      height: 20px !important;
+      flex: 0 0 20px !important;
+      border-radius: 5px !important;
+
+      svg {
+        width: 12px !important;
+        height: 12px !important;
+      }
+    }
+
+    [class*='summaryLabel'] {
+      font-size: 10.5px !important;
+      line-height: 1.2 !important;
+    }
+
+    [class*='summaryCardBody'] {
+      margin-top: 2px !important;
+    }
+
+    [class*='summaryValue'] {
+      font-size: 18px !important;
+      line-height: 1.15 !important;
+    }
+  }
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .metricsGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-auto-rows: auto !important;
+    gap: 6px !important;
+
+    :global(.card) {
+      min-height: unset !important;
+      height: auto !important;
+      padding: 7px 8px !important;
+      border-radius: 10px !important;
+    }
+
+    [class*='summaryCardChart'] {
+      display: none !important;
+    }
+
+    [class*='summaryMeta'] {
+      display: none !important;
+    }
+
+    [class*='summaryCardHeader'] {
+      gap: 4px !important;
+    }
+
+    [class*='summaryIcon'] {
+      width: 20px !important;
+      height: 20px !important;
+      flex: 0 0 20px !important;
+      border-radius: 5px !important;
+
+      svg {
+        width: 12px !important;
+        height: 12px !important;
+      }
+    }
+
+    [class*='summaryLabel'] {
+      font-size: 10.5px !important;
+      line-height: 1.2 !important;
+    }
+
+    [class*='summaryCardBody'] {
+      margin-top: 2px !important;
+    }
+
+    [class*='summaryValue'] {
+      font-size: 18px !important;
+      line-height: 1.15 !important;
+    }
   }
 }
 
@@ -254,12 +348,12 @@
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 64px 1px 54px;
+  grid-template-columns: 68px 1px 54px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 131px;
-  min-width: 131px;
+  width: 136px;
+  min-width: 136px;
   white-space: nowrap;
 
   :global(.btn) {
@@ -276,7 +370,7 @@
 .accountCardList {
   display: grid;
   gap: 8px;
-  min-width: 0;
+  min-width: 960px;
   padding: 10px 12px;
 }
 
@@ -284,14 +378,15 @@
 .accountCard {
   display: grid;
   grid-template-columns:
-    minmax(150px, 190px)
-    78px
+    minmax(140px, 1.1fr)
+    76px
     84px
-    124px
-    minmax(400px, 1fr)
-    124px;
+    116px
+    minmax(280px, 2fr)
+    146px;
   column-gap: clamp(8px, 0.8vw, 12px);
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .accountCardHeader {
@@ -312,10 +407,16 @@
 
   > span:nth-child(2),
   > span:nth-child(3),
-  > span:nth-child(4),
+  > span:nth-child(4) {
+    justify-content: center;
+    text-align: center;
+  }
+
   > span:last-child {
     justify-content: center;
     text-align: center;
+    padding-left: 10px;
+    box-sizing: border-box;
   }
 
   > span:first-child,
@@ -968,14 +1069,13 @@
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
-      minmax(170px, 1fr)
+      minmax(150px, 1.1fr)
+      78px
       84px
-      88px
-      130px
-      minmax(460px, 2.2fr)
-      165px;
-    justify-content: space-between;
-    column-gap: clamp(10px, 0.9vw, 16px);
+      118px
+      minmax(280px, 2fr)
+      175px;
+    column-gap: clamp(10px, 0.85vw, 14px);
   }
 
   .rowActions {
@@ -985,7 +1085,31 @@
   }
 }
 
+@media (min-width: 1680px) {
+  .accountCardHeader,
+  .accountCard {
+    grid-template-columns:
+      minmax(180px, 1.3fr)
+      88px
+      90px
+      130px
+      minmax(380px, 2.5fr)
+      182px;
+    column-gap: 16px;
+  }
+
+  .rowActions {
+    grid-template-columns: 104px 1px 54px;
+    width: 172px;
+    min-width: 172px;
+  }
+}
+
 @media (max-width: $breakpoint-tablet) {
+  .viewModeSwitcher {
+    display: none !important;
+  }
+
   .accountCardHeader {
     display: none;
   }
