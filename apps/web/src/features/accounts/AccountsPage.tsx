@@ -1349,13 +1349,28 @@ export function AccountsPage() {
   const inlinePriorityCancelledRef = useRef(false);
   const inlinePrioritySavingRef = useRef(false);
   const inlinePriorityInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingNoteState, setEditingNoteState] = useState<{
+    rowKey: string;
+    value: string;
+  } | null>(null);
+  const [inlineNoteSaving, setInlineNoteSaving] = useState(false);
+  const inlineNoteCancelledRef = useRef(false);
+  const inlineNoteSavingRef = useRef(false);
+  const inlineNoteInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (editingPriorityState && inlinePriorityInputRef.current) {
       inlinePriorityInputRef.current.focus();
       inlinePriorityInputRef.current.select();
     }
-  }, [editingPriorityState?.rowKey]);
+  }, [editingPriorityState]);
+
+  useEffect(() => {
+    if (editingNoteState && inlineNoteInputRef.current) {
+      inlineNoteInputRef.current.focus();
+      inlineNoteInputRef.current.select();
+    }
+  }, [editingNoteState]);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => initialWorkspaceUrlState.current.pageSize);
@@ -6780,6 +6795,77 @@ export function AccountsPage() {
     [patchPriorityRows, showNotification, t]
   );
 
+  const patchNoteRows = useCallback(
+    async (targets: AccountRow[], note: string) => {
+      const patchTargets = targets
+        .filter((row) => !row.runtimeOnly)
+        .map((row) => getAuthFilePatchTarget(row.raw));
+      return await batchPatchFields(patchTargets, { note });
+    },
+    [batchPatchFields]
+  );
+
+  const startInlineNoteEdit = useCallback((row: AccountRow) => {
+    if (row.runtimeOnly) return;
+    inlineNoteCancelledRef.current = false;
+    inlineNoteSavingRef.current = false;
+    setInlineNoteSaving(false);
+    setEditingNoteState({
+      rowKey: row.selectionKey,
+      value: row.note?.trim() ?? '',
+    });
+  }, []);
+
+  const cancelInlineNoteEdit = useCallback(() => {
+    inlineNoteCancelledRef.current = true;
+    setEditingNoteState(null);
+    setInlineNoteSaving(false);
+  }, []);
+
+  const handleInlineNoteBlur = useCallback(
+    async (row: AccountRow, rawValue: string) => {
+      if (inlineNoteCancelledRef.current) {
+        inlineNoteCancelledRef.current = false;
+        return;
+      }
+      if (inlineNoteSavingRef.current) {
+        return;
+      }
+
+      const trimmed = rawValue.trim();
+      const currentNote = row.note?.trim() ?? '';
+
+      if (trimmed === currentNote) {
+        setEditingNoteState(null);
+        return;
+      }
+
+      inlineNoteSavingRef.current = true;
+      setInlineNoteSaving(true);
+      try {
+        const result = await patchNoteRows([row], trimmed);
+        if (result && result.failed > 0) {
+          showNotification(
+            t('accounts.note_update_failed', { defaultValue: '更新备注失败' }),
+            'error'
+          );
+        }
+      } catch (error) {
+        showNotification(
+          error instanceof Error
+            ? error.message
+            : t('accounts.note_update_failed', { defaultValue: '更新备注失败' }),
+          'error'
+        );
+      } finally {
+        inlineNoteSavingRef.current = false;
+        setInlineNoteSaving(false);
+        setEditingNoteState(null);
+      }
+    },
+    [patchNoteRows, showNotification, t]
+  );
+
   const handleBatchPrioritySave = useCallback(async () => {
     const priority = parsePriorityValue(batchPriorityValue);
     if (priority === null) {
@@ -7624,115 +7710,157 @@ export function AccountsPage() {
   const renderRowActions = (
     row: AccountRow,
     needsReauth = false,
-    hideSideActions = false
-  ) => (
-    <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
-      <div className={styles.accountQuickActionsGrid}>
-        {needsReauth ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            iconOnly
-            className={`${styles.accountIconButton} ${styles.accountIconButtonRefresh}`}
-            onClick={() => handleReauthAccount(row.raw)}
-            disabled={disableControls || row.runtimeOnly}
-            title={t('accounts.recommend_action_reauth')}
-            aria-label={t('accounts.recommend_action_reauth')}
-          >
-            <IconShield size={15} />
-          </Button>
-        ) : null}
-        <Button
-          variant="secondary"
-          size="sm"
-          iconOnly
-          className={`${styles.accountIconButton} ${styles.accountIconButtonRefresh}`}
-          onClick={() => void refreshAccountQuota(row)}
-          disabled={
-            disableControls || quotaRefreshing || isManualQuotaRefreshing(row) || row.runtimeOnly
-          }
-          loading={isManualQuotaRefreshing(row)}
-          title={t('accounts.refresh_quota')}
-          aria-label={t('accounts.refresh_quota')}
-        >
-          {!isManualQuotaRefreshing(row) ? <IconRefreshCw size={15} /> : null}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          iconOnly
-          className={`${styles.accountIconButton} ${styles.accountIconButtonSettings}`}
-          onClick={() => void openAccountDetail(row, 'config')}
-          disabled={row.runtimeOnly}
-          title={t('accounts.detail_tab_config')}
-          aria-label={t('accounts.detail_tab_config')}
-        >
-          <IconSettings size={15} />
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          iconOnly
-          className={`${styles.accountIconButton} ${styles.accountIconButtonModels}`}
-          onClick={() => void openAccountDetail(row, 'models')}
-          disabled={row.runtimeOnly && row.provider !== 'aistudio'}
-          title={t('auth_files.models_button')}
-          aria-label={t('auth_files.models_button')}
-        >
-          <IconModelCluster size={15} />
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          iconOnly
-          className={`${styles.accountIconButton} ${styles.accountIconButtonDownload}`}
-          onClick={() => void handleDownload(row.fileName)}
-          disabled={row.runtimeOnly}
-          title={t('auth_files.download_button')}
-          aria-label={t('auth_files.download_button')}
-        >
-          <IconDownload size={15} />
-        </Button>
-        <Button
-          variant="danger"
-          size="sm"
-          iconOnly
-          className={`${styles.accountIconButton} ${styles.accountIconButtonDelete}`}
-          onClick={() => void handleAccountDelete(row.raw)}
-          disabled={disableControls || row.runtimeOnly || deleting === row.fileName}
-          title={t('auth_files.delete_button')}
-          aria-label={t('auth_files.delete_button')}
-        >
-          {deleting === row.fileName ? <LoadingSpinner size={14} /> : <IconTrash2 size={15} />}
-        </Button>
-      </div>
-      {!hideSideActions ? (
-        <>
-          <span className={styles.accountActionsDivider} aria-hidden="true" />
-          <div className={styles.accountSideActions}>
-            <div className={styles.accountStatusSwitch}>
-              <ToggleSwitch
-                checked={!row.disabled}
-                onChange={(enabled) => void handleBatchStatus(enabled, [row])}
-                disabled={disableControls || statusUpdating || row.runtimeOnly}
-                ariaLabel={t('auth_files.status_toggle_label')}
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="xs"
-              className={styles.rowDetailButton}
-              onClick={() => void openAccountDetail(row)}
-              title={t('accounts.open_detail', { name: row.fileName })}
-              aria-label={t('accounts.open_detail', { name: row.fileName })}
-            >
-              {t('accounts.open_detail_short')}
-            </Button>
+    hideSideActions = false,
+    isGridCard = false
+  ) => {
+    const reauthButton = needsReauth ? (
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonRefresh}`}
+        onClick={() => handleReauthAccount(row.raw)}
+        disabled={disableControls || row.runtimeOnly}
+        title={t('accounts.recommend_action_reauth')}
+        aria-label={t('accounts.recommend_action_reauth')}
+      >
+        <IconShield size={15} />
+      </Button>
+    ) : null;
+
+    const refreshButton = (
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonRefresh}`}
+        onClick={() => void refreshAccountQuota(row)}
+        disabled={
+          disableControls || quotaRefreshing || isManualQuotaRefreshing(row) || row.runtimeOnly
+        }
+        loading={isManualQuotaRefreshing(row)}
+        title={t('accounts.refresh_quota')}
+        aria-label={t('accounts.refresh_quota')}
+      >
+        {!isManualQuotaRefreshing(row) ? <IconRefreshCw size={15} /> : null}
+      </Button>
+    );
+
+    const settingsButton = (
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonSettings}`}
+        onClick={() => void openAccountDetail(row, 'config')}
+        disabled={row.runtimeOnly}
+        title={t('accounts.detail_tab_config')}
+        aria-label={t('accounts.detail_tab_config')}
+      >
+        <IconSettings size={15} />
+      </Button>
+    );
+
+    const modelsButton = (
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonModels}`}
+        onClick={() => void openAccountDetail(row, 'models')}
+        disabled={row.runtimeOnly && row.provider !== 'aistudio'}
+        title={t('auth_files.models_button')}
+        aria-label={t('auth_files.models_button')}
+      >
+        <IconModelCluster size={15} />
+      </Button>
+    );
+
+    const downloadButton = (
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonDownload}`}
+        onClick={() => void handleDownload(row.fileName)}
+        disabled={row.runtimeOnly}
+        title={t('auth_files.download_button')}
+        aria-label={t('auth_files.download_button')}
+      >
+        <IconDownload size={15} />
+      </Button>
+    );
+
+    const deleteButton = (
+      <Button
+        variant="danger"
+        size="sm"
+        iconOnly
+        className={`${styles.accountIconButton} ${styles.accountIconButtonDelete}`}
+        onClick={() => void handleAccountDelete(row.raw)}
+        disabled={disableControls || row.runtimeOnly || deleting === row.fileName}
+        title={t('auth_files.delete_button')}
+        aria-label={t('auth_files.delete_button')}
+      >
+        {deleting === row.fileName ? <LoadingSpinner size={14} /> : <IconTrash2 size={15} />}
+      </Button>
+    );
+
+    if (isGridCard) {
+      return (
+        <div className={styles.accountGridCardActions} onClick={(event) => event.stopPropagation()}>
+          <div className={styles.accountGridCardSecondaryActions}>
+            {reauthButton}
+            {deleteButton}
+            {downloadButton}
           </div>
-        </>
-      ) : null}
-    </div>
-  );
+          <div className={styles.accountGridCardPrimaryActions}>
+            {refreshButton}
+            {modelsButton}
+            {settingsButton}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
+        <div className={styles.accountQuickActionsGrid}>
+          {reauthButton}
+          {refreshButton}
+          {settingsButton}
+          {modelsButton}
+          {downloadButton}
+          {deleteButton}
+        </div>
+        {!hideSideActions ? (
+          <>
+            <span className={styles.accountActionsDivider} aria-hidden="true" />
+            <div className={styles.accountSideActions}>
+              <div className={styles.accountStatusSwitch}>
+                <ToggleSwitch
+                  checked={!row.disabled}
+                  onChange={(enabled) => void handleBatchStatus(enabled, [row])}
+                  disabled={disableControls || statusUpdating || row.runtimeOnly}
+                  ariaLabel={t('auth_files.status_toggle_label')}
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                className={styles.rowDetailButton}
+                onClick={() => void openAccountDetail(row)}
+                title={t('accounts.open_detail', { name: row.fileName })}
+                aria-label={t('accounts.open_detail', { name: row.fileName })}
+              >
+                {t('accounts.open_detail_short')}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    );
+  };
 
   const renderPagination = () => (
     <div className={styles.accountsPagination}>
@@ -8070,7 +8198,7 @@ export function AccountsPage() {
                   onClick={
                     isSelectionMode
                       ? () => handleAccountCardClick(row)
-                      : () => void openAccountDetail(row, 'quota')
+                      : () => void openAccountDetail(row, 'overview')
                   }
                 >
                   <div className={styles.accountGridCardHeader}>
@@ -8167,37 +8295,89 @@ export function AccountsPage() {
                     </div>
                   </div>
 
-                  <div className={styles.accountGridCardMetaRow}>
-                    <div className={styles.accountGridCardMetaBadges}>
-                      {ctx.subscriptionPresentation.planPresentation?.shortLabel &&
-                      ctx.subscriptionPresentation.planPresentation.shortLabel !== '-' ? (
+                  <div className={styles.accountGridCardMetaSection}>
+                    <div className={styles.accountGridCardMetaRow}>
+                      <div className={styles.accountGridCardMetaBadges}>
+                      {(() => {
+                        const remainingDays = ctx.subscriptionPresentation.remainingDays;
+                        const remainingDaysClass =
+                          remainingDays !== null
+                            ? remainingDays <= 3
+                              ? styles.accountPlanBadgeDaysDanger
+                              : remainingDays <= 7
+                                ? styles.accountPlanBadgeDaysWarning
+                                : styles.accountPlanBadgeDaysNormal
+                            : '';
+                        return ctx.subscriptionPresentation.planPresentation?.shortLabel &&
+                          ctx.subscriptionPresentation.planPresentation.shortLabel !== '-' ? (
+                          <span
+                            className={styles.accountPlanBadge}
+                            title={ctx.subscriptionPresentation.planPresentation?.fullLabel}
+                          >
+                            {ctx.subscriptionPresentation.planPresentation.shortLabel}
+                            {remainingDays !== null ? (
+                              <span className={styles.accountPlanBadgeSep}>
+                                ·{' '}
+                                <span className={remainingDaysClass}>
+                                  {t('accounts.list_plan_remaining_days', {
+                                    days: remainingDays,
+                                    defaultValue: `${remainingDays} 天`,
+                                  })}
+                                </span>
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : remainingDays !== null ? (
+                          <span
+                            className={`${styles.accountPlanBadge} ${remainingDaysClass}`}
+                            title={t('accounts.list_plan_remaining_days_tooltip', {
+                              days: remainingDays,
+                              defaultValue: `剩余 ${remainingDays} 天`,
+                            })}
+                          >
+                            {t('accounts.list_plan_remaining_days', {
+                              days: remainingDays,
+                              defaultValue: `${remainingDays} 天`,
+                            })}
+                          </span>
+                        ) : null;
+                      })()}
+                      {ctx.hasCodexResetCredits && ctx.codexResetCreditsCount !== null ? (
                         <span
-                          className={styles.accountPlanBadge}
-                          title={ctx.subscriptionPresentation.planPresentation?.fullLabel}
-                        >
-                          {ctx.subscriptionPresentation.planPresentation.shortLabel}
-                          {ctx.subscriptionPresentation.remainingDays !== null ? (
-                            <span className={styles.accountPlanBadgeSep}>
-                              ·{' '}
-                              {t('accounts.list_plan_remaining_days', {
-                                days: ctx.subscriptionPresentation.remainingDays,
-                                defaultValue: `${ctx.subscriptionPresentation.remainingDays} 天`,
-                              })}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : ctx.subscriptionPresentation.remainingDays !== null ? (
-                        <span
-                          className={styles.accountPlanBadge}
-                          title={t('accounts.list_plan_remaining_days_tooltip', {
-                            days: ctx.subscriptionPresentation.remainingDays,
-                            defaultValue: `剩余 ${ctx.subscriptionPresentation.remainingDays} 天`,
+                          role="button"
+                          tabIndex={0}
+                          className={styles.accountResetCreditsButton}
+                          data-account-reset-credits={row.selectionKey}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            void openAccountDetail(row, 'quota', 'reset-records');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              void openAccountDetail(row, 'quota', 'reset-records');
+                            }
+                          }}
+                          aria-label={t('accounts.detail_quota_reset_records', {
+                            defaultValue: '重置记录',
                           })}
                         >
-                          {t('accounts.list_plan_remaining_days', {
-                            days: ctx.subscriptionPresentation.remainingDays,
-                            defaultValue: `${ctx.subscriptionPresentation.remainingDays} 天`,
-                          })}
+                          <span
+                            className={styles.accountResetCreditsIcon}
+                            aria-hidden="true"
+                          >
+                            <IconRotateCcw size={11} strokeWidth={2.4} />
+                          </span>
+                          <strong className={styles.accountResetCreditsCount}>
+                            {ctx.codexResetCreditsCount}
+                          </strong>
+                          <span className={styles.accountResetCreditsLabel}>
+                            {t('accounts.quota_reset_credits_unit', {
+                              defaultValue: '次重置',
+                            })}
+                          </span>
                         </span>
                       ) : null}
                       {editingPriorityState?.rowKey === row.selectionKey ? (
@@ -8258,17 +8438,86 @@ export function AccountsPage() {
                           {t('accounts.col_priority')} {ctx.item.identity.priority}
                         </button>
                       )}
-                      {row.note?.trim() ? (
-                        <span
-                          className={styles.accountGridCardNote}
-                          title={`${t('auth_files.note_label')}: ${row.note.trim()}`}
-                        >
-                          <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
-                          <span className={styles.accountGridCardNoteText}>{row.note.trim()}</span>
-                        </span>
-                      ) : null}
                     </div>
                   </div>
+
+                  {editingNoteState?.rowKey === row.selectionKey ? (
+                    <div
+                      className={styles.accountGridCardNoteEditRow}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
+                      <input
+                        ref={inlineNoteInputRef}
+                        type="text"
+                        data-account-note-input={row.selectionKey}
+                        className={styles.accountGridCardNoteInput}
+                        value={editingNoteState.value}
+                        placeholder={t('accounts.note_placeholder_empty', { defaultValue: '备注' })}
+                        aria-label={t('accounts.note_edit', { defaultValue: '编辑备注' })}
+                        disabled={inlineNoteSaving}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                        onChange={(e) =>
+                          setEditingNoteState((prev) =>
+                            prev ? { ...prev, value: e.target.value } : null
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelInlineNoteEdit();
+                          }
+                        }}
+                        onBlur={(e) => {
+                          void handleInlineNoteBlur(row, e.currentTarget.value);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      data-account-note-trigger={row.selectionKey}
+                      className={`${styles.accountGridCardNoteRow} ${
+                        !row.note?.trim() ? styles.accountGridCardNoteRowEmpty : ''
+                      }`}
+                      title={
+                        row.note?.trim()
+                          ? `${t('auth_files.note_label')}: ${row.note.trim()} (${t('accounts.note_edit', { defaultValue: '编辑备注' })})`
+                          : `${t('accounts.note_edit', { defaultValue: '编辑备注' })}`
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!row.runtimeOnly) {
+                          startInlineNoteEdit(row);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          if (!row.runtimeOnly) {
+                            startInlineNoteEdit(row);
+                          }
+                        }
+                      }}
+                    >
+                      <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
+                      <span
+                        className={`${styles.accountGridCardNoteText} ${
+                          !row.note?.trim() ? styles.accountGridCardNotePlaceholder : ''
+                        }`}
+                      >
+                        {row.note?.trim() || t('accounts.note_placeholder_empty', { defaultValue: '备注' })}
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                   <div
                     className={styles.accountGridCardRecentStatus}
@@ -8281,15 +8530,8 @@ export function AccountsPage() {
                   >
                     <div className={styles.accountGridCardRecentStatusHeader}>
                       <div className={styles.accountGridCardRecentStatusTitleGroup}>
-                        <IconChartLine
-                          size={13}
-                          className={styles.accountGridCardRecentStatusIcon}
-                        />
                         <span className={styles.accountGridCardRecentStatusTitle}>
                           {t('accounts.detail_overview_recent_status_title')}
-                        </span>
-                        <span className={styles.accountGridCardRecentStatusScope}>
-                          200m
                         </span>
                       </div>
                       <div className={styles.accountGridCardRecentStatusMetrics}>
@@ -8335,6 +8577,14 @@ export function AccountsPage() {
                   <div
                     className={styles.accountGridCardQuota}
                     title={ctx.quotaWindowTitle}
+                    onClick={
+                      isSelectionMode
+                        ? undefined
+                        : (e) => {
+                            e.stopPropagation();
+                            void openAccountDetail(row, 'quota');
+                          }
+                    }
                   >
                     {ctx.mainListWindows.length > 0 ? (
                       <div className={styles.accountGridCardQuotaList}>
@@ -8347,8 +8597,8 @@ export function AccountsPage() {
                               row,
                               window,
                               idx,
-                              ctx.codexResetCreditsCount,
-                              ctx.hasCodexResetCredits,
+                              null,
+                              false,
                               ctx.quotaLifecycleBarOverride,
                               idx === windowsToRender.length - 1 && remainingCount > 0 ? (
                                 <span
@@ -8379,9 +8629,7 @@ export function AccountsPage() {
                     className={styles.accountGridCardFooter}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className={styles.accountGridCardActions}>
-                      {renderRowActions(row, ctx.item.health.status === 'reauth', true)}
-                    </div>
+                    {renderRowActions(row, ctx.item.health.status === 'reauth', true, true)}
                   </div>
                 </article>
               );

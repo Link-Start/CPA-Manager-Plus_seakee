@@ -16614,5 +16614,61 @@ describe('AccountsPage replacement flows', () => {
       expect(recentStatusBar.props.statusData.totalSuccess).toBe(12);
       expect(recentStatusBar.props.statusData.totalFailure).toBe(1);
     });
+
+    it('supports inline editing of card note and handles empty note placeholder', async () => {
+      const fileWithoutNote = {
+        ...makeCodexFile('empty-note.json', 'auth-empty', 'empty@example.com'),
+        note: '',
+      };
+      mocks.files = [fileWithoutNote];
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const gridButton = renderer.root.find(
+        (node) =>
+          node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      await act(async () => {
+        gridButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      const targetKey = getAuthFileSelectionKey(fileWithoutNote);
+      const trigger = renderer.root.findByProps({
+        'data-account-note-trigger': targetKey,
+      });
+      expect(trigger).toBeTruthy();
+      expect(readText(trigger)).toContain('accounts.note_placeholder_empty');
+
+      const stopPropagation = vi.fn();
+      await act(async () => {
+        trigger.props.onClick({ stopPropagation });
+      });
+      expect(stopPropagation).toHaveBeenCalled();
+
+      const input = renderer.root.findByProps({
+        'data-account-note-input': targetKey,
+      });
+      expect(input.props.value).toBe('');
+
+      await act(async () => {
+        input.props.onChange({ target: { value: '研发VIP专席' } });
+      });
+
+      mocks.batchPatchFields.mockClear();
+      await act(async () => {
+        await input.props.onBlur({ currentTarget: { value: '研发VIP专席' } });
+      });
+
+      expect(mocks.batchPatchFields).toHaveBeenCalledWith(
+        [getAuthFilePatchTarget(fileWithoutNote)],
+        { note: '研发VIP专席' }
+      );
+      expect(
+        renderer.root.findAllByProps({ 'data-account-note-input': targetKey }).length
+      ).toBe(0);
+    });
   });
 });
