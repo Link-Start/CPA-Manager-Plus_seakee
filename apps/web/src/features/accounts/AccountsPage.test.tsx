@@ -17102,6 +17102,230 @@ describe('AccountsPage replacement flows', () => {
       expect(queriedPairs).toContain('monthly/current');
     });
 
+    it('synchronizes rendered quota windows and list usage targets across Table -> Grid -> Table transitions', async () => {
+      const file = {
+        name: 'antigravity-pro-matrix.json',
+        type: 'antigravity',
+        provider: 'antigravity',
+        authIndex: 'antigravity-pro-matrix-04',
+        account: 'AG Pro Matrix',
+        label: 'Antigravity Pro Matrix',
+        priority: 0,
+        disabled: false,
+      } as AuthFileItem;
+      mocks.files = [file];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+
+      const now = Date.now();
+      mocks.quotaState.antigravityQuota = buildCredentialScopedQuotaRecord(file, {
+        status: 'success',
+        subscription: { plan: 'pro', tierName: 'Pro', tierId: 'g1-pro' },
+        groups: [
+          {
+            id: 'gemini-models',
+            label: 'Gemini Models',
+            description: 'Models within this group: Gemini Flash, Gemini Pro',
+            models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+            buckets: [
+              {
+                id: 'gemini-5h',
+                label: 'Five Hour Limit',
+                window: '5h',
+                remainingFraction: 0.96,
+                resetTime: new Date(now + 3 * 3600 * 1000).toISOString(),
+              },
+              {
+                id: 'gemini-weekly',
+                label: 'Weekly Limit',
+                window: 'weekly',
+                remainingFraction: 0.04,
+                resetTime: new Date(now + 4 * 86400 * 1000).toISOString(),
+              },
+            ],
+          },
+          {
+            id: 'claude-gpt-models',
+            label: 'Claude and GPT models',
+            description: 'Models within this group: Claude Sonnet, GPT-OSS',
+            models: ['claude-sonnet-4-5', 'gpt-oss-120b-medium'],
+            buckets: [
+              {
+                id: '3p-5h',
+                label: 'Five Hour Limit',
+                window: '5h',
+                remainingFraction: 0.11,
+                resetTime: new Date(now + 2 * 3600 * 1000).toISOString(),
+              },
+              {
+                id: '3p-weekly',
+                label: 'Weekly Limit',
+                window: 'weekly',
+                remainingFraction: 0.19,
+                resetTime: new Date(now + 5 * 86400 * 1000).toISOString(),
+              },
+            ],
+          },
+        ],
+      });
+
+      mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+        return {
+          generated_at_ms: Date.now(),
+          items: request.windows.map((w) => ({
+            request_key: w.request_key,
+            row_key: w.row_key,
+            window_key: w.window_key,
+            provider_window_id: w.provider_window_id,
+            period: w.period,
+            from_ms: w.from_ms,
+            to_ms: w.to_ms,
+            matched: true,
+            total_requests: 10,
+            success_calls: 10,
+            failure_calls: 0,
+            total_tokens: 20_000,
+            total_cost: 0.2,
+            success_rate: 1,
+            last_seen_ms: Date.now() - 1000,
+            scope_match_status: 'complete',
+            unmatched_requests: 0,
+            sync_status: 'ready',
+          })),
+        };
+      });
+
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+
+      const selectionKey = getAuthFileSelectionKey(file);
+
+      // 1. Initial Table mode: 4 rendered quota windows & 4 logical usage target windows
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
+      const initialTableRequest = mocks.getAccountWindowUsage.mock.calls[0]?.[2] as {
+        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
+      };
+      expect(initialTableRequest).toBeDefined();
+      const initialTableSelectedWindowIds = new Set(
+        initialTableRequest.windows.map((w) => w.provider_window_id || w.window_key)
+      );
+      expect(initialTableSelectedWindowIds.size).toBe(4);
+      expect(Array.from(initialTableSelectedWindowIds)).toEqual(
+        expect.arrayContaining([
+          'claude-gpt-models:3p-5h',
+          'gemini-models:gemini-5h',
+          'claude-gpt-models:3p-weekly',
+          'gemini-models:gemini-weekly',
+        ])
+      );
+
+      const initialCard = findAccountCardByKey(renderer, selectionKey);
+      const initialWindows = initialCard.findAll(
+        (node) => typeof node.props['data-account-quota-window'] === 'string'
+      );
+      expect(initialWindows).toHaveLength(4);
+      expect(initialWindows.map((w) => w.props['data-account-quota-window'])).toEqual([
+        'claude-gpt-models:3p-5h',
+        'gemini-models:gemini-5h',
+        'claude-gpt-models:3p-weekly',
+        'gemini-models:gemini-weekly',
+      ]);
+      const initialText = readText(initialCard);
+      expect(initialText).toContain('Claude');
+      expect(initialText).toContain('Gemini');
+      expect(initialText).toContain('5h');
+      expect(initialText).toMatch(/Weekly|7d/);
+
+      // 2. Switch to Grid mode: 2 rendered quota windows & 2 logical usage target windows
+      const gridButton = renderer.root.find(
+        (node) => node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
+      );
+      await act(async () => {
+        gridButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      const gridRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as {
+        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
+      };
+      expect(gridRequest).toBeDefined();
+      const gridSelectedWindowIds = new Set(
+        gridRequest.windows.map((w) => w.provider_window_id || w.window_key)
+      );
+      expect(gridSelectedWindowIds.size).toBe(2);
+      expect(Array.from(gridSelectedWindowIds)).toEqual(
+        expect.arrayContaining(['claude-gpt-models:3p-5h', 'gemini-models:gemini-5h'])
+      );
+      expect(gridSelectedWindowIds.has('claude-gpt-models:3p-weekly')).toBe(false);
+      expect(gridSelectedWindowIds.has('gemini-models:gemini-weekly')).toBe(false);
+
+      const gridCard = findAccountCardByKey(renderer, selectionKey);
+      const gridWindows = gridCard.findAll(
+        (node) => typeof node.props['data-account-quota-window'] === 'string'
+      );
+      expect(gridWindows).toHaveLength(2);
+      expect(gridWindows.map((w) => w.props['data-account-quota-window'])).toEqual([
+        'claude-gpt-models:3p-5h',
+        'gemini-models:gemini-5h',
+      ]);
+      const gridText = readText(gridCard);
+      expect(gridText).toContain('Claude');
+      expect(gridText).toContain('Gemini');
+      expect(gridText).toContain('5h');
+      expect(gridWindows.some((w) => /Weekly|7d/.test(readText(w)))).toBe(false);
+
+      // 3. Switch back to Table mode: restores 4 rendered quota windows & 4 logical usage target windows
+      const tableButton = renderer.root.find(
+        (node) => node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_table'
+      );
+      await act(async () => {
+        tableButton.props.onClick();
+        await Promise.resolve();
+      });
+      await flushPromises();
+
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+      const restoredTableRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as {
+        windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
+      };
+      expect(restoredTableRequest).toBeDefined();
+      const restoredSelectedWindowIds = new Set(
+        restoredTableRequest.windows.map((w) => w.provider_window_id || w.window_key)
+      );
+      expect(restoredSelectedWindowIds.size).toBe(4);
+      expect(Array.from(restoredSelectedWindowIds)).toEqual(
+        expect.arrayContaining([
+          'claude-gpt-models:3p-5h',
+          'gemini-models:gemini-5h',
+          'claude-gpt-models:3p-weekly',
+          'gemini-models:gemini-weekly',
+        ])
+      );
+
+      const restoredCard = findAccountCardByKey(renderer, selectionKey);
+      const restoredWindows = restoredCard.findAll(
+        (node) => typeof node.props['data-account-quota-window'] === 'string'
+      );
+      expect(restoredWindows).toHaveLength(4);
+      expect(restoredWindows.map((w) => w.props['data-account-quota-window'])).toEqual([
+        'claude-gpt-models:3p-5h',
+        'gemini-models:gemini-5h',
+        'claude-gpt-models:3p-weekly',
+        'gemini-models:gemini-weekly',
+      ]);
+      const restoredText = readText(restoredCard);
+      expect(restoredText).toContain('Claude');
+      expect(restoredText).toContain('Gemini');
+      expect(restoredText).toContain('5h');
+      expect(restoredText).toMatch(/Weekly|7d/);
+    });
+
     it('refreshes list window usage on passive 60s evidence refresh interval', async () => {
       vi.useFakeTimers();
       const file = makeCodexFile('codex-passive.json', 'auth-passive', 'passive@example.com');

@@ -370,7 +370,7 @@
 .accountCardList {
   display: grid;
   gap: 8px;
-  min-width: 1040px;
+  min-width: 1100px;
   padding: 10px 12px;
 }
 
@@ -380,7 +380,7 @@
   grid-template-columns:
     minmax(140px, 1.1fr)
     76px
-    minmax(150px, 0.45fr)
+    minmax(180px, 0.45fr)
     minmax(124px, 0.3fr)
     minmax(280px, 3fr)
     146px;
@@ -1083,7 +1083,7 @@
     grid-template-columns:
       minmax(150px, 1.1fr)
       78px
-      minmax(160px, 0.45fr)
+      minmax(190px, 0.45fr)
       minmax(132px, 0.3fr)
       minmax(300px, 3fr)
       175px;
@@ -1103,7 +1103,7 @@
     grid-template-columns:
       minmax(180px, 1.3fr)
       88px
-      minmax(176px, 0.45fr)
+      minmax(200px, 0.45fr)
       minmax(144px, 0.3fr)
       minmax(380px, 3fr)
       182px;
@@ -1426,6 +1426,9 @@
     min-height: 24px;
     padding-inline: 10px;
     font-size: 13px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   small {
