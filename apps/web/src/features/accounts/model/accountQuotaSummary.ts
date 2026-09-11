@@ -593,9 +593,7 @@ const quotaFromXaiBilling = (
     resetAccuracy: periodReset.resetAccuracy,
   };
   const periodRemainingPercent =
-    billing.periodType === 'weekly' || billing.periodType === 'monthly'
-      ? remainingPercentFromUsed(billing.usagePercent)
-      : null;
+    billing.periodType === 'weekly' ? remainingPercentFromUsed(billing.usagePercent) : null;
   const productRemainingWindows =
     billing.productUsage
       ?.map((product) => ({

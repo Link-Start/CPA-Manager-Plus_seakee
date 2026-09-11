@@ -677,14 +677,8 @@ const buildXaiQuotaDisplayWindows = (
       ? clampDisplayPercent(billing.usedPercent)
       : null;
   const hasLegacyMonthlyWindow = monthlyUsedPercent !== null || billing.monthlyLimitCents !== null;
-  const hasPeriodMonthlyWindow =
-    billing.periodType === 'monthly' && periodUsedPercent !== null && !hasLegacyMonthlyWindow;
 
-  if (
-    billing.periodType === 'weekly' ||
-    hasPeriodMonthlyWindow ||
-    (billing.productUsage?.length ?? 0) > 0
-  ) {
+  if (billing.periodType === 'weekly' || (billing.productUsage?.length ?? 0) > 0) {
     windows.push(
       buildAccountQuotaDisplayWindow({
         key: 'credits-period',
