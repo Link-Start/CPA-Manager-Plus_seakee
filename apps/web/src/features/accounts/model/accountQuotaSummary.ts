@@ -529,9 +529,6 @@ const quotaFromUsedWindows = (
 const codexMainQuotaWindows = (quota: CodexQuotaState) =>
   quota.windows.filter(isCodexMainQuotaWindow);
 
-const hasPositiveXaiLimit = (value: number | null | undefined): boolean =>
-  typeof value === 'number' && Number.isFinite(value) && value > 0;
-
 const normalizeXaiPlanType = (planType?: string | null): string =>
   planType ? planType.trim().toLowerCase().replace(/[\s\-_]+/g, '') : '';
 
@@ -565,19 +562,8 @@ export const hasConfirmedXaiBillingEntitlement = (
   planType?: string | null
 ): boolean => {
   if (!billing) return false;
-
-  if (isExplicitFreeXaiPlan(planType)) {
-    return false;
-  }
-
-  if (isConfirmedPaidXaiPlan(planType)) {
-    return true;
-  }
-
-  return (
-    hasPositiveXaiLimit(billing.monthlyLimitCents) ||
-    hasPositiveXaiLimit(billing.onDemandCapCents)
-  );
+  if (isExplicitFreeXaiPlan(planType)) return false;
+  return isConfirmedPaidXaiPlan(planType);
 };
 
 const quotaFromXaiBilling = (

@@ -703,7 +703,7 @@ describe('accountQuotaDisplayWindows', () => {
         },
       },
     } satisfies AccountQuotaStores;
-    const row = buildRow({ name: 'xai.json', type: 'xai' }, stores);
+    const row = buildRow({ name: 'xai.json', type: 'xai', planType: 'SuperGrok' }, stores);
 
     const windows = buildAccountQuotaDisplayWindows(row, {
       stores,
@@ -758,7 +758,7 @@ describe('accountQuotaDisplayWindows', () => {
         },
       },
     } satisfies AccountQuotaStores;
-    const row = buildRow({ name: 'xai.json', type: 'xai' }, stores);
+    const row = buildRow({ name: 'xai.json', type: 'xai', planType: 'SuperGrok' }, stores);
 
     const windows = buildAccountQuotaDisplayWindows(row, {
       stores,
@@ -805,7 +805,7 @@ describe('accountQuotaDisplayWindows', () => {
         },
       },
     } satisfies AccountQuotaStores;
-    const row = buildRow({ name: 'xai.json', type: 'xai' }, stores);
+    const row = buildRow({ name: 'xai.json', type: 'xai', planType: 'SuperGrok' }, stores);
 
     const windows = buildAccountQuotaDisplayWindows(row, {
       stores,
@@ -872,7 +872,7 @@ describe('accountQuotaDisplayWindows', () => {
         },
       },
     } satisfies AccountQuotaStores;
-    const row = buildRow({ name: 'xai.json', type: 'xai' }, stores);
+    const row = buildRow({ name: 'xai.json', type: 'xai', planType: 'SuperGrok' }, stores);
 
     const windows = buildAccountQuotaDisplayWindows(row, {
       stores,
@@ -881,6 +881,39 @@ describe('accountQuotaDisplayWindows', () => {
     });
 
     expect(windows.map((window) => window.key)).toEqual(['credits-period', 'pay-as-you-go']);
+  });
+
+  it('does not create quota windows for unknown plan even when positive limits exist', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai.json': {
+          status: 'success',
+          billing: {
+            periodType: 'monthly',
+            usagePercent: null,
+            productUsage: [],
+            monthlyLimitCents: 10_000,
+            usedCents: 2_000,
+            includedUsedCents: 2_000,
+            onDemandCapCents: 5_000,
+            onDemandUsedCents: 2_500,
+            onDemandUsedPercent: 50,
+            billingPeriodEnd: '2026-07-31T00:00:00Z',
+            usedPercent: 100,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow({ name: 'xai.json', type: 'xai' }, stores);
+
+    expect(
+      buildAccountQuotaDisplayWindows(row, {
+        stores,
+        translateQuotaWindowLabel,
+        t,
+      })
+    ).toEqual([]);
   });
 
   it('does not create xAI quota windows from weekly protobuf zero placeholders', () => {

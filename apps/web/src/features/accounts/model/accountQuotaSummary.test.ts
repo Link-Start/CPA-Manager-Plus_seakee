@@ -93,7 +93,7 @@ describe('resolveAccountQuota', () => {
   });
 
   it('keeps confirmed paid xAI billing quota available', () => {
-    const file = { name: 'xai-paid.json', type: 'xai' } as AuthFileItem;
+    const file = { name: 'xai-paid.json', type: 'xai', planType: 'SuperGrok' } as AuthFileItem;
     const stores = emptyStores();
     stores.xaiQuota[file.name] = {
       ...buildQuotaCredentialIdentity(file),
@@ -113,6 +113,29 @@ describe('resolveAccountQuota', () => {
       remainingPercent: 80,
       usedPercent: 20,
       resetLabel: '2026-10-01T00:00:00Z',
+    });
+  });
+
+  it('does not expose quota when plan is unknown even if positive limits exist', () => {
+    const file = { name: 'xai-unknown.json', type: 'xai' } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'monthly',
+        monthlyLimitCents: 10_000,
+        usedCents: 2_000,
+        includedUsedCents: 2_000,
+        usedPercent: 20,
+        billingPeriodEnd: '2026-10-01T00:00:00Z',
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'unknown',
+      remainingPercent: null,
+      usedPercent: null,
     });
   });
 
@@ -371,11 +394,15 @@ describe('hasConfirmedXaiBillingEntitlement', () => {
     expect(hasConfirmedXaiBillingEntitlement(withoutLimit, 'unknown')).toBe(false);
   });
 
-  it('returns true when plan is unknown but positive limit exists', () => {
+  it('returns false when plan is unknown even if positive limits exist', () => {
     const withMonthlyLimit = makeXaiBilling({ monthlyLimitCents: 10_000 });
     const withOnDemandLimit = makeXaiBilling({ onDemandCapCents: 5_000 });
-    expect(hasConfirmedXaiBillingEntitlement(withMonthlyLimit, null)).toBe(true);
-    expect(hasConfirmedXaiBillingEntitlement(withOnDemandLimit, null)).toBe(true);
+    expect(hasConfirmedXaiBillingEntitlement(withMonthlyLimit, null)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withMonthlyLimit, undefined)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withMonthlyLimit, 'unknown')).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withOnDemandLimit, null)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withOnDemandLimit, undefined)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withOnDemandLimit, 'unknown')).toBe(false);
   });
 });
 
