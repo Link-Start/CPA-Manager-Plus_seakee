@@ -370,7 +370,7 @@
 .accountCardList {
   display: grid;
   gap: 8px;
-  min-width: 1100px;
+  min-width: 1240px;
   padding: 10px 12px;
 }
 
@@ -380,11 +380,12 @@
   grid-template-columns:
     minmax(140px, 1.1fr)
     76px
-    minmax(180px, 0.45fr)
+    96px
     minmax(124px, 0.3fr)
+    minmax(160px, 0.35fr)
     minmax(280px, 3fr)
     146px;
-  column-gap: clamp(8px, 0.8vw, 12px);
+  column-gap: 8px;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -407,7 +408,8 @@
 
   > span:nth-child(2),
   > span:nth-child(3),
-  > span:nth-child(4) {
+  > span:nth-child(4),
+  > span:nth-child(5) {
     justify-content: center;
     text-align: center;
   }
@@ -415,12 +417,11 @@
   > span:last-child {
     justify-content: center;
     text-align: center;
-    padding-left: 10px;
     box-sizing: border-box;
   }
 
   > span:first-child,
-  > span:nth-child(5) {
+  > span:nth-child(6) {
     justify-content: flex-start;
     text-align: left;
   }
@@ -460,7 +461,7 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 15px;
   min-width: 0;
   min-height: 250px;
   padding: 14px 16px;
@@ -884,9 +885,21 @@
   gap: 8px;
   width: 100%;
 
-  .quotaWindowCard + .quotaWindowCard {
+  > .quotaWindowCard + .quotaWindowCard {
     padding-top: 7px;
     border-top: 1px dashed color-mix(in srgb, var(--accounts-border) 65%, transparent);
+  }
+
+  .accountGridCardQuotaGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .accountGridCardQuotaGroup + .accountGridCardQuotaGroup {
+    padding-top: 8px;
+    border-top: 1px dashed color-mix(in srgb, var(--accounts-border) 52%, transparent);
   }
 }
 
@@ -1078,16 +1091,21 @@
 }
 
 @media (min-width: 1360px) {
+  .accountCardList {
+    min-width: 1320px;
+  }
+
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
       minmax(150px, 1.1fr)
-      78px
-      minmax(190px, 0.45fr)
-      minmax(132px, 0.3fr)
+      70px
+      96px
+      minmax(112px, 0.3fr)
+      minmax(178px, 0.35fr)
       minmax(300px, 3fr)
       175px;
-    column-gap: clamp(10px, 0.85vw, 14px);
+    column-gap: 10px;
   }
 
   .rowActions {
@@ -1098,16 +1116,21 @@
 }
 
 @media (min-width: 1680px) {
+  .accountCardList {
+    min-width: 1500px;
+  }
+
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
       minmax(180px, 1.3fr)
-      88px
-      minmax(200px, 0.45fr)
-      minmax(144px, 0.3fr)
+      80px
+      96px
+      minmax(124px, 0.3fr)
+      minmax(186px, 0.35fr)
       minmax(380px, 3fr)
       182px;
-    column-gap: 16px;
+    column-gap: 12px;
   }
 
   .rowActions {
@@ -1126,13 +1149,6 @@
     display: none;
   }
 
-  .accountCardPlan::before,
-  .accountCardHealth::before,
-  .accountCardLatestRequest::before,
-  .accountCardBusiness::before,
-  .accountCardRecommendation::before {
-    display: none;
-  }
 }
 
 .accountCardSelected {
@@ -1164,45 +1180,6 @@
   box-sizing: border-box;
   align-self: stretch;
   min-width: 0;
-}
-
-.accountCardIdentity,
-.accountCardPlan,
-.accountCardHealth,
-.accountCardLatestRequest,
-.accountCardBusiness {
-  padding-right: 6px;
-}
-
-.accountCardPlan,
-.accountCardHealth,
-.accountCardLatestRequest,
-.accountCardBusiness,
-.accountCardRecommendation {
-  position: relative;
-  padding-left: 10px;
-}
-
-.accountCardPlan::before,
-.accountCardHealth::before,
-.accountCardLatestRequest::before,
-.accountCardBusiness::before,
-.accountCardRecommendation::before {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 0;
-  width: 1px;
-  border-radius: $radius-full;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    color-mix(in srgb, var(--accounts-strong-border) 68%, transparent),
-    transparent
-  );
-  content: '';
-  opacity: 0.68;
-  pointer-events: none;
 }
 
 .accountCardIdentity {
@@ -1425,8 +1402,12 @@
   .badge {
     min-height: 24px;
     padding-inline: 10px;
+    padding-block: 3px;
     font-size: 13px;
+    line-height: 1.25;
     max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -1465,20 +1446,11 @@
   cursor: pointer;
   transition: background-color 0.14s ease;
 
-  &:hover {
-    background: color-mix(in srgb, var(--primary-color) 4%, transparent);
-  }
-
   &:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--primary-color) 48%, transparent);
     outline-offset: -2px;
     border-radius: 6px;
   }
-}
-
-.accountCardDetailTrigger.accountCardEvidence,
-.accountCardDetailTrigger.accountCardBusiness {
-  padding: 0 6px 0 10px;
 }
 
 .accountHistoryGrid {
@@ -1488,6 +1460,63 @@
   justify-content: stretch;
   gap: 10px 8px;
   min-width: 0;
+}
+
+.accountGridCardHistory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  height: auto;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accounts-border) 65%, transparent);
+
+  .accountHistoryGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .accountHistoryMetric {
+    display: grid;
+    grid-template-columns: 17px minmax(0, 1fr);
+    gap: 1px 3px;
+    min-height: 48px;
+    padding: 7px 4px;
+    border: 1px solid color-mix(in srgb, var(--accounts-border) 72%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--accounts-surface) 42%, transparent);
+    box-sizing: border-box;
+
+    strong {
+      grid-column: 1 / -1;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .accountHistoryMetricLabel {
+      font-size: 10px;
+      line-height: 1.15;
+    }
+  }
+
+  .accountHistoryFootnote {
+    max-width: 100%;
+  }
+}
+
+.accountGridCardHistoryTitle,
+.accountHistoryMetricLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accounts-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountGridCardHistoryTitle {
+  font-weight: 700;
 }
 
 .accountHistoryMetric {
@@ -1722,6 +1751,26 @@
   .rowActions {
     align-self: center;
     justify-content: center;
+  }
+}
+
+@media (min-width: 1025px) {
+  .accountCardRecommendation::before {
+    content: '';
+    position: absolute;
+    left: -5px;
+    top: 6px;
+    bottom: 6px;
+    width: 1px;
+    border-radius: $radius-full;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      color-mix(in srgb, var(--accounts-strong-border) 68%, transparent),
+      transparent
+    );
+    opacity: 0.68;
+    pointer-events: none;
   }
 }
 
