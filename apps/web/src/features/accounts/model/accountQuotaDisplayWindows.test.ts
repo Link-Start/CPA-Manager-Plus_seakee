@@ -883,7 +883,7 @@ describe('accountQuotaDisplayWindows', () => {
     expect(windows.map((window) => window.key)).toEqual(['credits-period', 'pay-as-you-go']);
   });
 
-  it('does not create a monthly window from weekly protobuf zero placeholders', () => {
+  it('does not create xAI quota windows from weekly protobuf zero placeholders', () => {
     const stores = {
       ...emptyStores(),
       xaiQuota: {
@@ -915,12 +915,10 @@ describe('accountQuotaDisplayWindows', () => {
       t,
     });
 
-    expect(windows.map((window) => window.key)).toEqual(['credits-period']);
+    expect(windows).toEqual([]);
   });
 
-  it('keeps unknown weekly xAI usage separate from the monthly billing reset', () => {
-    const weeklyResetMs = Date.parse('2026-09-12T00:00:00Z');
-    const monthlyResetMs = Date.parse('2026-10-01T00:00:00Z');
+  it('does not create xAI quota windows from unknown weekly usage or monthly billing reset', () => {
     const stores = {
       ...emptyStores(),
       xaiQuota: {
@@ -952,27 +950,41 @@ describe('accountQuotaDisplayWindows', () => {
       translateQuotaWindowLabel,
       t,
     });
-    const weekly = windows.find((window) => window.key === 'credits-period');
-    const billing = windows.find((window) => window.key === 'billing');
 
-    expect(weekly).toMatchObject({
-      key: 'credits-period',
-      kind: 'weekly',
-      usedPercent: null,
-      remainingPercent: null,
-      resetAtMs: weeklyResetMs,
-      limitWindowSeconds: 7 * 24 * 60 * 60,
-      windowMode: 'fixed',
-      cycleStartMs: Date.parse('2026-09-05T00:00:00Z'),
-      cycleEndMs: weeklyResetMs,
-    });
-    expect(billing).toMatchObject({
-      key: 'billing',
-      usedPercent: null,
-      remainingPercent: null,
-      resetAtMs: monthlyResetMs,
-    });
-    expect(windows.some((window) => window.key === 'pay-as-you-go')).toBe(false);
+    expect(windows).toEqual([]);
+  });
+
+  it('does not create xAI quota windows for an explicit Free plan', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai-free.json': {
+          status: 'success',
+          billing: {
+            periodType: 'monthly',
+            usagePercent: 20,
+            productUsage: [],
+            monthlyLimitCents: 10_000,
+            usedCents: 2_000,
+            includedUsedCents: 2_000,
+            onDemandCapCents: null,
+            onDemandUsedCents: null,
+            onDemandUsedPercent: null,
+            billingPeriodEnd: '2026-09-01T00:00:00Z',
+            usedPercent: 20,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow({ name: 'xai-free.json', type: 'xai', planType: 'free' }, stores);
+
+    expect(
+      buildAccountQuotaDisplayWindows(row, {
+        stores,
+        translateQuotaWindowLabel,
+        t,
+      })
+    ).toEqual([]);
   });
 
   it('does not create a monthly window when usage exists without limit evidence', () => {

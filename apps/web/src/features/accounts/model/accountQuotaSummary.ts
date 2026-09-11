@@ -529,6 +529,32 @@ const quotaFromUsedWindows = (
 const codexMainQuotaWindows = (quota: CodexQuotaState) =>
   quota.windows.filter(isCodexMainQuotaWindow);
 
+const hasPositiveXaiLimit = (value: number | null | undefined): boolean =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+export const hasConfirmedXaiBillingEntitlement = (
+  billing: XaiBillingSummary | null | undefined,
+  planType?: string | null
+): boolean => {
+  if (!billing) return false;
+
+  const normalizedPlanType = planType?.trim().toLowerCase();
+  if (
+    normalizedPlanType === 'free' ||
+    normalizedPlanType === 'free-tier' ||
+    normalizedPlanType === 'free_tier'
+  ) {
+    return false;
+  }
+
+  // A positive paid limit is explicit entitlement evidence. Period types,
+  // usage percentages, and reset boundaries alone are not.
+  return (
+    hasPositiveXaiLimit(billing.monthlyLimitCents) ||
+    hasPositiveXaiLimit(billing.onDemandCapCents)
+  );
+};
+
 const quotaFromXaiBilling = (
   billing: XaiBillingSummary | null | undefined,
   planType: string | null,
@@ -537,7 +563,7 @@ const quotaFromXaiBilling = (
   if (!billing) {
     return quotaFromRemainingWindows([{ remainingPercent: null }], planType, options);
   }
-  if (billing.officialApiHealth) {
+  if (billing.officialApiHealth || !hasConfirmedXaiBillingEntitlement(billing, planType)) {
     return quotaFromRemainingWindows([{ remainingPercent: null }], planType, options);
   }
 
