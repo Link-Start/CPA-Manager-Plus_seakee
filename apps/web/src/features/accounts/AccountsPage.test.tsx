@@ -8691,7 +8691,7 @@ describe('AccountsPage replacement flows', () => {
     );
     expect(
       card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(readText(card)).toContain('Gemini');
     expect(readText(card)).toContain('Claude');
@@ -8856,7 +8856,7 @@ describe('AccountsPage replacement flows', () => {
 
     expect(
       card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     expect(readText(card)).toContain('5h');
     expect(readText(card)).toContain('Gemini');
     expect(readText(card)).toContain('Claude');
@@ -9463,7 +9463,7 @@ describe('AccountsPage replacement flows', () => {
     const cardText = getAccountCardText(renderer, selectionKey);
     expect(cardText).toContain('5h');
     expect(cardText).toContain('Weekly');
-    expect(cardText).not.toContain('Monthly');
+    expect(cardText).toContain('Monthly');
     expect(cardText).not.toContain('Spark model quota');
     expect(cardText).not.toContain('Billing credits');
 
@@ -16996,7 +16996,7 @@ describe('AccountsPage replacement flows', () => {
       expect(noteRow.props.title).not.toContain('accounts.note_edit');
     });
 
-    it('queries list window usage only for the selected main list quota windows (max 2)', async () => {
+    it('queries list window usage only for the selected main list quota windows (max 4 in Table)', async () => {
       const file = makeCodexFile('codex-multi.json', 'auth-multi', 'multi@example.com');
       mocks.files = [file];
       mocks.panelFeatureAvailability = {
@@ -17094,11 +17094,12 @@ describe('AccountsPage replacement flows', () => {
       const monthlyEntries = listRequest.windows.filter(
         (w) => w.provider_window_id === 'monthly' || w.window_key === 'monthly'
       );
-      expect(monthlyEntries).toHaveLength(0);
+      expect(monthlyEntries).toHaveLength(2);
 
       const queriedPairs = listRequest.windows.map((w) => `${w.provider_window_id}/${w.period}`);
       expect(queriedPairs).toContain('five-hour/current');
       expect(queriedPairs).toContain('weekly/current');
+      expect(queriedPairs).toContain('monthly/current');
     });
 
     it('refreshes list window usage on passive 60s evidence refresh interval', async () => {

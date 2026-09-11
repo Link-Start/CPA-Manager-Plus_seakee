@@ -513,7 +513,7 @@ describe('accountsPagePresentation', () => {
       expect(selected).toEqual([fiveHour]);
     });
 
-    it('always caps selection at maximum 2 windows', () => {
+    it('defaults main-list selection to maximum 2 windows', () => {
       const w1 = makeQuotaWindow({
         key: 'w1',
         kind: 'five_hour',
@@ -546,6 +546,105 @@ describe('accountsPagePresentation', () => {
       const selected = selectAccountQuotaMainListWindows(makeRow('claude'), [w4, w3, w2, w1]);
       expect(selected).toHaveLength(2);
       expect(selected).toEqual([w1, w2]);
+    });
+
+    it('supports an explicit maximum of 4 windows while preserving duration order', () => {
+      const fiveHour = makeQuotaWindow({
+        key: '5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        remainingPercent: 95,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const daily = makeQuotaWindow({
+        key: '24h',
+        kind: 'daily',
+        limitWindowSeconds: 86400,
+        remainingPercent: 5,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const weekly = makeQuotaWindow({
+        key: '7d',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        remainingPercent: 80,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const monthly = makeQuotaWindow({
+        key: '30d',
+        kind: 'monthly',
+        limitWindowSeconds: 2592000,
+        remainingPercent: 10,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+      const longer = makeQuotaWindow({
+        key: '90d',
+        kind: 'monthly',
+        limitWindowSeconds: 7776000,
+        remainingPercent: 99,
+        windowMode: 'fixed',
+        source: 'claude',
+      });
+
+      const selected = selectAccountQuotaMainListWindows(
+        makeRow('claude'),
+        [longer, weekly, monthly, fiveHour, daily],
+        4
+      );
+
+      expect(selected).toHaveLength(4);
+      expect(selected).toEqual([fiveHour, daily, weekly, monthly]);
+    });
+
+    it('orders Antigravity windows by duration and stable model group rank', () => {
+      const claude5h = makeQuotaWindow({
+        key: 'claude-5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        source: 'antigravity',
+        windowMode: 'fixed',
+        groupLabel: 'Claude and GPT models',
+        modelScope: { kind: 'family', key: 'claude_gpt', complete: true },
+      });
+      const gemini5h = makeQuotaWindow({
+        key: 'gemini-5h',
+        kind: 'five_hour',
+        limitWindowSeconds: 18000,
+        source: 'antigravity',
+        windowMode: 'fixed',
+        groupLabel: 'Gemini models',
+        modelScope: { kind: 'family', key: 'gemini', complete: true },
+      });
+      const claude7d = makeQuotaWindow({
+        key: 'claude-7d',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        source: 'antigravity',
+        windowMode: 'fixed',
+        groupLabel: 'Claude and GPT models',
+        modelScope: { kind: 'family', key: 'claude_gpt', complete: true },
+      });
+      const gemini7d = makeQuotaWindow({
+        key: 'gemini-7d',
+        kind: 'weekly',
+        limitWindowSeconds: 604800,
+        source: 'antigravity',
+        windowMode: 'fixed',
+        groupLabel: 'Gemini models',
+        modelScope: { kind: 'family', key: 'gemini', complete: true },
+      });
+
+      const selected = selectAccountQuotaMainListWindows(
+        makeRow('antigravity'),
+        [gemini7d, claude5h, claude7d, gemini5h],
+        4
+      );
+
+      expect(selected).toEqual([claude5h, gemini5h, claude7d, gemini7d]);
     });
 
     it('prioritizes known duration over unknown duration', () => {

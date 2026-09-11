@@ -1563,6 +1563,7 @@ export function AccountsPage() {
   );
   const isCompactScreen = useMediaQuery('(max-width: 1024px)');
   const effectiveLayoutMode = isCompactScreen ? 'grid' : layoutMode;
+  const mainListQuotaWindowLimit = effectiveLayoutMode === 'table' ? 4 : 2;
   const [copiedIdentityKey, setCopiedIdentityKey] = useState<string | null>(null);
   const detailEventsRequestIdRef = useRef(0);
   const detailEventsAutoLoadKeyRef = useRef<string | null>(null);
@@ -4756,7 +4757,11 @@ export function AccountsPage() {
       const quotaWindows =
         quotaDisplayWindowsByRowKey.get(row.selectionKey) ??
         buildQuotaDisplayWindows(row);
-      const mainListWindows = selectAccountQuotaMainListWindows(row, quotaWindows);
+      const mainListWindows = selectAccountQuotaMainListWindows(
+        row,
+        quotaWindows,
+        mainListQuotaWindowLimit
+      );
       const existingDefinitions = quotaWindowDefinitionsByRowKey.get(row.selectionKey);
       let definitions: AccountQuotaWindowDefinition[];
       if (existingDefinitions && existingDefinitions.length > 0) {
@@ -4775,6 +4780,7 @@ export function AccountsPage() {
     pageRows,
     quotaDisplayWindowsByRowKey,
     quotaWindowDefinitionsByRowKey,
+    mainListQuotaWindowLimit,
   ]);
   const isListQueryContextMatching = useMemo(() => {
     if (!listWindowUsageQueryContext) return false;
@@ -8388,7 +8394,11 @@ export function AccountsPage() {
     const quotaWindows =
       quotaDisplayWindowsByRowKey.get(row.selectionKey) ?? buildQuotaDisplayWindows(row);
     const quotaLifecycleBarOverride = getAccountQuotaLifecycleBarOverride(row.quota.status);
-    const mainListWindows = selectAccountQuotaMainListWindows(row, quotaWindows);
+    const mainListWindows = selectAccountQuotaMainListWindows(
+      row,
+      quotaWindows,
+      mainListQuotaWindowLimit
+    );
     const quotaCooldown = quotaCooldownsByRowKey.get(row.selectionKey)?.[0] ?? null;
     const codexStatus = codexStatusBySelectionKey.get(row.selectionKey) ?? null;
     const item = buildAccountListItem(row, {
