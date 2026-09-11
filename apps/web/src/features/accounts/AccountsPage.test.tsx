@@ -1093,6 +1093,17 @@ const findAccountDetailRegion = (
   return region;
 };
 
+const findGridQuotaRegion = (renderer: ReactTestRenderer, selectionKey: string) => {
+  const region = findAccountCardByKey(renderer, selectionKey).findAll(
+    (node) =>
+      node.props.role === 'button' &&
+      node.findAll((child) => typeof child.props['data-account-quota-window'] === 'string')
+        .length > 0
+  )[0];
+  if (!region) throw new Error('Grid quota region not found');
+  return region;
+};
+
 const findAccountCardInputByAriaLabel = (
   renderer: ReactTestRenderer,
   selectionKey: string,
@@ -8166,7 +8177,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
 
     const otherQuotaGroup = renderer.root.findByProps({ 'data-quota-window-group': 'other' });
@@ -8291,7 +8302,7 @@ describe('AccountsPage replacement flows', () => {
     expect(findQuotaBarByWindow(card, 'pay-as-you-go').props.className).toContain('quotaBarGood');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8346,7 +8357,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('xai_quota.pay_as_you_go_label');
 
     await act(async () => {
-      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
+      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8436,7 +8447,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('Weekly');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8480,7 +8491,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('accounts.quota_details_only');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8523,7 +8534,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('accounts.quota_details_only');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8625,6 +8636,7 @@ describe('AccountsPage replacement flows', () => {
   });
 
   it('renders Antigravity Pro model groups in the quota matrix and keeps them in quota details', async () => {
+    mocks.location = { pathname: '/accounts', search: '?layout=grid' };
     mocks.files = [
       {
         name: 'antigravity-pro-matrix.json',
@@ -8690,26 +8702,29 @@ describe('AccountsPage replacement flows', () => {
 
     const renderer = await renderAccountsPage();
     const card = findAccountCardByKey(renderer, getAuthFileSelectionKey(mocks.files[0]));
-    const quotaRegion = findAccountDetailRegion(
-      renderer,
-      getAuthFileSelectionKey(mocks.files[0]),
-      'quota'
+    const quotaRegion = findGridQuotaRegion(renderer, getAuthFileSelectionKey(mocks.files[0]));
+    const cardWindows = card.findAll(
+      (node) => typeof node.props['data-account-quota-window'] === 'string'
     );
-    expect(
-      card.findAll((node) => typeof node.props['data-account-quota-window'] === 'string')
-    ).toHaveLength(4);
+    expect(cardWindows).toHaveLength(4);
+    expect(cardWindows.map((window) => window.props['data-account-quota-window'])).toEqual([
+      'claude-gpt-models:3p-5h',
+      'claude-gpt-models:3p-weekly',
+      'gemini-models:gemini-5h',
+      'gemini-models:gemini-weekly',
+    ]);
+    expect(card.findAll((node) => typeof node.props['data-account-quota-group'] === 'string'))
+      .toHaveLength(2);
     expect(readText(card)).not.toContain('accounts.quota_details_only');
     expect(readText(card)).toContain('Gemini');
     expect(readText(card)).toContain('Claude');
-    expect(quotaRegion.props['aria-label']).toContain('Claude');
-    expect(quotaRegion.props['aria-label']).toContain('Gemini');
+    expect(quotaRegion.props.title).toContain('Claude');
+    expect(quotaRegion.props.title).toContain('Gemini');
 
     await act(async () => {
-      findAccountDetailRegion(
-        renderer,
-        getAuthFileSelectionKey(mocks.files[0]),
-        'quota'
-      ).props.onClick();
+      findGridQuotaRegion(renderer, getAuthFileSelectionKey(mocks.files[0])).props.onClick({
+        stopPropagation: vi.fn(),
+      });
     });
 
     const modelQuotaGroup = renderer.root.findByProps({ 'data-quota-window-group': 'model' });
@@ -8720,6 +8735,7 @@ describe('AccountsPage replacement flows', () => {
   });
 
   it('renders Antigravity Free model groups in the quota matrix and keeps them in quota details', async () => {
+    mocks.location = { pathname: '/accounts', search: '?layout=grid' };
     mocks.files = [
       {
         name: 'antigravity-free-weekly.json',
@@ -8779,11 +8795,9 @@ describe('AccountsPage replacement flows', () => {
     expect(readText(card)).toContain('Claude');
 
     await act(async () => {
-      findAccountDetailRegion(
-        renderer,
-        getAuthFileSelectionKey(mocks.files[0]),
-        'quota'
-      ).props.onClick();
+      findGridQuotaRegion(renderer, getAuthFileSelectionKey(mocks.files[0])).props.onClick({
+        stopPropagation: vi.fn(),
+      });
     });
 
     const modelQuotaGroup = renderer.root.findByProps({ 'data-quota-window-group': 'model' });
@@ -8878,7 +8892,7 @@ describe('AccountsPage replacement flows', () => {
     });
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
     await flushPromises();
 
@@ -8932,7 +8946,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('76%');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
 
     expect(renderer.root.findByProps({ 'data-quota-window-group': 'model' })).toBeTruthy();
@@ -9005,7 +9019,7 @@ describe('AccountsPage replacement flows', () => {
     );
 
     await act(async () => {
-      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
+      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick({ stopPropagation: vi.fn() });
     });
 
     const modelQuotaGroup = renderer.root.findByProps({ 'data-quota-window-group': 'model' });
@@ -9082,7 +9096,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('Weekly');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
     });
 
     expect(
@@ -9194,7 +9208,7 @@ describe('AccountsPage replacement flows', () => {
     expect(findHostButtonByText(renderer, 'accounts.view_mode_grid')).toBeDefined();
   });
 
-  it('renders the six localized credential list headers', async () => {
+  it('renders the seven localized credential list headers', async () => {
     const renderer = await renderAccountsPage();
     const header = renderer.root.findByProps({ 'data-account-list-header': 'true' });
 
@@ -9203,6 +9217,7 @@ describe('AccountsPage replacement flows', () => {
       'accounts.list_header_plan',
       'accounts.list_header_availability',
       'accounts.list_header_recent_requests',
+      'accounts.list_header_historical_usage',
       'accounts.list_header_quota',
       'accounts.list_header_actions',
     ]);
@@ -9213,7 +9228,7 @@ describe('AccountsPage replacement flows', () => {
     expect(treeText(renderer)).not.toContain('SUM');
   });
 
-  it('does not render historical usage trigger on main list cards but keeps quota trigger', async () => {
+  it('renders historical usage alongside the quota trigger', async () => {
     const file = mocks.files[0];
     const selectionKey = getAuthFileSelectionKey(file);
     mocks.panelFeatureAvailability = {
@@ -9244,10 +9259,146 @@ describe('AccountsPage replacement flows', () => {
     const renderer = await renderAccountsPage();
     await flushPromises();
 
-    expect(() => findAccountDetailRegion(renderer, selectionKey, 'history')).toThrow();
+    const history = findAccountDetailRegion(renderer, selectionKey, 'history');
+    expect(history.type).toBe('button');
+    expect(history.props['aria-label']).toContain('accounts.history_title:12:1,200:$0.12:83.33%');
+    expect(history.findAllByType('strong').map(readText)).toEqual(['12', '1.2K', '$0.12', '83.3%']);
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
     expect(quotaRegion.type).toBe('button');
     expect(quotaRegion.props['data-account-detail-trigger']).toBe('quota');
+  });
+
+  describe.each(['table', 'grid'] as const)('historical usage in %s layout', (layout) => {
+    const selectionKey = 'history.json\u0000auth-history';
+    const item = {
+      row_key: selectionKey,
+      account_key: 'history@example.com',
+      matched: true,
+      total_requests: 1_234_567,
+      success_calls: 1_218_000,
+      failure_calls: 16_567,
+      total_tokens: 1_000_190_000,
+      total_cost: 12_345.67,
+      success_rate: 0.98321,
+      first_seen_ms: 1,
+      last_seen_ms: 2,
+      sync_status: 'ready' as const,
+    };
+
+    beforeEach(() => {
+      mocks.location = { pathname: '/accounts', search: `?layout=${layout}` };
+      mocks.files = [{
+        ...makeCodexFile('history.json', 'auth-history', 'history@example.com'),
+        success: 9,
+        failed: 1,
+        recent_requests: [{ success: 9, failed: 1 }],
+      }];
+      mocks.panelFeatureAvailability = {
+        checking: false,
+        managerServiceBase: 'http://manager.local:18317',
+        requestMonitoringAvailable: true,
+        serverCodexInspectionAvailable: false,
+      };
+      mocks.getAccountHistory.mockResolvedValue(makeAccountHistoryResponse([item]));
+    });
+
+    it('renders compact historical metrics with exact accessible values and opens quota without bubbling', async () => {
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+      const region = findAccountDetailRegion(renderer, selectionKey, 'history');
+      expect(region.type).toBe('button');
+      expect(region.props.type).toBe('button');
+      expect(region.props['aria-label']).toContain('accounts.detail_tab_quota');
+      expect(region.findAllByType('strong').map(readText)).toEqual([
+        '1.2M', '1.0B', '$12.35K', '98.3%',
+      ]);
+      expect(region.findAll((node) => node.type === 'span' && node.props['aria-label'])
+        .map((node) => node.props['aria-label'])).toEqual([
+        'accounts.history_requests: 1,234,567',
+        'accounts.history_tokens: 1,000,190,000',
+        'accounts.history_cost: $12,345.67',
+        'accounts.history_success: 98.32%',
+      ]);
+      // The trigger contains phrasing content and has no interactive ancestor or descendants.
+      expect(region.findAll((node) => node !== region &&
+        (node.type === 'button' || node.type === 'a' || node.props.role === 'button' ||
+          node.props.tabIndex !== undefined || node.type === 'div'))).toHaveLength(0);
+      for (let parent = region.parent; parent; parent = parent.parent) {
+        expect(parent.type).not.toBe('button');
+        expect(parent.props.role).not.toBe('button');
+      }
+      const stopPropagation = vi.fn();
+      mocks.navigate.mockClear();
+      await act(async () => region.props.onClick({ stopPropagation }));
+      await flushPromises();
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+      expect(renderer.root.findByType(AccountQuotaTab)).toBeTruthy();
+      expect(mocks.navigate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ search: expect.stringContaining('tab=quota') }),
+        { replace: true }
+      );
+    });
+
+    it.each(['unmatched', 'error'] as const)('uses only recent requests and success for %s history', async (state) => {
+      if (state === 'error') mocks.getAccountHistory.mockRejectedValue(new Error('offline'));
+      else mocks.getAccountHistory.mockResolvedValue(makeAccountHistoryResponse([]));
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+      const region = findAccountDetailRegion(renderer, selectionKey, 'history');
+      expect(region.findAllByType('strong').map(readText)).toEqual(['10', '-', '-', '90.0%']);
+      if (state === 'error') expect(readText(region)).toContain('accounts.history_recent_fallback');
+    });
+
+    it('shows unavailable without inventing zero metrics when no fallback exists', async () => {
+      mocks.files = [makeCodexFile('history.json', 'auth-history', 'history@example.com')];
+      mocks.getAccountHistory.mockRejectedValue(new Error('offline'));
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+      const region = findAccountDetailRegion(renderer, selectionKey, 'history');
+      expect(region.findAllByType('strong').map(readText)).toEqual(['-', '-', '-', '-']);
+      expect(readText(region)).toContain('accounts.history_unavailable');
+    });
+
+    it('shows loading followed by syncing using the same history request', async () => {
+      const pending = createDeferred<AccountHistoryResponseForTest>();
+      mocks.getAccountHistory.mockReturnValue(pending.promise);
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+      expect(readText(findAccountDetailRegion(renderer, selectionKey, 'history')))
+        .toContain('accounts.history_loading');
+      pending.resolve(makeAccountHistoryResponse([{ ...item, sync_status: 'pending' }]));
+      await flushPromises();
+      expect(readText(findAccountDetailRegion(renderer, selectionKey, 'history')))
+        .toContain('accounts.history_syncing');
+      expect(mocks.getAccountHistory).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not request history when Request Monitoring is unavailable', async () => {
+      mocks.files = [makeCodexFile('history.json', 'auth-history', 'history@example.com')];
+      mocks.panelFeatureAvailability.requestMonitoringAvailable = false;
+      const renderer = await renderAccountsPage();
+      await flushPromises();
+      expect(mocks.getAccountHistory).not.toHaveBeenCalled();
+      expect(findAccountDetailRegion(renderer, selectionKey, 'history').findAllByType('strong')
+        .map(readText)).toEqual(['-', '-', '-', '-']);
+    });
+
+    it('leaves history non-interactive in selection mode and preserves row selection', async () => {
+      const renderer = await renderAccountsPage();
+      await act(async () => {
+        findHostButtonByText(renderer, 'accounts.selection_mode_enter').props.onClick();
+      });
+      const region = findAccountDetailRegion(renderer, selectionKey, 'history');
+      expect(region.type).toBe('div');
+      expect(region.props.onClick).toBeUndefined();
+      expect(region.props.tabIndex).toBeUndefined();
+      expect(region.props['data-account-detail-trigger']).toBeUndefined();
+      mocks.navigate.mockClear();
+      await act(async () => findAccountCardByKey(renderer, selectionKey).props.onClick());
+      expect(mocks.toggleSelect).toHaveBeenCalledWith(selectionKey);
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(renderer.root.findAllByType(AccountQuotaTab)).toHaveLength(0);
+    });
   });
 
   it('opens the quota detail from the full quota information region', async () => {
@@ -9277,7 +9428,7 @@ describe('AccountsPage replacement flows', () => {
     expect(readText(quotaRegion)).toContain('5h');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
     await flushPromises();
@@ -9333,7 +9484,7 @@ describe('AccountsPage replacement flows', () => {
     expect(quotaRegion.props['aria-label']).toContain('accounts.quota_details_only');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
     await flushPromises();
@@ -9378,7 +9529,7 @@ describe('AccountsPage replacement flows', () => {
     const quotaRegion = findAccountDetailRegion(renderer, selectionKey, 'quota');
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
 
@@ -9400,7 +9551,7 @@ describe('AccountsPage replacement flows', () => {
     expect(renderer.root.findAllByType(AccountQuotaTab)).toHaveLength(0);
 
     await act(async () => {
-      quotaRegion.props.onClick();
+      quotaRegion.props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
     const secondConfirmation = mocks.showConfirmation.mock.calls[1]?.[0] as {
@@ -9474,7 +9625,7 @@ describe('AccountsPage replacement flows', () => {
     expect(cardText).not.toContain('Billing credits');
 
     await act(async () => {
-      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick();
+      findAccountDetailRegion(renderer, selectionKey, 'quota').props.onClick({ stopPropagation: vi.fn() });
       await Promise.resolve();
     });
     await flushPromises();
@@ -16537,7 +16688,7 @@ describe('AccountsPage replacement flows', () => {
         'data-account-detail-trigger': 'quota',
       });
       await act(async () => {
-        quotaTrigger.props.onClick();
+        quotaTrigger.props.onClick({ stopPropagation: vi.fn() });
         await Promise.resolve();
       });
       await flushPromises();
@@ -16767,7 +16918,7 @@ describe('AccountsPage replacement flows', () => {
       });
 
       await act(async () => {
-        quotaTrigger.props.onClick();
+        quotaTrigger.props.onClick({ stopPropagation: vi.fn() });
         await Promise.resolve();
       });
       await flushPromises();
@@ -16898,6 +17049,12 @@ describe('AccountsPage replacement flows', () => {
         'data-account-grid-recent-status': getAuthFileSelectionKey(mocks.files[0]),
       });
       expect(recentStatusSection).toBeTruthy();
+      const historySection = cards[0].findByProps({
+        'data-account-detail-trigger': 'history',
+      });
+      expect(cards[0].children.indexOf(historySection)).toBeLessThan(
+        cards[0].children.indexOf(recentStatusSection)
+      );
       expect(readText(recentStatusSection)).toContain('accounts.detail_overview_recent_status_title');
       const recentStatusBar = recentStatusSection.findByType(ProviderStatusBar);
       expect(recentStatusBar.props.statusData.totalSuccess).toBe(12);
@@ -17111,6 +17268,22 @@ describe('AccountsPage replacement flows', () => {
     });
 
     it('synchronizes rendered quota windows and list usage targets across Table -> Grid -> Table transitions', async () => {
+      mocks.getAccountHistory.mockImplementation(async () =>
+        makeAccountHistoryResponse([{
+          row_key: getAuthFileSelectionKey(mocks.files[0]),
+          account_key: 'antigravity-history',
+          matched: true,
+          total_requests: 12_400,
+          success_calls: 12_300,
+          failure_calls: 100,
+          total_tokens: 8_700_000,
+          total_cost: 18.42,
+          success_rate: 0.997,
+          first_seen_ms: 1,
+          last_seen_ms: 2,
+          sync_status: 'ready',
+        }])
+      );
       const file = {
         name: 'antigravity-pro-matrix.json',
         type: 'antigravity',
@@ -17232,6 +17405,12 @@ describe('AccountsPage replacement flows', () => {
       );
 
       const initialCard = findAccountCardByKey(renderer, selectionKey);
+      const assertHistory = () => {
+        expect(findAccountDetailRegion(renderer, selectionKey, 'history').findAllByType('strong')
+          .map(readText)).toEqual(['12.4K', '8.7M', '$18.42', '99.7%']);
+        expect(mocks.getAccountHistory).toHaveBeenCalledTimes(1);
+      };
+      assertHistory();
       const initialWindows = initialCard.findAll(
         (node) => typeof node.props['data-account-quota-window'] === 'string'
       );
@@ -17248,7 +17427,7 @@ describe('AccountsPage replacement flows', () => {
       expect(initialText).toContain('5h');
       expect(initialText).toMatch(/Weekly|7d/);
 
-      // 2. Switch to Grid mode: 2 rendered quota windows & 2 logical usage target windows
+      // 2. Switch to Grid mode: Pro keeps all 4 rendered quota windows & logical usage targets
       const gridButton = renderer.root.find(
         (node) => node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_grid'
       );
@@ -17258,37 +17437,31 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
       const gridRequest = mocks.getAccountWindowUsage.mock.calls[1]?.[2] as {
         windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
       };
-      expect(gridRequest).toBeDefined();
-      const gridSelectedWindowIds = new Set(
-        gridRequest.windows.map((w) => w.provider_window_id || w.window_key)
-      );
-      expect(gridSelectedWindowIds.size).toBe(2);
-      expect(Array.from(gridSelectedWindowIds)).toEqual(
-        expect.arrayContaining(['claude-gpt-models:3p-5h', 'gemini-models:gemini-5h'])
-      );
-      expect(gridSelectedWindowIds.has('claude-gpt-models:3p-weekly')).toBe(false);
-      expect(gridSelectedWindowIds.has('gemini-models:gemini-weekly')).toBe(false);
+      expect(gridRequest).toBeUndefined();
 
       const gridCard = findAccountCardByKey(renderer, selectionKey);
+      assertHistory();
       const gridWindows = gridCard.findAll(
         (node) => typeof node.props['data-account-quota-window'] === 'string'
       );
-      expect(gridWindows).toHaveLength(2);
+      expect(gridWindows).toHaveLength(4);
       expect(gridWindows.map((w) => w.props['data-account-quota-window'])).toEqual([
         'claude-gpt-models:3p-5h',
+        'claude-gpt-models:3p-weekly',
         'gemini-models:gemini-5h',
+        'gemini-models:gemini-weekly',
       ]);
       const gridText = readText(gridCard);
       expect(gridText).toContain('Claude');
       expect(gridText).toContain('Gemini');
       expect(gridText).toContain('5h');
-      expect(gridWindows.some((w) => /Weekly|7d/.test(readText(w)))).toBe(false);
+      expect(gridWindows.some((w) => /Weekly|7d/.test(readText(w)))).toBe(true);
 
-      // 3. Switch back to Table mode: restores 4 rendered quota windows & 4 logical usage target windows
+      // 3. Switch back to Table mode: keeps 4 rendered quota windows & logical usage targets
       const tableButton = renderer.root.find(
         (node) => node.type === 'button' && node.props['aria-label'] === 'accounts.view_mode_table'
       );
@@ -17298,25 +17471,14 @@ describe('AccountsPage replacement flows', () => {
       });
       await flushPromises();
 
-      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
       const restoredTableRequest = mocks.getAccountWindowUsage.mock.calls[2]?.[2] as {
         windows: Array<{ provider_window_id?: string; window_key?: string; period: string }>;
       };
-      expect(restoredTableRequest).toBeDefined();
-      const restoredSelectedWindowIds = new Set(
-        restoredTableRequest.windows.map((w) => w.provider_window_id || w.window_key)
-      );
-      expect(restoredSelectedWindowIds.size).toBe(4);
-      expect(Array.from(restoredSelectedWindowIds)).toEqual(
-        expect.arrayContaining([
-          'claude-gpt-models:3p-5h',
-          'gemini-models:gemini-5h',
-          'claude-gpt-models:3p-weekly',
-          'gemini-models:gemini-weekly',
-        ])
-      );
+      expect(restoredTableRequest).toBeUndefined();
 
       const restoredCard = findAccountCardByKey(renderer, selectionKey);
+      assertHistory();
       const restoredWindows = restoredCard.findAll(
         (node) => typeof node.props['data-account-quota-window'] === 'string'
       );
