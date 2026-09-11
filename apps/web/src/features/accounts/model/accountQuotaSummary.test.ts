@@ -3,7 +3,11 @@ import type { AuthFileItem, CodexQuotaState, XaiBillingSummary } from '@/types';
 import { getAuthFileSelectionKey } from '@/features/authFiles/model/credentialStatus';
 import { CODEX_SPARK_MODEL_ID } from '@/utils/quota/codexQuota';
 import { buildQuotaCredentialIdentity } from '@/utils/quota/credentialScope';
-import { resolveAccountQuota, type AccountQuotaStores } from './accountQuotaSummary';
+import {
+  hasConfirmedXaiBillingEntitlement,
+  resolveAccountQuota,
+  type AccountQuotaStores,
+} from './accountQuotaSummary';
 
 const emptyStores = (): AccountQuotaStores => ({
   antigravityQuota: {},
@@ -111,6 +115,94 @@ describe('resolveAccountQuota', () => {
       resetLabel: '2026-10-01T00:00:00Z',
     });
   });
+
+  it('exposes weekly quota for confirmed paid SuperGrok plan without legacy monthly limits', () => {
+    const file = {
+      name: 'xai-supergrok.json',
+      type: 'xai',
+      planType: 'SuperGrok',
+    } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'weekly',
+        usagePercent: 42,
+        periodStart: '2026-09-05T00:00:00Z',
+        periodEnd: '2026-09-12T00:00:00Z',
+        monthlyLimitCents: null,
+        onDemandCapCents: null,
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'ok',
+      remainingPercent: 58,
+      usedPercent: 42,
+      resetLabel: '2026-09-12T00:00:00Z',
+      planType: 'SuperGrok',
+    });
+  });
+
+  it.each([
+    { planType: 'SuperGrok Heavy', label: 'SuperGrok Heavy' },
+    { planType: 'X Premium', label: 'X Premium' },
+    { planType: 'Premium+', label: 'Premium+' },
+  ])('exposes quota for confirmed paid plan $label without legacy limits', ({ planType }) => {
+    const file = {
+      name: `xai-${planType}.json`,
+      type: 'xai',
+      planType,
+    } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'weekly',
+        usagePercent: 30,
+        periodStart: '2026-09-05T00:00:00Z',
+        periodEnd: '2026-09-12T00:00:00Z',
+        monthlyLimitCents: null,
+        onDemandCapCents: null,
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'ok',
+      remainingPercent: 70,
+      usedPercent: 30,
+      resetLabel: '2026-09-12T00:00:00Z',
+      planType,
+    });
+  });
+
+  it.each(['Free', 'Free Tier', 'free-tier', 'free_tier'])(
+    'does not expose billing quota for %s xAI plan even with weekly usage and limits null',
+    (planType) => {
+      const file = { name: 'xai-free.json', type: 'xai', planType } as AuthFileItem;
+      const stores = emptyStores();
+      stores.xaiQuota[file.name] = {
+        ...buildQuotaCredentialIdentity(file),
+        status: 'success',
+        billing: makeXaiBilling({
+          periodType: 'weekly',
+          usagePercent: 42,
+          periodStart: '2026-09-05T00:00:00Z',
+          periodEnd: '2026-09-12T00:00:00Z',
+          monthlyLimitCents: null,
+          onDemandCapCents: null,
+        }),
+      };
+
+      expect(resolveAccountQuota(file, stores)).toMatchObject({
+        status: 'unknown',
+        remainingPercent: null,
+        usedPercent: null,
+      });
+    }
+  );
 
   it('keeps the account summary on Codex Main when Spark is more constrained', () => {
     const file = {
@@ -231,3 +323,59 @@ describe('resolveAccountQuota', () => {
     expect(resolveAccountQuota(file, stores).planType).toBe('Antigravity Future');
   });
 });
+
+describe('hasConfirmedXaiBillingEntitlement', () => {
+  it('returns false when billing is null or undefined', () => {
+    expect(hasConfirmedXaiBillingEntitlement(null, 'SuperGrok')).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(undefined, 'SuperGrok')).toBe(false);
+  });
+
+  it('returns false for explicit Free plans regardless of limits', () => {
+    const withLimit = makeXaiBilling({ monthlyLimitCents: 10_000 });
+    const withoutLimit = makeXaiBilling();
+    for (const plan of ['free', 'Free', 'Free Tier', 'free-tier', 'free_tier', 'xaifree']) {
+      expect(hasConfirmedXaiBillingEntitlement(withLimit, plan)).toBe(false);
+      expect(hasConfirmedXaiBillingEntitlement(withoutLimit, plan)).toBe(false);
+    }
+  });
+
+  it('returns true for confirmed paid plans even when limits are null', () => {
+    const withoutLimit = makeXaiBilling({
+      monthlyLimitCents: null,
+      onDemandCapCents: null,
+    });
+    for (const plan of [
+      'SuperGrok',
+      'SuperGrok Heavy',
+      'supergrok-heavy',
+      'Super Grok',
+      'X Premium',
+      'x-premium',
+      'X Premium+',
+      'Premium+',
+      'Premium',
+    ]) {
+      expect(hasConfirmedXaiBillingEntitlement(withoutLimit, plan)).toBe(true);
+    }
+  });
+
+  it('returns false when plan is unknown and limits are absent', () => {
+    const withoutLimit = makeXaiBilling({
+      monthlyLimitCents: null,
+      onDemandCapCents: null,
+    });
+    expect(hasConfirmedXaiBillingEntitlement(withoutLimit, null)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withoutLimit, undefined)).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withoutLimit, '')).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withoutLimit, '   ')).toBe(false);
+    expect(hasConfirmedXaiBillingEntitlement(withoutLimit, 'unknown')).toBe(false);
+  });
+
+  it('returns true when plan is unknown but positive limit exists', () => {
+    const withMonthlyLimit = makeXaiBilling({ monthlyLimitCents: 10_000 });
+    const withOnDemandLimit = makeXaiBilling({ onDemandCapCents: 5_000 });
+    expect(hasConfirmedXaiBillingEntitlement(withMonthlyLimit, null)).toBe(true);
+    expect(hasConfirmedXaiBillingEntitlement(withOnDemandLimit, null)).toBe(true);
+  });
+});
+

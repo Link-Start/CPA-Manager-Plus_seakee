@@ -532,23 +532,48 @@ const codexMainQuotaWindows = (quota: CodexQuotaState) =>
 const hasPositiveXaiLimit = (value: number | null | undefined): boolean =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
 
+const normalizeXaiPlanType = (planType?: string | null): string =>
+  planType ? planType.trim().toLowerCase().replace(/[\s\-_]+/g, '') : '';
+
+export const isExplicitFreeXaiPlan = (planType?: string | null): boolean => {
+  const normalized = normalizeXaiPlanType(planType);
+  if (!normalized) return false;
+  return (
+    normalized === 'free' ||
+    normalized === 'freetier' ||
+    normalized === 'xaifree' ||
+    normalized === 'xaifreetier'
+  );
+};
+
+export const isConfirmedPaidXaiPlan = (planType?: string | null): boolean => {
+  const normalized = normalizeXaiPlanType(planType);
+  if (!normalized) return false;
+  if (isExplicitFreeXaiPlan(planType)) return false;
+
+  return (
+    normalized.startsWith('supergrok') ||
+    normalized.startsWith('xpremium') ||
+    normalized === 'premium' ||
+    normalized.startsWith('premium+') ||
+    normalized.startsWith('premiumplus')
+  );
+};
+
 export const hasConfirmedXaiBillingEntitlement = (
   billing: XaiBillingSummary | null | undefined,
   planType?: string | null
 ): boolean => {
   if (!billing) return false;
 
-  const normalizedPlanType = planType?.trim().toLowerCase();
-  if (
-    normalizedPlanType === 'free' ||
-    normalizedPlanType === 'free-tier' ||
-    normalizedPlanType === 'free_tier'
-  ) {
+  if (isExplicitFreeXaiPlan(planType)) {
     return false;
   }
 
-  // A positive paid limit is explicit entitlement evidence. Period types,
-  // usage percentages, and reset boundaries alone are not.
+  if (isConfirmedPaidXaiPlan(planType)) {
+    return true;
+  }
+
   return (
     hasPositiveXaiLimit(billing.monthlyLimitCents) ||
     hasPositiveXaiLimit(billing.onDemandCapCents)
@@ -582,7 +607,9 @@ const quotaFromXaiBilling = (
     resetAccuracy: periodReset.resetAccuracy,
   };
   const periodRemainingPercent =
-    billing.periodType === 'weekly' ? remainingPercentFromUsed(billing.usagePercent) : null;
+    billing.periodType === 'weekly' || billing.periodType === 'monthly'
+      ? remainingPercentFromUsed(billing.usagePercent)
+      : null;
   const productRemainingWindows =
     billing.productUsage
       ?.map((product) => ({

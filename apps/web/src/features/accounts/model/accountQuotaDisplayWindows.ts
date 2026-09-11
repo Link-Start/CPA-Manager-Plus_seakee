@@ -672,7 +672,19 @@ const buildXaiQuotaDisplayWindows = (
       ? clampDisplayPercent(billing.usagePercent)
       : null;
 
-  if (billing.periodType === 'weekly' || (billing.productUsage?.length ?? 0) > 0) {
+  const monthlyUsedPercent =
+    typeof billing.usedPercent === 'number' && Number.isFinite(billing.usedPercent)
+      ? clampDisplayPercent(billing.usedPercent)
+      : null;
+  const hasLegacyMonthlyWindow = monthlyUsedPercent !== null || billing.monthlyLimitCents !== null;
+  const hasPeriodMonthlyWindow =
+    billing.periodType === 'monthly' && periodUsedPercent !== null && !hasLegacyMonthlyWindow;
+
+  if (
+    billing.periodType === 'weekly' ||
+    hasPeriodMonthlyWindow ||
+    (billing.productUsage?.length ?? 0) > 0
+  ) {
     windows.push(
       buildAccountQuotaDisplayWindow({
         key: 'credits-period',
@@ -694,12 +706,7 @@ const buildXaiQuotaDisplayWindows = (
     );
   }
 
-  const monthlyUsedPercent =
-    typeof billing.usedPercent === 'number' && Number.isFinite(billing.usedPercent)
-      ? clampDisplayPercent(billing.usedPercent)
-      : null;
-
-  if (monthlyUsedPercent !== null || billing.monthlyLimitCents !== null) {
+  if (hasLegacyMonthlyWindow) {
     windows.push(
       buildAccountQuotaDisplayWindow({
         key: 'billing',

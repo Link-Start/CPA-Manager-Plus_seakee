@@ -987,6 +987,98 @@ describe('accountQuotaDisplayWindows', () => {
     ).toEqual([]);
   });
 
+  it('creates weekly quota window for confirmed paid plan SuperGrok without legacy monthly limit', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai-supergrok.json': {
+          status: 'success',
+          billing: {
+            periodType: 'weekly',
+            usagePercent: 42,
+            periodStart: '2026-09-05T00:00:00Z',
+            periodEnd: '2026-09-12T00:00:00Z',
+            productUsage: [],
+            monthlyLimitCents: null,
+            usedCents: null,
+            includedUsedCents: null,
+            onDemandCapCents: null,
+            onDemandUsedCents: null,
+            onDemandUsedPercent: null,
+            usedPercent: null,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow(
+      { name: 'xai-supergrok.json', type: 'xai', planType: 'SuperGrok' },
+      stores
+    );
+
+    const windows = buildAccountQuotaDisplayWindows(row, {
+      stores,
+      translateQuotaWindowLabel,
+      t,
+    });
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({
+      key: 'credits-period',
+      label: 'Weekly credits',
+      kind: 'weekly',
+      remainingPercent: 58,
+      usedPercent: 42,
+      cycleStartMs: Date.parse('2026-09-05T00:00:00Z'),
+      cycleEndMs: Date.parse('2026-09-12T00:00:00Z'),
+      source: 'xai',
+    });
+  });
+
+  it('creates monthly quota window for confirmed paid plan with period monthly credits and null limits', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai-paid-monthly.json': {
+          status: 'success',
+          billing: {
+            periodType: 'monthly',
+            usagePercent: 25,
+            periodStart: '2026-09-01T00:00:00Z',
+            periodEnd: '2026-10-01T00:00:00Z',
+            productUsage: [],
+            monthlyLimitCents: null,
+            usedCents: null,
+            includedUsedCents: null,
+            onDemandCapCents: null,
+            onDemandUsedCents: null,
+            onDemandUsedPercent: null,
+            usedPercent: null,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow(
+      { name: 'xai-paid-monthly.json', type: 'xai', planType: 'SuperGrok Heavy' },
+      stores
+    );
+
+    const windows = buildAccountQuotaDisplayWindows(row, {
+      stores,
+      translateQuotaWindowLabel,
+      t,
+    });
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({
+      key: 'credits-period',
+      label: 'Monthly credits',
+      kind: 'billing',
+      remainingPercent: 75,
+      usedPercent: 25,
+      source: 'xai',
+    });
+  });
+
   it('does not create a monthly window when usage exists without limit evidence', () => {
     const stores = {
       ...emptyStores(),
