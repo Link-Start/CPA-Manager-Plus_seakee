@@ -1718,6 +1718,8 @@ export interface XaiBillingProbeResult {
   partial: boolean;
   statusCode?: number | null;
   blockingFailure?: unknown;
+  rateLimitFailure?: unknown;
+  rateLimited?: boolean;
 }
 
 export interface XaiQuotaProbeResult extends XaiBillingProbeResult {
@@ -1777,6 +1779,10 @@ const selectXaiBlockingBillingFailure = (failures: unknown[]) => {
   const blockingFailures = failures.filter(isXaiBlockingBillingFailure);
   return blockingFailures.length > 0 ? selectXaiBillingFailure(blockingFailures) : undefined;
 };
+
+const isXaiRateLimitFailure = (failure: unknown): boolean =>
+  getStatusFromError(failure) === 429 ||
+  (failure instanceof XaiProbeError && failure.envelope.statusCode === 429);
 
 const resolveXaiProbeAuthIndex = (file: AuthFileItem, t: TFunction): string => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
@@ -1911,6 +1917,15 @@ const requestXaiBillingProbe = async (
   const weeklyFailures = weeklyResult.status === 'rejected' ? [weeklyResult.reason] : [];
   const monthlyFailures = monthlyResult.status === 'rejected' ? [monthlyResult.reason] : [];
   const weeklyFailure = weeklyFailures[0];
+  const weeklyRateLimitFailure =
+    weeklyResult.status === 'rejected' && isXaiRateLimitFailure(weeklyResult.reason)
+      ? weeklyResult.reason
+      : null;
+  const monthlyRateLimitFailure =
+    monthlyResult.status === 'rejected' && isXaiRateLimitFailure(monthlyResult.reason)
+      ? monthlyResult.reason
+      : null;
+  const rateLimitFailure = weeklyRateLimitFailure ?? monthlyRateLimitFailure;
   const failures = weeklySummary ? [] : weeklyFailure ? [weeklyFailure] : monthlyFailures;
 
   return {
@@ -1918,6 +1933,8 @@ const requestXaiBillingProbe = async (
     weeklySummary,
     monthlySummary,
     failures,
+    rateLimitFailure,
+    rateLimited: rateLimitFailure !== null,
     summary: mergeXaiBillingSummaries(weeklySummary, monthlySummary),
     statusCode: weeklyProbe?.statusCode ?? monthlyProbe?.statusCode ?? null,
   };
@@ -1928,12 +1945,10 @@ export const probeXaiBilling = async (
   t: TFunction,
   requestConfig?: AxiosRequestConfig
 ): Promise<XaiBillingProbeResult> => {
-  const { failures, statusCode, summary, weeklySummary } = await requestXaiBillingProbe(
-    file,
-    t,
-    requestConfig
-  );
+  const { failures, rateLimitFailure, rateLimited, statusCode, summary, weeklySummary } =
+    await requestXaiBillingProbe(file, t, requestConfig);
   if (!summary) {
+    if (rateLimitFailure) throw rateLimitFailure;
     if (failures.length > 0) throw selectXaiBillingFailure(failures);
     throw new Error(t('xai_quota.empty_data'));
   }
@@ -1942,6 +1957,8 @@ export const probeXaiBilling = async (
     summary,
     failures,
     partial: weeklySummary === null,
+    ...(rateLimitFailure ? { rateLimitFailure } : {}),
+    ...(rateLimited ? { rateLimited: true } : {}),
     statusCode,
   };
 };
@@ -1951,21 +1968,30 @@ export const probeXaiQuota = async (
   t: TFunction,
   requestConfig?: AxiosRequestConfig
 ): Promise<XaiQuotaProbeResult> => {
-  const { authIndex, failures, statusCode, summary, weeklySummary } = await requestXaiBillingProbe(
-    file,
-    t,
-    requestConfig
-  );
+  const {
+    authIndex,
+    failures,
+    rateLimitFailure,
+    rateLimited,
+    statusCode,
+    summary,
+    weeklySummary,
+  } = await requestXaiBillingProbe(file, t, requestConfig);
   if (summary) {
     return {
       summary,
       failures,
       partial: weeklySummary === null,
+      ...(rateLimitFailure ? { rateLimitFailure } : {}),
+      ...(rateLimited ? { rateLimited: true } : {}),
       source: 'billing',
       statusCode,
       blockingFailure:
         weeklySummary === null ? selectXaiBlockingBillingFailure(failures) : undefined,
     };
+  }
+  if (rateLimitFailure) {
+    throw rateLimitFailure;
   }
   if (failures.length === 0) {
     throw new Error(t('xai_quota.empty_data'));
@@ -1981,6 +2007,7 @@ export const probeXaiQuota = async (
       summary: { ...emptyXaiBillingSummary(), officialApiHealth: officialApiResult.health },
       failures: [],
       partial: false,
+      rateLimited,
       source: 'official-api',
       statusCode: officialApiResult.statusCode,
     };
@@ -1998,12 +2025,7 @@ export const fetchXaiQuota = async (
     file,
     t,
     requestScope ? createScopedApiRequestConfig(requestScope) : undefined
-  ).then(({ summary, partial, failures }) => {
-    const rateLimited = failures.some(
-      (failure) =>
-        getStatusFromError(failure) === 429 ||
-        (failure instanceof XaiProbeError && failure.envelope.statusCode === 429)
-    );
+  ).then(({ summary, partial, failures, rateLimited }) => {
     return {
       ...summary,
       partial,

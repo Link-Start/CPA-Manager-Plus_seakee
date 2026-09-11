@@ -2608,6 +2608,95 @@ describe('fetchXaiQuota', () => {
     );
   });
 
+  it('preserves the usable weekly summary and marks rateLimited when monthly billing returns 429', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: {
+          config: {
+            current_period: {
+              type: 'weekly',
+              start: '2026-07-01T00:00:00Z',
+              end: '2026-07-08T00:00:00Z',
+            },
+            credit_usage_percent: 40,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        statusCode: 429,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'Too Many Requests',
+        body: null,
+      });
+
+    const result = await fetchXaiQuota({ name: 'xai-monthly-429.json', type: 'xai', authIndex: 'xai-monthly-429' }, t);
+
+    expect(result).toMatchObject({
+      periodType: 'weekly',
+      usagePercent: 40,
+      partial: false,
+      rateLimited: true,
+    });
+  });
+
+  it('exposes a monthly 429 when weekly billing has no usable summary', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 500,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'weekly unavailable',
+        body: null,
+      })
+      .mockResolvedValueOnce({
+        statusCode: 429,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'Too Many Requests',
+        body: null,
+      });
+
+    await expect(
+      fetchXaiQuota({ name: 'xai-billing-429.json', type: 'xai', authIndex: 'xai-billing-429' }, t)
+    ).rejects.toMatchObject({ status: 429, envelope: { statusCode: 429 } });
+  });
+
+  it('does not classify an ordinary monthly failure as rateLimited', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: {
+          config: {
+            current_period: {
+              type: 'weekly',
+              start: '2026-07-01T00:00:00Z',
+              end: '2026-07-08T00:00:00Z',
+            },
+            credit_usage_percent: 12,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        statusCode: 500,
+        hasStatusCode: true,
+        header: {},
+        bodyText: 'monthly unavailable',
+        body: null,
+      });
+
+    const result = await fetchXaiQuota({ name: 'xai-monthly-500.json', type: 'xai', authIndex: 'xai-monthly-500' }, t);
+
+    expect(result.rateLimited).not.toBe(true);
+  });
+
   it('keeps monthly billing data when weekly billing fails', async () => {
     mocks.request
       .mockResolvedValueOnce({

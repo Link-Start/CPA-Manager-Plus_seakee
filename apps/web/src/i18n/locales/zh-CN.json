@@ -902,6 +902,7 @@
     "no_refreshable_accounts": "当前没有可刷新额度的凭证",
     "quota_refresh_result": "额度刷新完成：成功 {{success}} / {{total}}",
     "quota_refresh_rate_limited_skipped": "因 Provider 请求频率限制，已跳过 {{count}} 个凭证",
+    "quota_refresh_partial_rate_limited": "额度已刷新，但部分 Provider 信息因请求频率限制未能更新",
     "quota_refresh_success": "已刷新 {{name}} 的额度信息",
     "quota_refresh_failed": "刷新 {{name}} 的额度失败：{{message}}",
     "quota_refresh_result_with_error": "额度刷新完成：成功 {{success}} / {{total}}。失败原因：{{message}}",

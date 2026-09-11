@@ -904,6 +904,7 @@
     "no_refreshable_accounts": "No refreshable credentials selected",
     "quota_refresh_result": "Quota refresh finished: {{success}} / {{total}} succeeded",
     "quota_refresh_rate_limited_skipped": "Skipped {{count}} credential(s) after the provider rate limit was reached",
+    "quota_refresh_partial_rate_limited": "Quota refreshed, but some provider metadata could not be updated because of rate limiting.",
     "quota_refresh_success": "Quota information for {{name}} refreshed",
     "quota_refresh_failed": "Failed to refresh quota for {{name}}: {{message}}",
     "quota_refresh_result_with_error": "Quota refresh finished: {{success}} / {{total}} succeeded. Failure reason: {{message}}",
