@@ -139,6 +139,78 @@ describe('resolveAccountQuota', () => {
     });
   });
 
+  it('does not expose billing quota for an explicitly Free xAI plan even with positive on-demand cap', () => {
+    const file = { name: 'xai-free-payg.json', type: 'xai', planType: 'free' } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'weekly',
+        onDemandCapCents: 5_000,
+        onDemandUsedCents: 1_000,
+        onDemandUsedPercent: 20,
+        billingPeriodEnd: '2026-10-01T00:00:00Z',
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'unknown',
+      remainingPercent: null,
+      usedPercent: null,
+    });
+  });
+
+  it('does not expose quota when plan is unknown even if positive on-demand cap exists', () => {
+    const file = { name: 'xai-unknown-payg.json', type: 'xai' } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'weekly',
+        onDemandCapCents: 5_000,
+        onDemandUsedCents: 1_000,
+        onDemandUsedPercent: 20,
+        billingPeriodEnd: '2026-10-01T00:00:00Z',
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'unknown',
+      remainingPercent: null,
+      usedPercent: null,
+    });
+  });
+
+  it('exposes pay-as-you-go quota for confirmed paid plan', () => {
+    const file = {
+      name: 'xai-paid-payg.json',
+      type: 'xai',
+      planType: 'SuperGrok',
+    } as AuthFileItem;
+    const stores = emptyStores();
+    stores.xaiQuota[file.name] = {
+      ...buildQuotaCredentialIdentity(file),
+      status: 'success',
+      billing: makeXaiBilling({
+        periodType: 'weekly',
+        onDemandCapCents: 5_000,
+        onDemandUsedCents: 1_000,
+        onDemandUsedPercent: 20,
+        billingPeriodEnd: '2026-10-01T00:00:00Z',
+      }),
+    };
+
+    expect(resolveAccountQuota(file, stores)).toMatchObject({
+      status: 'ok',
+      remainingPercent: 80,
+      usedPercent: 20,
+      resetLabel: '2026-10-01T00:00:00Z',
+      planType: 'SuperGrok',
+    });
+  });
+
   it('exposes weekly quota for confirmed paid SuperGrok plan without legacy monthly limits', () => {
     const file = {
       name: 'xai-supergrok.json',

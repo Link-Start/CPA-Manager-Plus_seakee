@@ -1020,6 +1020,77 @@ describe('accountQuotaDisplayWindows', () => {
     ).toEqual([]);
   });
 
+  it('does not create xAI quota windows for an explicit Free plan with weekly current-period data', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai-free-weekly.json': {
+          status: 'success',
+          billing: {
+            periodType: 'weekly',
+            usagePercent: 42,
+            periodStart: '2026-09-05T00:00:00Z',
+            periodEnd: '2026-09-12T00:00:00Z',
+            productUsage: [],
+            monthlyLimitCents: null,
+            usedCents: null,
+            includedUsedCents: null,
+            onDemandCapCents: null,
+            onDemandUsedCents: null,
+            onDemandUsedPercent: null,
+            billingPeriodEnd: '2026-09-12T00:00:00Z',
+            usedPercent: null,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow(
+      { name: 'xai-free-weekly.json', type: 'xai', planType: 'Free Tier' },
+      stores
+    );
+
+    expect(
+      buildAccountQuotaDisplayWindows(row, {
+        stores,
+        translateQuotaWindowLabel,
+        t,
+      })
+    ).toEqual([]);
+  });
+
+  it('does not create xAI quota windows for an explicit Free plan with positive on-demand cap', () => {
+    const stores = {
+      ...emptyStores(),
+      xaiQuota: {
+        'xai-free-payg.json': {
+          status: 'success',
+          billing: {
+            periodType: 'weekly',
+            usagePercent: 0,
+            productUsage: [],
+            monthlyLimitCents: null,
+            usedCents: null,
+            includedUsedCents: null,
+            onDemandCapCents: 5_000,
+            onDemandUsedCents: 1_000,
+            onDemandUsedPercent: 20,
+            billingPeriodEnd: '2026-10-01T00:00:00Z',
+            usedPercent: null,
+          },
+        },
+      },
+    } satisfies AccountQuotaStores;
+    const row = buildRow({ name: 'xai-free-payg.json', type: 'xai', planType: 'free' }, stores);
+
+    expect(
+      buildAccountQuotaDisplayWindows(row, {
+        stores,
+        translateQuotaWindowLabel,
+        t,
+      })
+    ).toEqual([]);
+  });
+
   it('creates weekly quota window for confirmed paid plan SuperGrok without legacy monthly limit', () => {
     const stores = {
       ...emptyStores(),
