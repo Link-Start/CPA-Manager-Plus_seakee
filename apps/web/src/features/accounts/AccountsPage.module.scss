@@ -370,7 +370,7 @@
 .accountCardList {
   display: grid;
   gap: 8px;
-  min-width: 960px;
+  min-width: 1100px;
   padding: 10px 12px;
 }
 
@@ -380,9 +380,9 @@
   grid-template-columns:
     minmax(140px, 1.1fr)
     76px
-    84px
-    116px
-    minmax(280px, 2fr)
+    minmax(180px, 0.45fr)
+    minmax(124px, 0.3fr)
+    minmax(280px, 3fr)
     146px;
   column-gap: clamp(8px, 0.8vw, 12px);
   min-width: 0;
@@ -1083,9 +1083,9 @@
     grid-template-columns:
       minmax(150px, 1.1fr)
       78px
-      84px
-      118px
-      minmax(280px, 2fr)
+      minmax(190px, 0.45fr)
+      minmax(132px, 0.3fr)
+      minmax(300px, 3fr)
       175px;
     column-gap: clamp(10px, 0.85vw, 14px);
   }
@@ -1103,9 +1103,9 @@
     grid-template-columns:
       minmax(180px, 1.3fr)
       88px
-      90px
-      130px
-      minmax(380px, 2.5fr)
+      minmax(200px, 0.45fr)
+      minmax(144px, 0.3fr)
+      minmax(380px, 3fr)
       182px;
     column-gap: 16px;
   }
@@ -1426,6 +1426,9 @@
     min-height: 24px;
     padding-inline: 10px;
     font-size: 13px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   small {
@@ -1879,6 +1882,11 @@
   position: relative;
   height: 100%;
   min-width: 0;
+}
+
+.quotaWindowGrid > .quotaWindowCard:only-child,
+.quotaWindowGrid > .quotaWindowCard:nth-child(3):last-child {
+  grid-column: 1 / -1;
 }
 
 .quotaWindowCard {

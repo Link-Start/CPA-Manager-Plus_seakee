@@ -719,7 +719,8 @@ export const getQuotaWindowReadableLabel = (
 
 export const selectAccountQuotaMainListWindows = (
   row: AccountRow,
-  quotaWindows: AccountQuotaDisplayWindow[]
+  quotaWindows: AccountQuotaDisplayWindow[],
+  maxWindows = 2
 ): AccountQuotaDisplayWindow[] => {
   const standardQuotaWindows = quotaWindows.filter(isStandardAccountQuotaListWindow);
   let candidates: AccountQuotaDisplayWindow[];
@@ -767,13 +768,21 @@ export const selectAccountQuotaMainListWindows = (
     if (a.duration !== b.duration) {
       return a.duration - b.duration;
     }
+    if (row.provider === 'antigravity') {
+      const groupRankDiff =
+        getAntigravityGroupRank(a.w.groupLabel ?? '') -
+        getAntigravityGroupRank(b.w.groupLabel ?? '');
+      if (groupRankDiff !== 0) {
+        return groupRankDiff;
+      }
+    }
     if (a.index !== b.index) {
       return a.index - b.index;
     }
     return a.w.key.localeCompare(b.w.key);
   });
 
-  return indexed.slice(0, 2).map((item) => item.w);
+  return indexed.slice(0, maxWindows).map((item) => item.w);
 };
 
 export const selectAccountQuotaListWindows = (
