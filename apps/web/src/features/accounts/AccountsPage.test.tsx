@@ -8135,6 +8135,7 @@ describe('AccountsPage replacement flows', () => {
         account: 'xai@example.com',
         priority: 0,
         disabled: false,
+        planType: 'SuperGrok',
       } as AuthFileItem,
     ];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(mocks.files[0], {
@@ -8183,6 +8184,7 @@ describe('AccountsPage replacement flows', () => {
       account: 'xai-divergent@example.com',
       priority: 0,
       disabled: false,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(file, {
@@ -8215,6 +8217,7 @@ describe('AccountsPage replacement flows', () => {
       account: 'xai-retained-error@example.com',
       priority: 0,
       disabled: false,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(file, {
@@ -8253,6 +8256,7 @@ describe('AccountsPage replacement flows', () => {
       account: 'xai-hidden-product@example.com',
       priority: 0,
       disabled: false,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(file, {
@@ -8305,6 +8309,7 @@ describe('AccountsPage replacement flows', () => {
       account: 'xai-fixed-billing@example.com',
       priority: 0,
       disabled: false,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(file, {
@@ -8362,6 +8367,7 @@ describe('AccountsPage replacement flows', () => {
       account: 'xai-weekly@example.com',
       priority: 0,
       disabled: false,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.quotaState.xaiQuota = buildCredentialScopedQuotaRecord(file, {
@@ -13043,6 +13049,7 @@ describe('AccountsPage replacement flows', () => {
       authIndex: 'xai-1',
       account: 'xai@example.com',
       disabled: true,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.location = {
@@ -13302,6 +13309,7 @@ describe('AccountsPage replacement flows', () => {
       authIndex: 'xai-1',
       account: 'xai@example.com',
       disabled: true,
+      planType: 'SuperGrok',
     } as AuthFileItem;
     mocks.files = [file];
     mocks.location = {
